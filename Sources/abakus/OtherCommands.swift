@@ -1,0 +1,91 @@
+import AbakusCore
+import ArgumentParser
+import Foundation
+
+struct Sum: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Add numbers exactly (sum).",
+        discussion: "Without arguments, reads numbers separated by whitespace or line breaks from stdin: grep -o '[0-9.]*k' log | abakus sum"
+    )
+
+    // Captures negative numbers too, which would otherwise be taken for options.
+    @Argument(parsing: .allUnrecognized, help: ArgumentHelp("Numbers: 12, -3, 0.1, 410k, 1,234.5.", valueName: "number"))
+    var numbers: [String] = []
+    @OptionGroup var decimal: DecimalOption
+
+    func run() throws {
+        let words = numbers.isEmpty ? ToolRunner.wordsFromStandardInput() : numbers
+        var arguments: JSONObject = ["numbers": .array(words.map { .string($0) })]
+        decimal.apply(to: &arguments)
+        try ToolRunner.run("sum", arguments)
+    }
+}
+
+struct DateDiff: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "date-diff",
+        abstract: "Time between two dates or times, in calendar units and in totals (date_diff)."
+    )
+
+    @Argument(help: "From: 2026-11-08, 2026-11-08T14:30:00Z, 2026-11-08T14:30+01:00, or now.") var from: String
+    @Argument(help: "To, in the same forms (default: now).") var to: String?
+
+    func run() throws {
+        var arguments: JSONObject = ["from": .string(from)]
+        if let to {
+            arguments["to"] = .string(to)
+        }
+        try ToolRunner.run("date_diff", arguments)
+    }
+}
+
+struct Tools: ParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "List the tools, with the first line of each description.")
+
+    @Option(help: ArgumentHelp("Print one tool's full description and input schema instead.", valueName: "name"))
+    var show: String?
+
+    func run() throws {
+        if let show {
+            guard let tool = Catalog.tool(named: show) else {
+                throw ToolRunner.Failure("abakus has no tool named \(show). `abakus tools` lists the tools.")
+            }
+            print(tool.description)
+            print()
+            print(JSONWriter.write(tool.inputSchema))
+            return
+        }
+        let width = Catalog.tools.map(\.name.count).max() ?? 0
+        for tool in Catalog.tools {
+            let firstLine = tool.description.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
+            print(tool.name.padding(toLength: width, withPad: " ", startingAt: 0) + "  " + firstLine)
+        }
+    }
+}
+
+struct Call: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Call a tool with JSON arguments, as an MCP client would; prints the result as JSON.",
+        discussion: #"Example: abakus call sum '{"numbers": ["410k", 0.5]}'"#
+    )
+
+    @Argument(help: "The tool's name, e.g. tally_add (see `abakus tools`).") var tool: String
+    @Argument(help: "The arguments as a JSON object, or - to read them from stdin (default: {}).") var arguments: String?
+
+    func run() throws {
+        var text = arguments ?? "{}"
+        if text == "-" {
+            text = String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self)
+        }
+        let value: JSONValue
+        do {
+            value = try JSONReader.read(text)
+        } catch {
+            throw ValidationError("The arguments are not valid JSON (\(error.description)). Pass one JSON object.")
+        }
+        guard case .object(let object) = value else {
+            throw ValidationError(#"The arguments must be a JSON object, e.g. '{"name": "items"}'."#)
+        }
+        try ToolRunner.run(tool, object)
+    }
+}

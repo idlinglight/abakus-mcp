@@ -7,8 +7,12 @@ struct Abakus: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: AbakusInfo.name,
         abstract: "Tallies, exact sums and date differences for agents: an MCP server and a command line tool.",
+        discussion: """
+            Every command runs one of the tools the MCP server offers and prints its result as JSON, the same \
+            JSON an agent gets. Errors go to stderr with exit status 1.
+            """,
         version: AbakusInfo.version,
-        subcommands: [Serve.self]
+        subcommands: [Serve.self, TallyCommand.self, Sum.self, DateDiff.self, Tools.self, Call.self]
     )
 }
 
