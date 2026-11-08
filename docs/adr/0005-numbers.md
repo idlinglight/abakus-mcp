@@ -60,8 +60,25 @@ Arithmetic:
 - Errors: division by zero; results of about 10^165 or more (overflow); non-zero results that round to zero
   (underflow).
 - `DecimalMath.sum` adds exactly and rounds only the total: no intermediate step rounds or overflows.
+- Readable results: values shown to people rather than computed with further, such as the mean of `sum` or
+  the totals of `date_diff` ([ADR-0006](0006-date-differences.md)), follow one policy, implemented once
+  (`DecimalMath.readableQuotient` and the internal helper the tools call). Such a value is exact when it fits
+  38 significant digits; otherwise it is rounded half away from zero to 15 significant digits, or to whole
+  units when its integer part has more than 15 digits (38 digits at most), and flagged with `exact: false`
+  (`mean_exact`, `days_exact`, …). 1/3 is 0.333333333333333; 1/3,000,000 is 0.000000333333333333333;
+  10^20/3 is 33333333333333333333. Significant digits instead of a fixed number of decimal places, because a
+  fixed number of places turns a small non-zero value into 0 (the mean of three million numbers summing to 1
+  at six places), while 15 digits stay readable and are far more than any input of a mean or a date
+  difference supports. A non-zero value never becomes 0 and never loses its sign: below 10^-128, where
+  Decimal's digits end, it is an underflow error.
+- Rounding to decimal places, for tools that need a whole number or a fixed precision (tally thresholds,
+  `floor(value / period)`): `DecimalMath.rounded(_:toPlaces:_:)`, `divide(_:_:toPlaces:_:)` with the modes
+  down (floor), up (ceiling), toward zero and half away from zero, plus `floor(_:)` and `isInteger(_:)`. They
+  are exact: `divide(a, b, toPlaces: 0, .down)` is the floor of the exact quotient, never of a quotient
+  rounded to 38 digits first. Places run from -165 to 128; a result with more than 38 significant digits is
+  an error. Here a result of 0 is a result: the caller chose the places.
 - Foundation's `Decimal` remains the storage type and the source of the plain-notation output; its
-  arithmetic functions and its string parser are not used.
+  arithmetic functions, its rounding (`NSDecimalRound`) and its string parser are not used.
 
 Reading (`NumberReader`):
 
@@ -93,11 +110,10 @@ The `sum` tool:
 - An empty `numbers` list is allowed: total 0, count 0, mean null. The sum of nothing is 0; a list that came
   out empty is not a mistake by itself.
 - The total is the exact sum, rounded once; `total_exact: false` is added when it had to be rounded.
-- The mean is computed from the exact total. It is exact when it fits 38 digits (`[1, 2]` gives 1.5).
-  Otherwise it is rounded half away from zero to six more decimal places than the most precise input has
-  (`[1, 2, 3.5]` gives 2.1666667), and `mean_exact: false` is added. That rounding error stays below a
-  millionth of the inputs' last place, while 38 digits of 6666… would only hide the number. A mean too close
-  to zero to show is 0 and flagged, not an error that loses the total.
+- The mean is computed from the exact total and is a readable result (above): exact when it fits 38 digits
+  (`[1, 2]` gives 1.5), otherwise 15 significant digits (`[1, 2, 3.5]` gives 2.16666666666667) with
+  `mean_exact: false`. A mean below 10^-128 (only possible for totals near 10^-128) is an error that names
+  the total, never a 0.
 - The `*_exact` flags appear only when false, so the common response stays short; the tool description says
   that their absence means exact.
 - Unknown arguments are errors: a misspelt `decimal` would otherwise read numbers written the German way by
@@ -106,7 +122,8 @@ The `sum` tool:
 ### Consequences
 
 - Results are the same on every macOS version, whatever Foundation's arithmetic does.
-- A randomized test with a fixed seed checks the four operations against an independent digit-array
-  implementation: correct rounding, `exact`, and the range errors.
+- A randomized test with a fixed seed checks the four operations, the readable policy and rounding to places
+  in every mode against an independent digit-array implementation: correct rounding, `exact`, and the range
+  errors.
 - 38 digits is a fixed precision: a `Decimal` could hold some 39-digit values, but a precision that depends on
   the digits would be hard to state.

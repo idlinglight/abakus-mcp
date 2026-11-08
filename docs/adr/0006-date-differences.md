@@ -52,10 +52,10 @@ place and the tz database, which a tool call rarely carries.
   (`1 year 2 months 5 days`, `2 weeks 3 days`, `31.123 seconds`; `0 seconds` for no difference). Weeks appear
   only here: seven or more days are written as weeks and days, while `calendar.days` keeps the full count.
 - `totals` (days, hours, minutes, seconds) come from the exact difference in nanoseconds. `seconds` is always
-  exact. The others are exact when they come out even (17.5 days); otherwise they are rounded half away from
-  zero to six more decimal places than the seconds have (six for whole seconds), and `days_exact: false`,
-  `hours_exact: false` or `minutes_exact: false` is added, as `sum` does for its mean
-  ([ADR-0005](0005-numbers.md)).
+  exact. The others are readable results, the same policy as the mean of `sum` ([ADR-0005](0005-numbers.md)):
+  exact when they come out even (17.5 days), otherwise rounded half away from zero to 15 significant digits
+  (1 hour is 0.0416666666666667 days; 1 nanosecond is 0.0000000000000115740740740741 days, never 0), with
+  `days_exact: false`, `hours_exact: false` or `minutes_exact: false`.
 - Leap seconds are ignored: every day has 86400 seconds, as in POSIX time and Foundation.
 - Annotations: read-only, idempotent, not open-world. The result is not deterministic when `to` defaults to
   now; MCP has no annotation for that, so the description says it.

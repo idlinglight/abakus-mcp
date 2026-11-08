@@ -68,15 +68,28 @@ import Testing
     }
 
     @Test func meanThatDoesNotTerminateIsRoundedAndFlagged() throws {
-        // Most precise input: 1 decimal place, so the mean gets 1 + 6 = 7.
+        // 15 significant digits, half away from zero.
         let result = try sum(["numbers": [1, 2, .number("3.5")]])
         #expect(result["total"] == .number("6.5"))
-        #expect(result["mean"] == .number("2.1666667"))
+        #expect(result["mean"] == .number("2.16666666666667"))
         #expect(result["mean_exact"] == false)
         #expect(result.keys == ["total", "count", "mean", "mean_exact"])
-        // Integers: 6 places, half away from zero.
-        #expect(try sum(["numbers": [2, 0, 0]])["mean"] == .number("0.666667"))
-        #expect(try sum(["numbers": [-2, 0, 0]])["mean"] == .number("-0.666667"))
+        #expect(try sum(["numbers": [2, 0, 0]])["mean"] == .number("0.666666666666667"))
+        #expect(try sum(["numbers": [-2, 0, 0]])["mean"] == .number("-0.666666666666667"))
+        // A long integer part stays whole.
+        #expect(try sum(["numbers": ["1e20", 0, 0]])["mean"] == .number("33333333333333333333"))
+    }
+
+    /// Many numbers summing to 1: the mean keeps 15 significant digits instead of a fixed number of places. (With
+    /// three million numbers, six places used to give 0; DecimalMathTests checks 1 / 3,000,000 directly, as a list
+    /// that long is slow in a debug build.)
+    @Test func smallMeanOfManyNumbersKeepsItsDigits() throws {
+        let numbers: [JSONValue] = [1] + Array(repeating: 0, count: 29_999)
+        let result = try sum(["numbers": .array(numbers)])
+        #expect(result["count"] == 30_000)
+        #expect(result["mean"] == .number("0.0000333333333333333"))
+        #expect(result["mean_exact"] == false)
+        #expect(try sum(["numbers": [-1, 0, 0]])["mean"] == .number("-0.333333333333333"))
     }
 
     @Test func roundedTotalIsFlagged() throws {
@@ -86,11 +99,13 @@ import Testing
         #expect(result.keys == ["total", "total_exact", "count", "mean", "mean_exact", "read"])
     }
 
-    @Test func meanTooSmallToShowIsZeroNotAnError() throws {
-        let result = try sum(["numbers": ["1e-128", 0, 0]])
-        #expect(result["total"] == .decimal(Decimal(string: "1e-128", locale: Locale(identifier: "en_US_POSIX"))!))
-        #expect(result["mean"] == 0)
-        #expect(result["mean_exact"] == false)
+    @Test func meanBelowTheSmallestStepIsAnErrorNotZero() throws {
+        // 2e-128 / 3 still rounds to the smallest step, 1e-128 ...
+        #expect(try sum(["numbers": ["2e-128", 0, 0]])["mean"] == .decimal(Decimal(string: "1e-128", locale: Locale(identifier: "en_US_POSIX"))!))
+        // ... 1e-128 / 3 would be 0, which would hide a non-zero mean.
+        let error = try #require(failure(["numbers": ["1e-128", 0, 0]]))
+        #expect(error.message.contains("below 10^-128"))
+        #expect(error.message.contains("The total itself is exact"))
     }
 
     @Test func emptyListIsZero() throws {

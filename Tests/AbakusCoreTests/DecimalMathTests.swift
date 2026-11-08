@@ -91,11 +91,87 @@ private func d(_ text: String) -> Decimal {
         #expect(try DecimalMath.sum([big, big, -big]) == .init(value: big, exact: true))
     }
 
-    @Test func divisionRoundedToPlaces() throws {
-        #expect(try DecimalMath.divide(1, 3, roundingInexactTo: 6) == .init(value: d("0.333333"), exact: false))
-        #expect(try DecimalMath.divide(2, 3, roundingInexactTo: 2) == .init(value: d("0.67"), exact: false))
-        #expect(try DecimalMath.divide(1, 8, roundingInexactTo: 2) == .init(value: d("0.125"), exact: true))
-        #expect(try DecimalMath.divide(d("1e30"), 7, roundingInexactTo: 2) == .init(value: d("142857142857142857142857142857.14"), exact: false))
+    @Test(arguments: [
+        // Exact when the quotient fits.
+        ("1", "8", "0.125", true), ("1", "1024", "0.0009765625", true), ("36", "5", "7.2", true),
+        // Otherwise 15 significant digits, half away from zero.
+        ("1", "3", "0.333333333333333", false), ("2", "3", "0.666666666666667", false),
+        ("-2", "3", "-0.666666666666667", false), ("6.5", "3", "2.16666666666667", false),
+        // Small quotients keep their digits: never 0, never a lost sign.
+        ("1", "30000000000", "0.0000000000333333333333333", false),
+        ("1", "3000000", "0.000000333333333333333", false), ("-1", "3000000", "-0.000000333333333333333", false),
+        // A longer integer part is kept in whole units, up to 38 digits.
+        ("1e20", "3", "33333333333333333333", false), ("1e30", "7", "142857142857142857142857142857", false),
+        ("1e40", "3", "33333333333333333333333333333333333333e2", false),
+        // Below 10^-128 the digits run out, but a non-zero quotient still does not become 0.
+        ("2e-128", "3", "1e-128", false),
+    ])
+    func readableQuotient(a: String, b: String, expected: String, exact: Bool) throws {
+        #expect(try DecimalMath.readableQuotient(d(a), d(b)) == .init(value: d(expected), exact: exact), "\(a) / \(b)")
+    }
+
+    @Test func readableQuotientErrors() {
+        #expect(throws: ToolError.self) { try DecimalMath.readableQuotient(1, 0) }
+        // 1e-128 / 3 rounds to 0 at Decimal's smallest step: an underflow, not a silent 0.
+        #expect(throws: ToolError.self) { try DecimalMath.readableQuotient(d("1e-128"), 3) }
+    }
+
+    @Test(arguments: [
+        ("2.5", 0, DecimalMath.RoundingMode.down, "2", false), ("2.5", 0, .up, "3", false),
+        ("2.5", 0, .towardZero, "2", false), ("2.5", 0, .halfAwayFromZero, "3", false),
+        ("-2.5", 0, .down, "-3", false), ("-2.5", 0, .up, "-2", false),
+        ("-2.5", 0, .towardZero, "-2", false), ("-2.5", 0, .halfAwayFromZero, "-3", false),
+        ("2.49", 0, .halfAwayFromZero, "2", false), ("-2.49", 0, .halfAwayFromZero, "-2", false),
+        ("7", 0, .down, "7", true), ("-7", 0, .up, "-7", true),
+        ("1234.5678", 2, .halfAwayFromZero, "1234.57", false), ("1234.5678", 2, .down, "1234.56", false),
+        ("1234.5678", -2, .halfAwayFromZero, "1200", false), ("1234.5678", -2, .up, "1300", false),
+        ("-0.001", 2, .halfAwayFromZero, "0", false), ("-0.001", 2, .down, "-0.01", false),
+        ("0.5", 0, .down, "0", false), ("1e100", 0, .down, "1e100", true), ("1e-128", 128, .down, "1e-128", true),
+    ])
+    func roundedToPlaces(value: String, places: Int, mode: DecimalMath.RoundingMode, expected: String, exact: Bool) throws {
+        #expect(try DecimalMath.rounded(d(value), toPlaces: places, mode) == .init(value: d(expected), exact: exact),
+                "\(value) to \(places) places, \(mode)")
+    }
+
+    @Test func divisionToPlacesIsExactNotRoundedTwice() throws {
+        #expect(try DecimalMath.divide(7, 2, toPlaces: 0, .down) == .init(value: 3, exact: false))
+        #expect(try DecimalMath.divide(-7, 2, toPlaces: 0, .down) == .init(value: -4, exact: false))
+        #expect(try DecimalMath.divide(6, 2, toPlaces: 0, .down) == .init(value: 3, exact: true))
+        // 19999999999999999999999999999999999999.5: to 38 digits that is 2e37, but its floor is one less.
+        let nines = d("39999999999999999999999999999999999999")
+        #expect(try DecimalMath.divide(nines, 2).value == d("2e37"))
+        #expect(try DecimalMath.divide(nines, 2, toPlaces: 0, .down) == .init(value: d("19999999999999999999999999999999999999"), exact: false))
+    }
+
+    @Test func roundingToPlacesErrors() throws {
+        #expect(throws: ToolError.self) { try DecimalMath.rounded(1, toPlaces: 129, .down) }
+        #expect(throws: ToolError.self) { try DecimalMath.rounded(1, toPlaces: -166, .down) }
+        #expect(try DecimalMath.rounded(1, toPlaces: -165, .down) == .init(value: 0, exact: false))
+        #expect(throws: ToolError.self) { try DecimalMath.divide(1, 0, toPlaces: 0, .down) }
+        // More than 38 digits at 0 places, and 10^165 after rounding up.
+        #expect(throws: ToolError.self) { try DecimalMath.divide(d("1e100"), 3, toPlaces: 0, .down) }
+        #expect(throws: ToolError.self) { try DecimalMath.rounded(d("99999999999999999999999999999999999999e127"), toPlaces: -164, .up) }
+    }
+
+    @Test func floorAndIsInteger() {
+        #expect(DecimalMath.floor(d("2.7")) == 2)
+        #expect(DecimalMath.floor(d("-2.7")) == -3)
+        #expect(DecimalMath.floor(d("-0.5")) == -1)
+        #expect(DecimalMath.floor(5) == 5)
+        #expect(DecimalMath.floor(0) == 0)
+        #expect(DecimalMath.floor(d("1e100")) == d("1e100"))
+        #expect(DecimalMath.floor(d("-9999999999999999999999999999999999999.5")) == d("-1e37"))
+        #expect(DecimalMath.floor(.nan).isNaN)
+
+        #expect(DecimalMath.isInteger(5))
+        #expect(DecimalMath.isInteger(-3))
+        #expect(DecimalMath.isInteger(0))
+        #expect(DecimalMath.isInteger(d("5.000")))
+        #expect(DecimalMath.isInteger(d("1e100")))
+        #expect(!DecimalMath.isInteger(d("0.5")))
+        #expect(!DecimalMath.isInteger(d("-12.0001")))
+        #expect(!DecimalMath.isInteger(d("1e-128")))
+        #expect(!DecimalMath.isInteger(.nan))
     }
 }
 
@@ -126,12 +202,21 @@ private func d(_ text: String) -> Decimal {
             if b.isZero {
                 #expect(throws: ToolError.self) { try DecimalMath.divide(x, y) }
             } else {
+                let quotient = DigitNumber.quotient(a, b)
                 let result = try? DecimalMath.divide(x, y)
-                check("divide", a, b, into: &outcomes, result, expected: DigitNumber.quotient(a, b).roundedToDecimal())
+                check("divide", a, b, into: &outcomes, result, expected: quotient.roundedToDecimal())
                 // exact means result × divisor == dividend, with nothing left over.
                 if let result {
                     #expect((DigitNumber(result.value.description) * b == a) == result.exact, "divide \(a) / \(b)")
                 }
+                check("readableQuotient", a, b, into: &outcomes, try? DecimalMath.readableQuotient(x, y),
+                      expected: quotient.roundedReadably())
+
+                let places = Int.random(in: -5...20, using: &random)
+                let mode = DecimalMath.RoundingMode.allCases.randomElement(using: &random)!
+                check("divide to \(places) places \(mode)", a, b, into: &outcomes,
+                      try? DecimalMath.divide(x, y, toPlaces: places, mode),
+                      expected: DigitNumber.quotient(a, b, downTo: -places - 1).roundedToPlaces(places, mode))
             }
         }
     }
@@ -283,8 +368,8 @@ private struct DigitNumber: Equatable, CustomStringConvertible {
         )
     }
 
-    /// `a / b` by long division, truncated after 42 significant digits.
-    static func quotient(_ a: DigitNumber, _ b: DigitNumber) -> Truncated {
+    /// `a / b` by long division, truncated after 42 significant digits, or after the digit at 10^downTo.
+    static func quotient(_ a: DigitNumber, _ b: DigitNumber, downTo: Int? = nil) -> Truncated {
         var remainder: [UInt8] = []
         var quotient: [UInt8] = []
         var position = 0
@@ -304,8 +389,12 @@ private struct DigitNumber: Equatable, CustomStringConvertible {
                 digit += 1
             }
             quotient.append(digit)
-            let significant = quotient.drop { $0 == 0 }.count
-            if position >= a.digits.count && (remainder.isEmpty || significant >= 42) { break }
+            let enough = if let downTo {
+                a.exponent - b.exponent - appendedZeros <= downTo
+            } else {
+                quotient.drop { $0 == 0 }.count >= 42
+            }
+            if position >= a.digits.count && (remainder.isEmpty || enough) { break }
         }
         return Truncated(
             negative: a.negative != b.negative,
@@ -336,19 +425,62 @@ private struct DigitNumber: Equatable, CustomStringConvertible {
         var exponent: Int
         var moreDigitsFollow: Bool
 
+        /// The position of the leading digit.
+        var lead: Int { exponent + digits.count - 1 }
+
+        /// Rounds at 10^target in the given mode; `exact` is false when anything non-zero was dropped.
+        func rounded(at target: Int, _ mode: DecimalMath.RoundingMode) -> (value: DigitNumber, exact: Bool) {
+            let count = digits.count
+            let dropCount = target - exponent
+            precondition(dropCount > 0 || !moreDigitsFollow, "the oracle did not compute enough digits")
+            var kept = digits + Array(repeating: 0, count: max(0, -dropCount))
+            var firstDropped: UInt8 = 0
+            var tailIsZero = !moreDigitsFollow
+            if dropCount > 0 {
+                kept = Array(digits.prefix(max(0, count - dropCount)))
+                if dropCount <= count { firstDropped = digits[count - dropCount] }
+                tailIsZero = tailIsZero && digits.suffix(min(dropCount, count)).allSatisfy { $0 == 0 }
+            }
+            let up = switch mode {
+            case .towardZero: false
+            case .halfAwayFromZero: firstDropped >= 5
+            case .down: negative && !tailIsZero
+            case .up: !negative && !tailIsZero
+            }
+            if up { kept = addDigits(kept, [1]) }
+            return (DigitNumber(negative: negative, digits: kept, exponent: target), tailIsZero)
+        }
+
+        /// Range check: more than 38 significant digits, or more than fit below the largest exponent.
+        private func checked(_ value: DigitNumber, exact: Bool) -> Rounding {
+            if value.digits.count > 38 { return .overflow }
+            if value.exponent > 127 && value.digits.count + (value.exponent - 127) > 38 { return .overflow }
+            return .value(value, exact: exact)
+        }
+
         /// Round half away from zero to 38 significant digits, at 10^-128 at the lowest; then check the range.
         func roundedToDecimal() -> Rounding {
             if digits.isEmpty && !moreDigitsFollow { return .value(DigitNumber(negative: false, digits: [], exponent: 0), exact: true) }
-            let count = digits.count
-            let dropped = max(0, count - 38, -128 - exponent)
-            var kept = Array(digits.prefix(max(0, count - dropped)))
-            let roundUp = dropped >= 1 && dropped <= count && digits[count - dropped] >= 5
-            let exact = !moreDigitsFollow && digits.suffix(min(dropped, count)).allSatisfy { $0 == 0 }
-            if roundUp { kept = addDigits(kept, [1]) }
-            let result = DigitNumber(negative: negative, digits: kept, exponent: exponent + dropped)
-            if result.isZero { return .underflow }
-            if result.exponent > 127 && result.digits.count + (result.exponent - 127) > 38 { return .overflow }
-            return .value(result, exact: exact)
+            let (value, exact) = rounded(at: max(exponent, lead - 37, -128), .halfAwayFromZero)
+            if value.isZero { return .underflow }
+            return checked(value, exact: exact)
+        }
+
+        /// DecimalMath's readable policy: exact when it fits; otherwise 15 significant digits, or whole units when the
+        /// integer part is longer (38 digits at most), at 10^-128 at the lowest.
+        func roundedReadably() -> Rounding {
+            let full = roundedToDecimal()
+            guard case .value(_, exact: false) = full else { return full }
+            let (value, _) = rounded(at: max(-128, min(lead - 14, max(0, lead - 37))), .halfAwayFromZero)
+            if value.isZero { return .underflow }
+            return checked(value, exact: false)
+        }
+
+        /// Rounded to a number of decimal places; 0 is a valid result. "Too many digits" counts as overflow here:
+        /// both must throw.
+        func roundedToPlaces(_ places: Int, _ mode: DecimalMath.RoundingMode) -> Rounding {
+            let (value, exact) = rounded(at: -places, mode)
+            return checked(value, exact: exact)
         }
     }
 

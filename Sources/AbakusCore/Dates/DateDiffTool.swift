@@ -23,10 +23,10 @@ public struct DateDiffTool: Tool {
         calendar and totals is negative; text gives the size only. The breakdown counts forward from the earlier \
         instant: whole years, then months, then days, hours, minutes, seconds. A month added to Jan 31 ends on the \
         last day of February, so Jan 31 to Feb 28 is 1 month and Jan 31 to Mar 1 is 1 month 1 day. In text, 7 or \
-        more days are written as weeks and days. Totals that do not come out even (1 hour is 0.041666... days) are \
-        rounded half away from zero to 6 decimal places (more when the seconds have a fraction) and flagged with \
-        days_exact: false, hours_exact: false or minutes_exact: false. Leap seconds are ignored: every day has \
-        86400 seconds.
+        more days are written as weeks and days. totals.seconds is always exact. Other totals that do not come out \
+        even are rounded half away from zero to 15 significant digits (1 hour is 0.0416666666666667 days) and \
+        flagged with days_exact: false, hours_exact: false or minutes_exact: false. Leap seconds are ignored: every \
+        day has 86400 seconds.
         """
 
     public let inputSchema: JSONValue = [
@@ -47,9 +47,6 @@ public struct DateDiffTool: Tool {
 
     /// Read-only and idempotent; not deterministic when `to` defaults to now (the description says so).
     public let annotations = ToolAnnotations(title: "Date difference", readOnly: true, destructive: false, idempotent: true)
-
-    /// How many more decimal places than the seconds have a rounded total shows.
-    static let extraTotalPlaces = 6
 
     private static let calendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
@@ -121,7 +118,9 @@ public struct DateDiffTool: Tool {
         )
         let years = parts.year ?? 0, months = parts.month ?? 0, days = parts.day ?? 0
         let hours = parts.hour ?? 0, minutes = parts.minute ?? 0
+        // Seconds with their fraction; exact (well below 38 digits).
         let secondsInNanoseconds = BigUInt(UInt64(parts.second ?? 0)).timesPowerOfTen(9) + BigUInt(UInt64(fraction))
+        let seconds = try DecimalMath.round(ExactDecimal(negative: false, magnitude: secondsInNanoseconds, exponent: -9)).value
 
         func signed(_ value: Int) -> JSONValue { .number(String(negative ? -value : value)) }
         result["calendar"] = [
@@ -130,29 +129,23 @@ public struct DateDiffTool: Tool {
             "days": signed(days),
             "hours": signed(hours),
             "minutes": signed(minutes),
-            "seconds": .decimal(try nanosecondsAsSeconds(secondsInNanoseconds, negative: negative)),
+            // Decimal has no negative zero; only non-zero seconds get a sign.
+            "seconds": .decimal(negative && !seconds.isZero ? -seconds : seconds),
         ]
         result["text"] = .string(Self.text(
-            years: years, months: months, days: days, hours: hours, minutes: minutes,
-            seconds: try nanosecondsAsSeconds(secondsInNanoseconds, negative: false)
+            years: years, months: months, days: days, hours: hours, minutes: minutes, seconds: seconds
         ))
 
         let totalNanoseconds = BigUInt(UInt64(endSeconds - earlier.seconds)).timesPowerOfTen(9) + BigUInt(UInt64(fraction))
         let totalSeconds = ExactDecimal(negative: negative, magnitude: totalNanoseconds, exponent: -9)
-        let places = totalSeconds.fractionDigits + Self.extraTotalPlaces
         var totals = JSONObject()
         for (unit, length) in [("days", 86400), ("hours", 3600), ("minutes", 60), ("seconds", 1)] {
-            let full = try DecimalMath.round(totalSeconds, dividingBy: BigUInt(UInt64(length)))
-            let total = full.exact ? full : try DecimalMath.round(totalSeconds, dividingBy: BigUInt(UInt64(length)), maxPlaces: places)
+            // The readable policy shared with sum's mean (ADR-0005); seconds always come out exact.
+            let total = try DecimalMath.round(totalSeconds, dividingBy: BigUInt(UInt64(length)), .readable)
             totals[unit] = .decimal(total.value)
             if !total.exact { totals["\(unit)_exact"] = false }
         }
         result["totals"] = .object(totals)
-    }
-
-    /// Nanoseconds as a number of seconds; exact for the values here (well below 38 digits).
-    private func nanosecondsAsSeconds(_ nanoseconds: BigUInt, negative: Bool) throws(ToolError) -> Decimal {
-        try DecimalMath.round(ExactDecimal(negative: negative, magnitude: nanoseconds, exponent: -9)).value
     }
 
     /// "1 year 2 months 2 weeks 3 days 4 hours 5 minutes 6.5 seconds", leaving out zero parts.

@@ -61,11 +61,11 @@ import Testing
         #expect(result["to_is_now"] == true)
         #expect(result["calendar"] == calendar(0, 0, 7, 17, 20, .number("31.123")))
         #expect(result["text"] == "1 week 17 hours 20 minutes 31.123 seconds")
-        // Rounded to 3 + 6 decimal places, half away from zero.
+        // Rounded to 15 significant digits, half away from zero.
         #expect(result["totals"] == [
-            "days": .number("7.722582442"), "days_exact": false,
-            "hours": .number("185.341978611"), "hours_exact": false,
-            "minutes": .number("11120.518716667"), "minutes_exact": false,
+            "days": .number("7.72258244212963"), "days_exact": false,
+            "hours": .number("185.341978611111"), "hours_exact": false,
+            "minutes": .number("11120.5187166667"), "minutes_exact": false,
             "seconds": .number("667231.123"),
         ])
         #expect(result.keys == ["from", "to", "to_is_now", "to_before_from", "calendar", "text", "totals"])
@@ -78,7 +78,7 @@ import Testing
         #expect(result["to_is_now"] == nil)
         #expect(result["calendar"] == calendar(0, 1, 15, 6, 39, .number("28.877")))
         #expect(result["text"] == "1 month 2 weeks 1 day 6 hours 39 minutes 28.877 seconds")
-        #expect(result["totals"]?.objectValue?["days"] == .number("45.277417558"))
+        #expect(result["totals"]?.objectValue?["days"] == .number("45.2774175578704"))
         #expect(result["totals"]?.objectValue?["seconds"] == .number("3911968.877"))
         #expect(try diff(["from": " NOW "])["text"] == "0 seconds")
     }
@@ -146,10 +146,10 @@ import Testing
         let result = try diff(["from": "2026-11-08T00:00:00.75Z", "to": "2026-11-08T00:00:01.5Z"])
         #expect(result["calendar"] == calendar(0, 0, 0, 0, 0, .number("0.75")))
         #expect(result["text"] == "0.75 seconds")
-        // Rounded to 2 + 6 places; 0.75 / 60 = 0.0125 comes out even.
+        // 15 significant digits; 0.75 / 60 = 0.0125 comes out even.
         #expect(result["totals"] == [
-            "days": .number("0.00000868"), "days_exact": false,
-            "hours": .number("0.00020833"), "hours_exact": false,
+            "days": .number("0.00000868055555555556"), "days_exact": false,
+            "hours": .number("0.000208333333333333"), "hours_exact": false,
             "minutes": .number("0.0125"), "seconds": .number("0.75"),
         ])
 
@@ -157,6 +157,8 @@ import Testing
         #expect(nano["to_before_from"] == true)
         #expect(nano["calendar"] == calendar(0, 0, 0, 0, 0, .number("-0.000000001")))
         #expect(nano["totals"]?.objectValue?["seconds"] == .number("-0.000000001"))
+        // Rounded totals keep their digits and their sign; they never become 0.
+        #expect(nano["totals"]?.objectValue?["days"] == .number("-0.0000000000000115740740740741"))
         #expect(nano["text"] == "0.000000001 seconds")
     }
 
@@ -172,9 +174,9 @@ import Testing
         let result = try diff(["from": "1583-01-01", "to": "9999-12-31T23:59:59.999999999Z"])
         #expect(result["calendar"] == calendar(8416, 11, 30, 23, 59, .number("59.999999999")))
         #expect(result["totals"] == [
-            "days": .number("3074245.999999999999988"), "days_exact": false,
-            "hours": .number("73781903.999999999999722"), "hours_exact": false,
-            "minutes": .number("4426914239.999999999983333"), "minutes_exact": false,
+            "days": 3_074_246, "days_exact": false,
+            "hours": 73_781_904, "hours_exact": false,
+            "minutes": 4_426_914_240, "minutes_exact": false,
             "seconds": .number("265614854399.999999999"),
         ])
     }

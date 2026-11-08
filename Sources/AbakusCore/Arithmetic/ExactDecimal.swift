@@ -34,12 +34,6 @@ struct ExactDecimal: Sendable {
 
     var isZero: Bool { magnitude.isZero }
 
-    /// Decimal places after removing trailing zeros: 0 for integers, 2 for 1.25.
-    var fractionDigits: Int {
-        let zeros = magnitude.strippingTrailingDecimalZeros().zeros
-        return max(0, -(exponent + zeros))
-    }
-
     static prefix func - (value: ExactDecimal) -> ExactDecimal {
         ExactDecimal(negative: !value.negative, magnitude: value.magnitude, exponent: value.exponent)
     }
@@ -68,6 +62,15 @@ struct ExactDecimal: Sendable {
 
     // MARK: Back to Decimal
 
+    /// How a value goes back into a `Decimal`.
+    enum Precision {
+        /// 38 significant digits: the results of DecimalMath's arithmetic.
+        case full
+        /// Exact when the value fits 38 significant digits; otherwise 15 significant digits, or whole units when
+        /// the integer part is longer: values shown to people, such as a mean or a total in days.
+        case readable
+    }
+
     /// A value rounded into a `Decimal`.
     struct Rounded {
         var value: Decimal
@@ -77,64 +80,139 @@ struct ExactDecimal: Sendable {
         var underflow: Bool
     }
 
-    struct Overflow: Error {}
+    enum RangeError: Error {
+        /// 10^165 or more.
+        case overflow
+        /// More than 38 significant digits at the requested decimal places.
+        case tooManyDigits
+    }
 
     /// The precision abakus uses: 38 significant digits, which always fit Decimal's 128-bit significand (39 digits
     /// sometimes do, but a precision that depends on the digits would be hard to state).
     static let precision = 38
+    /// The significant digits a readable result keeps when it is not exact.
+    static let readableDigits = 15
     static let significandLimit = BigUInt.powerOfTen(precision)
     /// Decimal's exponent range.
     static let minimumExponent = -128
     static let maximumExponent = 127
 
-    /// Rounds `self / divisor` into a `Decimal`, half away from zero (what Foundation calls `.plain`), to at most
-    /// 38 significant digits and at most `maxPlaces` decimal places. Digits below 10^-128 are rounded off.
-    /// Throws `Overflow` above Decimal's range (10^165 and more).
-    func rounded(dividingBy divisor: BigUInt = .one, maxPlaces: Int = 128) throws(Overflow) -> Rounded {
+    /// Rounds `self / divisor` into a `Decimal`, half away from zero (what Foundation calls `.plain`), with the
+    /// given precision. Digits below 10^-128 are rounded off; a non-zero value that rounds to zero comes back as
+    /// 0 with `underflow` set. Throws `.overflow` from 10^165 on.
+    func rounded(dividingBy divisor: BigUInt = .one, _ precision: Precision = .full) throws(RangeError) -> Rounded {
         precondition(!divisor.isZero, "ExactDecimal division by zero")
         if isZero { return Rounded(value: 0, exact: true, underflow: false) }
 
-        let lowestExponent = max(Self.minimumExponent, -maxPlaces)
-        // Start at an exponent where the quotient has more digits than fit, or where no digit is lost; the loop
-        // only ever moves up to the first exponent at which the rounded quotient fits.
-        var target: Int
+        // Divide once, at an exponent fine enough for every rounding below.
+        let base: Int
         if divisor == .one {
-            target = max(lowestExponent, exponent)
+            // Below its own exponent the value has only zeros.
+            base = max(Self.minimumExponent, exponent)
         } else {
-            // A lower bound for the position of the quotient's leading digit.
+            // 40 places below a lower bound for the quotient's leading digit: more digits than 38.
             let bits = magnitude.bitWidth - 1 - divisor.bitWidth
             let leading = Int((Double(bits) * 0.30102999566).rounded(.down)) + exponent - 1
-            target = max(lowestExponent, leading - 40)
+            base = max(Self.minimumExponent, leading - 40)
         }
+        let division = Division(self, dividingBy: divisor, at: base)
 
-        var quotient: BigUInt
-        var remainder: BigUInt
-        while true {
-            let numerator = magnitude.timesPowerOfTen(max(exponent - target, 0))
-            let denominator = divisor.timesPowerOfTen(max(target - exponent, 0))
-            (quotient, remainder) = numerator.quotientAndRemainder(dividingBy: denominator)
-            if remainder + remainder >= denominator {
-                quotient = quotient + .one
-            }
-            if quotient < Self.significandLimit { break }
-            // With D digits, the quotient cannot fit before D - 38 more places are dropped.
-            target += max(1, quotient.decimalDigitCount - Self.precision)
+        // `lead` is nil when the value is below 10^base, and base is then 10^-128.
+        let lead = division.leadingExponent
+        var target = lead.map { max(base, $0 - (Self.precision - 1)) } ?? base
+        var (significand, exact) = division.rounded(at: target, .halfAwayFromZero)
+        if !exact, precision == .readable, let lead {
+            let wholeUnits = max(0, lead - (Self.precision - 1))
+            target = max(base, min(lead - (Self.readableDigits - 1), wholeUnits))
+            significand = division.rounded(at: target, .halfAwayFromZero).significand
         }
-
-        if target > Self.maximumExponent {
-            quotient = quotient.timesPowerOfTen(target - Self.maximumExponent)
-            target = Self.maximumExponent
-            if quotient >= Self.significandLimit { throw Overflow() }
-        }
-        let exact = remainder.isZero
-        if quotient.isZero {
-            return Rounded(value: 0, exact: false, underflow: true)
-        }
-        return Rounded(value: Self.decimal(negative: negative, significand: quotient, exponent: target), exact: exact, underflow: false)
+        if significand.isZero { return Rounded(value: 0, exact: false, underflow: true) }
+        let value = try Self.decimal(negative: negative, significand: significand, exponent: target)
+        return Rounded(value: value, exact: exact, underflow: false)
     }
 
-    /// Builds a `Decimal` from parts that fit: `significand < 10^38`, exponent within -128...127.
-    private static func decimal(negative: Bool, significand: BigUInt, exponent: Int) -> Decimal {
+    /// Rounds `self / divisor` to `places` decimal places (negative: to tens, hundreds, ...) in the given mode.
+    /// A result of 0 is a result here, not an underflow. Throws when the result does not fit a `Decimal`.
+    func rounded(
+        dividingBy divisor: BigUInt = .one, toPlaces places: Int, _ mode: DecimalMath.RoundingMode
+    ) throws(RangeError) -> (value: Decimal, exact: Bool) {
+        precondition(!divisor.isZero, "ExactDecimal division by zero")
+        precondition(-places >= Self.minimumExponent, "rounding below 10^-128")
+        if isZero { return (0, true) }
+        let division = Division(self, dividingBy: divisor, at: -places)
+        let (significand, exact) = division.rounded(at: -places, mode)
+        if significand.isZero { return (0, exact) }
+        return (try Self.decimal(negative: negative, significand: significand, exponent: -places), exact)
+    }
+
+    /// `|value| / divisor` cut off at 10^base: one long division, from which every coarser rounding follows
+    /// without dividing again.
+    private struct Division {
+        let negative: Bool
+        let base: Int
+        /// floor(|value| / divisor / 10^base)
+        let truncated: BigUInt
+        let remainderIsZero: Bool
+        /// Whether the remainder is at least half a unit at 10^base.
+        let remainderIsHalfOrMore: Bool
+
+        init(_ value: ExactDecimal, dividingBy divisor: BigUInt, at base: Int) {
+            let numerator = value.magnitude.timesPowerOfTen(max(value.exponent - base, 0))
+            let denominator = divisor.timesPowerOfTen(max(base - value.exponent, 0))
+            let (quotient, remainder) = numerator.quotientAndRemainder(dividingBy: denominator)
+            negative = value.negative
+            self.base = base
+            truncated = quotient
+            remainderIsZero = remainder.isZero
+            remainderIsHalfOrMore = remainder + remainder >= denominator
+        }
+
+        /// The exponent of the leading digit, or nil when the value is below 10^base.
+        var leadingExponent: Int? {
+            truncated.isZero ? nil : base + truncated.decimalDigitCount - 1
+        }
+
+        /// The value rounded at 10^target (`target >= base`), as the significand for that exponent.
+        func rounded(at target: Int, _ mode: DecimalMath.RoundingMode) -> (significand: BigUInt, exact: Bool) {
+            precondition(target >= base, "rounding finer than the division")
+            var quotient = truncated
+            var halfOrMore = remainderIsHalfOrMore
+            var tailIsZero = remainderIsZero
+            if target > base {
+                let (cut, dropped) = truncated.quotientAndRemainder(dividingBy: BigUInt.powerOfTen(target - base))
+                quotient = cut
+                // Half a unit at 10^target is a whole number of units at 10^base, so the remainder below 10^base
+                // cannot tip the comparison.
+                halfOrMore = dropped >= BigUInt.powerOfTen(target - base - 1) * BigUInt(5)
+                tailIsZero = dropped.isZero && remainderIsZero
+            }
+            let up = switch mode {
+            case .towardZero: false
+            case .halfAwayFromZero: halfOrMore
+            case .down: negative && !tailIsZero
+            case .up: !negative && !tailIsZero
+            }
+            return (up ? quotient + .one : quotient, tailIsZero)
+        }
+    }
+
+    /// Builds a `Decimal` from a significand and an exponent of -128 or more, moving trailing zeros into the
+    /// exponent, or exponent digits into the significand, where needed.
+    private static func decimal(negative: Bool, significand: BigUInt, exponent: Int) throws(RangeError) -> Decimal {
+        precondition(exponent >= minimumExponent)
+        var significand = significand
+        var exponent = exponent
+        if significand >= significandLimit || exponent > maximumExponent {
+            let (stripped, zeros) = significand.strippingTrailingDecimalZeros()
+            significand = stripped
+            exponent += zeros
+            if significand >= significandLimit { throw .tooManyDigits }
+            if exponent > maximumExponent {
+                significand = significand.timesPowerOfTen(exponent - maximumExponent)
+                exponent = maximumExponent
+                if significand >= significandLimit { throw .overflow }
+            }
+        }
         let low = significand.limbs.count > 0 ? significand.limbs[0] : 0
         let high = significand.limbs.count > 1 ? significand.limbs[1] : 0
         let words: [UInt16] = (0..<8).map { index in

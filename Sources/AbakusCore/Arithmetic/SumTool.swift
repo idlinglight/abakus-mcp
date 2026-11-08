@@ -20,8 +20,9 @@ public struct SumTool: Tool {
         [{"index": 0, "input": "410k", "value": 410000}]; check it when an input could be read two ways. JSON \
         numbers are not listed. The total is exact unless it has more than 38 significant digits; then it is \
         rounded and total_exact: false is added. The mean is exact when it fits in 38 digits; otherwise it is \
-        rounded half away from zero to six more decimal places than the most precise input has, and \
-        mean_exact: false is added. Without these flags, total and mean are exact.
+        rounded half away from zero to 15 significant digits (to whole units when the integer part is longer; \
+        1/3 shows as 0.333333333333333), and mean_exact: false is added. Without these flags, total and mean are \
+        exact.
         """
 
     public let inputSchema: JSONValue = [
@@ -39,10 +40,6 @@ public struct SumTool: Tool {
     ]
 
     public let annotations = ToolAnnotations(title: "Exact sum", readOnly: true, destructive: false, idempotent: true)
-
-    /// How many more decimal places than the most precise input a rounded mean shows: its rounding error then
-    /// stays below a millionth of the inputs' last place.
-    static let extraMeanPlaces = 6
 
     public func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
         if let unknown = arguments.keys.first(where: { !["numbers", "decimal"].contains($0) }) {
@@ -81,30 +78,21 @@ public struct SumTool: Tool {
         if values.isEmpty {
             result["mean"] = .null
         } else {
-            let mean = try self.mean(exactTotal, count: values.count, places: meanPlaces(values))
+            // From the exact total, not the rounded one.
+            let mean: DecimalMath.Result
+            do {
+                mean = try DecimalMath.round(exactTotal, dividingBy: BigUInt(UInt64(values.count)), .readable)
+            } catch {
+                // Only an underflow is possible: the mean is never larger than the total.
+                throw ToolError(
+                    "The mean, \(total.value) / \(values.count), is below 10^-128, too close to zero for exact decimal "
+                        + "arithmetic. The total itself is \(total.exact ? "exact" : "rounded"): \(total.value)."
+                )
+            }
             result["mean"] = .decimal(mean.value)
             if !mean.exact { result["mean_exact"] = false }
         }
         if !read.isEmpty { result["read"] = .array(read) }
         return result
-    }
-
-    private func meanPlaces(_ values: [Decimal]) -> Int {
-        values.map { ExactDecimal($0).fractionDigits }.max()! + Self.extraMeanPlaces
-    }
-
-    /// The mean of the exact total (not of the rounded one): exact when it fits, otherwise rounded to `places`.
-    /// A mean too close to zero to show is 0, inexact, rather than an error for the whole call.
-    private func mean(_ total: ExactDecimal, count: Int, places: Int) throws(ToolError) -> DecimalMath.Result {
-        let divisor = BigUInt(UInt64(count))
-        do {
-            let full = try total.rounded(dividingBy: divisor)
-            if full.exact { return DecimalMath.Result(value: full.value, exact: true) }
-            let rounded = try total.rounded(dividingBy: divisor, maxPlaces: places)
-            return DecimalMath.Result(value: rounded.value, exact: false)
-        } catch {
-            // The mean is never larger than the total, which did not overflow.
-            throw DecimalMath.overflow
-        }
     }
 }
