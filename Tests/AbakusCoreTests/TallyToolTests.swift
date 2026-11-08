@@ -254,22 +254,31 @@ import Testing
     @Test func dropsUnknownNamesWithoutSuggestingToCreateOne() throws {
         let state = TallyTestState()
         let empty = try #require(state.failure("tally_drop", ["name": "items"]))
-        #expect(empty.message.hasSuffix("No tallies exist right now, so there is nothing to drop."))
+        #expect(empty.message == """
+            There is no tally named "items". It may already have been dropped (a repeated tally_drop ends here), \
+            it may never have been created (check the spelling), or it may have expired: macOS deletes tallies \
+            that have not changed for about three days. No tallies exist right now, so there is nothing to drop.
+            """)
 
         let solo = try #require(try state.call("tally_create", ["name": "solo"])["name"]?.stringValue)
         let one = try #require(state.failure("tally_drop", ["name": "solo"]))
-        #expect(one.message.contains("exists: \"\(solo)\" (created 2026-11-08T09:30:00Z, value 0, count 0). It may belong to another session: drop it only if you know you created it (compare its created time with when you created yours). If unsure, leave it: a tally expires by itself after about three days without a change. details.matching shows it;"))
-        #expect(!one.message.contains("tally_create."))
+        #expect(one.message.contains("exists: \"\(solo)\" (created 2026-11-08T09:30:00Z, value 0, count 0). It may belong to another session: drop it only if you know you created it (compare its created time with when you created yours). If unsure, leave it to expire. details.matching shows it;"))
+        #expect(!suggestsCreating(one.message))
 
         try state.call("tally_create", ["name": "solo"])
         let two = try #require(state.failure("tally_drop", ["name": "solo"]))
         #expect(two.message.contains("They may belong to other sessions: drop one only if you know you created it"))
-        #expect(two.message.contains("If unsure, leave them: a tally expires by itself"))
+        #expect(two.message.contains("If unsure, leave them to expire."))
 
         let plain = try #require(state.failure("tally_drop", ["name": "other"]))
         #expect(plain.details?.keys == ["name", "existing"])
         #expect(plain.message.hasSuffix("details.existing lists the tallies that exist. Nothing was dropped."))
-        #expect(!plain.message.contains("tally_create"))
+        #expect(!suggestsCreating(plain.message))
+        #expect(!suggestsCreating(empty.message))
+        func suggestsCreating(_ message: String) -> Bool {
+            let lowered = message.lowercased()
+            return lowered.contains("create a new") || lowered.contains("create it")
+        }
     }
 
     @Test func capsTheListOfExistingNames() throws {

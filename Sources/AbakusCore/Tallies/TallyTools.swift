@@ -92,7 +92,7 @@ struct TallyAdd: Tool {
         over, in every response). Thresholds never block. Negative amounts subtract. \
         \(NumberReader.rulesInBrief) A string's reading is shown under read. An unknown name is an error, never a \
         new tally: the name may be misspelled, lack the suffix tally_create gave it, or have expired (unchanged \
-        for about three days). The error lists the tallies whose names start with the name you gave, with when \
+        for about three days). If tallies whose names start with the name you gave exist, the error shows them with when \
         each was created.
         """
 
@@ -156,7 +156,8 @@ struct TallySet: Tool {
     let description = """
         Correct a tally: set its value and/or count, or replace its thresholds (an empty list removes them). For \
         fixing a miscount or changing a budget; normal counting is tally_add. Reports no crossings; returns the \
-        full state. \(NumberReader.rulesInBrief) An unknown name is an error.
+        full state. \(NumberReader.rulesInBrief) An unknown name is an error, never a new tally. If tallies \
+        whose names start with the name you gave exist, the error shows them with when each was created.
         """
 
     let inputSchema: JSONValue = [

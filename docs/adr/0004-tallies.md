@@ -129,9 +129,9 @@ consumers relying on `unique`.
 ## Amendment 2026-11-08: the advice for unknown names in `tally_drop`
 
 The error for an unknown name told every tool's caller to create a new tally when unsure, which makes no sense
-for a drop. `tally_drop`'s error now says, when tallies with the name plus a suffix exist, to drop one only when
-the agent knows it created it and otherwise to leave it, since a tally expires by itself after about three
-days; without such tallies, that nothing was dropped. `tally_add` and `tally_set` keep the advice to create a new
-tally. `tally_add`'s description no longer points to `tally_list` for finding a name, which steered agents
-towards other sessions' tallies; it says the error lists the tallies whose names start with the name given, with
-when each was created.
+for a drop. `tally_drop`'s error now names a repeated drop as the first possible cause, and says, when tallies
+with the name plus a suffix exist, to drop one only when the agent knows it created it and otherwise to leave it
+to expire; without such tallies, that nothing was dropped. `tally_add` and `tally_set` keep the advice to create a
+new tally. `tally_add`'s description no longer points to `tally_list` for finding a name, which steered agents
+towards other sessions' tallies; it and `tally_set`'s description say that the error shows the tallies whose
+names start with the name given, with when each was created.
