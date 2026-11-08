@@ -35,3 +35,6 @@ jobs:
 
       - name: Test
         run: swift test --skip-build
+
+      - name: End-to-end check (MCP and CLI)
+        run: zsh dev/check.zsh

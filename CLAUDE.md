@@ -1,16 +1,25 @@
 # Working in this repository
 
-- SwiftPM package, macOS only. `swift build`, `swift test`. Tests use Swift Testing (`import Testing`).
+- SwiftPM package, macOS only. `swift build`, `swift test`, then `dev/check.zsh` (end to end against the
+  debug binary: both MCP eras and the CLI, in a scratch state folder). Tests use Swift Testing.
 - Targets: `AbakusCore` (all tool behaviour), `AbakusMCP` (the MCP server), `abakus` (the executable:
   `abakus mcp` and the CLI). A tool is defined once in the core as a `Tool` and listed in its area's `all`
-  (`TallyTools`, `ArithmeticTools`, `DateTools`), which `Catalog` concatenates.
+  (`TallyTools`, `ArithmeticTools`, `DateTools`), which `Catalog` concatenates. CLI commands only build a
+  tool's arguments and print its result (`ToolRunner`); behaviour never lives in the CLI.
+- A new or changed tool: update its description, the README section and tool table, `dev/check.zsh` if the
+  end-to-end path changes, and the ADR if a decision changes.
+- `install.zsh` installs into the user's `~/.local/bin`; only run it when asked. Agents test with the debug
+  build and `ABAKUS_STATE_DIR` pointing at a scratch folder.
+- Never use Foundation's `Decimal` arithmetic (`+ - * /`, `NSDecimal*`, `NSDecimalRound`) or
+  `Decimal(string:)`: they truncate, miss overflow and round silently (ADR-0005 amendment). Use `DecimalMath`
+  and `NumberReader`.
 - Decisions are ADRs in `docs/adr/` (`# ADR-NNNN: Title`, a status line, then Context, Decision,
   Consequences). A change that contradicts an ADR amends it or adds a new one. Keep the README's ADR list
   and tool table in step.
 - Dependencies only from `github.com/apple` and `github.com/swiftlang` (ADR-0001). Adding or updating one
   goes through the version and owner checks described there, never around them.
-- No binary floating point for numbers that reach a user: `Decimal`, and `JSONValue.number` keeps literals as
-  text (ADR-0005). There is deliberately no float literal for `JSONValue`.
+- No binary floating point for numbers that reach a user: `Decimal` as storage, and `JSONValue.number` keeps
+  literals as text (ADR-0005). There is deliberately no float literal for `JSONValue`.
 - Tests never touch real state: anything that writes uses a fresh temporary folder as the
   `ToolContext.stateDirectory`, never `ToolContext.live()`.
 - Tool descriptions, error messages and the server's instructions are written for an agent reading them:

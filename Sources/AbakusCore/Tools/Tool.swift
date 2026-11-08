@@ -44,6 +44,13 @@ public struct ToolError: Error, Sendable, Equatable {
         self.message = message
         self.details = details
     }
+
+    /// The error as an agent reads it, over MCP and on the command line alike: the message, then the details
+    /// as compact JSON on a line of their own.
+    public var text: String {
+        guard let details else { return message }
+        return message + "\nDetails: " + JSONWriter.write(details)
+    }
 }
 
 /// What a tool may use from its surroundings. Tests build their own; the server and the CLI use `live()`.
