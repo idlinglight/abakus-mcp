@@ -123,7 +123,9 @@ import Testing
         #expect(failure([:])?.message.contains("numbers is missing") == true)
         #expect(failure(["numbers": 5])?.message.contains("must be a list") == true)
         #expect(failure(["numbers": [1], "decimal": ";"])?.message.contains("decimal must be") == true)
-        #expect(failure(["numbers": [1], "decimal_mark": ","])?.message.contains("Unknown argument \"decimal_mark\"") == true)
+        let unknown = failure(["numbers": [1], "decimal_mark": ","])
+        #expect(unknown?.message == "Unknown argument \"decimal_mark\". sum takes \"numbers\" (required) and \"decimal\".")
+        #expect(unknown?.details == ["argument": "decimal_mark"])
     }
 
     @Test func totalOverflowIsAnError() {

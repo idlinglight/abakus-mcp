@@ -56,9 +56,7 @@ public struct DateDiffTool: Tool {
     }()
 
     public func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
-        if let unknown = arguments.keys.first(where: { !["from", "to"].contains($0) }) {
-            throw ToolError("Unknown argument \"\(unknown)\". date_diff takes from (required) and to.")
-        }
+        try UnknownArguments.refuse(arguments, for: self)
         var cachedNow: Instant?
         let now = { () throws(ToolError) -> Instant in
             if let cachedNow { return cachedNow }

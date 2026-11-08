@@ -231,7 +231,9 @@ import Testing
         #expect(failure([:])?.message.contains("from is missing") == true)
         #expect(failure(["from": 20261108])?.message.contains("from must be a string") == true)
         #expect(failure(["from": "2026-11-08", "to": true])?.message.contains("to must be a string") == true)
-        #expect(failure(["from": "2026-11-08", "until": "2026-12-01"])?.message.contains("Unknown argument \"until\"") == true)
+        let unknown = failure(["from": "2026-11-08", "until": "2026-12-01"])
+        #expect(unknown?.message == "Unknown argument \"until\". date_diff takes \"from\" (required) and \"to\".")
+        #expect(unknown?.details == ["argument": "until"])
     }
 
     /// Random pairs of instants: the calendar breakdown added to the earlier instant gives the later one, and the
