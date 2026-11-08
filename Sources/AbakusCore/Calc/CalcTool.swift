@@ -4,7 +4,8 @@ import Foundation
 ///
 /// The expression is parsed (`CalcParser`), the tallies it names are read under one lock, and the tree is worked
 /// out from the leaves up with `CalcExpression.fold`, never recursively: a 1000-character chain of one operator is
-/// a tree about 500 levels deep. Nothing is rounded until `Fraction.decimalResult()` rounds the result, once.
+/// a tree about 500 levels deep. Nothing is rounded until `Fraction.decimalResult()` rounds the result, once. Every
+/// error says where in the expression it happened, and what to do instead.
 public struct CalcTool: Tool {
     public init() {}
 
@@ -38,15 +39,16 @@ public struct CalcTool: Tool {
 
         Nothing is rounded before the result: the arithmetic is exact across the whole expression (1/3*3 is 1), so \
         put the whole formula into one call instead of feeding a rounded result into the next. The result is a \
-        JSON number, exact when it fits in 38 significant digits; otherwise it is rounded half away from zero to 15 \
-        significant digits (to whole units when the integer part is longer), exact: false is added, and fraction \
+        JSON number, exact when it fits in 38 significant digits and has no digits below 10^-128; otherwise it is \
+        rounded half away from zero to 15 significant digits (to whole units when the integer part is longer), \
+        exact: false is added, and fraction \
         gives the exact value as a string ("1/3"), left out when its numerator or denominator has more than 100 \
         digits. Trailing zeros are dropped: round(12.5, 2) gives 12.5. A tally whose value was rounded before \
         (exact: false in its state) makes the result exact: false too.
 
         Response: {"result", "read", "tallies"}. read is the expression as it was understood, numbers written out \
-        (410k as 410000) and parentheses around every operation but the outermost; check it when the expression \
-        could be read two ways. tallies (left out when there are none) lists each tally used with the number taken \
+        (410k as 410000) and parentheses around every operation but the outermost, except along a chain of + or of \
+        * (1 + 2 + 3); check it when the expression could be read two ways. tallies (left out when there are none) lists each tally used with the number taken \
         from it, as {"name", "of": "value" or "count", "value"}, plus "exact": false for a rounded one. exact: false \
         appears only when the result was rounded or uses a rounded tally, fraction only when the result itself was \
         rounded.
@@ -74,19 +76,20 @@ public struct CalcTool: Tool {
         let expression = try CalcParser.parse(text)
 
         // Without references the state folder is never touched.
-        let references = Self.references(in: expression)
-        let tallies = references.isEmpty ? [:] : try Self.read(references.map(\.name), in: context)
-        let used = references.map { reference in
-            // read(_:in:) returns every name asked for or throws.
-            UsedTally(reference: reference, tally: tallies[reference.name]!)
+        let (references, positions) = Self.references(in: expression)
+        let used = references.isEmpty ? [] : try Self.read(references, positions: positions, text: text, in: context)
+        let details = Self.details(used)
+        var values: [Reference: Fraction] = [:]
+        for item in used {
+            values[item.reference] = try item.number()
         }
 
-        let value = try Self.evaluate(expression, text: text, tallies: tallies, used: used)
+        let value = try Self.evaluate(expression, text: text, values: values, details: details)
         let rounded: Fraction.DecimalResult
         do throws(FractionError) {
             rounded = try value.decimalResult()
         } catch {
-            throw Self.resultError(error, used: used)
+            throw Self.resultError(error, value: value, details: details)
         }
 
         var result: JSONObject = ["result": .decimal(rounded.value)]
@@ -108,22 +111,11 @@ public struct CalcTool: Tool {
         }
         guard let text = value.stringValue else {
             throw ToolError(
-                "expression must be a string with the formula, not \(Self.kind(of: value)); e.g. \(example) or "
+                "expression must be a string with the formula, not \(value.kindForMessage); e.g. \(example) or "
                     + #"{"expression": "1250 * 1.19"}."#
             )
         }
         return text
-    }
-
-    private static func kind(of value: JSONValue) -> String {
-        switch value {
-        case .null: "null"
-        case .bool: "true or false"
-        case .number: "a JSON number"
-        case .string: "a string"
-        case .array: "a list"
-        case .object: "an object"
-        }
     }
 
     // MARK: Tallies
@@ -132,6 +124,9 @@ public struct CalcTool: Tool {
     struct Reference: Hashable {
         var name: String
         var of: CalcTallyField
+
+        /// As `read` writes it: `{name}` or `{name:count}`.
+        var written: String { of == .count ? "{\(name):count}" : "{\(name)}" }
     }
 
     /// One distinct reference with the tally it was read from.
@@ -141,6 +136,21 @@ public struct CalcTool: Tool {
 
         /// A rounded value went into the result. A count is always exact.
         var isInexact: Bool { reference.of == .value && !tally.exact }
+
+        /// The number taken from the tally, exactly.
+        func number() throws(ToolError) -> Fraction {
+            switch reference.of {
+            case .count:
+                return Fraction(tally.count)
+            case .value:
+                do throws(FractionError) {
+                    return try Fraction(tally.value)
+                } catch {
+                    // Not reached: tally files are read by NumberReader, which never gives NaN.
+                    throw ToolError("The tally \"\(tally.name)\" holds a value that is not a number. Nothing was computed.")
+                }
+            }
+        }
 
         /// `{"name", "of", "value"}`, plus `"exact": false` for a rounded value.
         var entry: JSONObject {
@@ -154,67 +164,112 @@ public struct CalcTool: Tool {
         }
     }
 
-    /// Each distinct reference once, in the order of first appearance in the text. `fold` combines the leaves
-    /// left to right.
-    static func references(in expression: CalcExpression) -> [Reference] {
+    /// Each distinct reference once, in the order of first appearance in the text (`fold` combines the leaves left
+    /// to right), and where each name first appears.
+    static func references(in expression: CalcExpression) -> (references: [Reference], positions: [String: Int]) {
         var references: [Reference] = []
         var seen: Set<Reference> = []
+        var positions: [String: Int] = [:]
         expression.fold { (node: CalcExpression, _: [Void]) in
-            if case .tally(let name, let of) = node.node, seen.insert(Reference(name: name, of: of)).inserted {
-                references.append(Reference(name: name, of: of))
-            }
+            guard case .tally(let name, let of) = node.node else { return }
+            if positions[name] == nil { positions[name] = node.position }
+            let reference = Reference(name: name, of: of)
+            if seen.insert(reference).inserted { references.append(reference) }
         }
-        return references
+        return (references, positions)
     }
 
-    /// The named tallies, all under one shared lock, so their values come from one moment. The first name without
-    /// a tally, in the order given, is the tally tools' unknown-name error.
-    private static func read(_ names: [String], in context: ToolContext) throws(ToolError) -> [String: Tally] {
-        try TallyStore(context).read { files throws(ToolError) in
-            var tallies: [String: Tally] = [:]
-            for name in names where tallies[name] == nil {
-                switch try files.inspect(name) {
-                case .tally(let tally):
-                    tallies[name] = tally
-                case .missing:
-                    throw try files.unknown(name, use: .read)
-                case .unreadable(let problem):
-                    let error = TallyErrors.unreadable(name, path: files.path(name), problem: problem)
-                    throw ToolError(error.message + " Nothing was computed.", details: error.details)
+    /// What reading the tallies under the lock came to.
+    private enum TallyRead {
+        case found([String: Tally])
+        /// The first name without a tally, with the tally tools' error for it.
+        case unknown(name: String, ToolError)
+    }
+
+    /// The tallies the references name, all under one shared lock, so their values come from one moment. The first
+    /// name without a tally, in the order of the text, is the tally tools' unknown-name error, after where it is.
+    private static func read(
+        _ references: [Reference], positions: [String: Int], text: String, in context: ToolContext
+    ) throws(ToolError) -> [UsedTally] {
+        var names: [String] = []
+        for reference in references where !names.contains(reference.name) {
+            names.append(reference.name)
+        }
+        let outcome: TallyRead
+        do throws(ToolError) {
+            outcome = try TallyStore(context).read { files throws(ToolError) -> TallyRead in
+                var tallies: [String: Tally] = [:]
+                for name in names {
+                    switch try files.inspect(name) {
+                    case .tally(let tally):
+                        tallies[name] = tally
+                    case .missing:
+                        return .unknown(name: name, try files.unknown(name, use: .read))
+                    case .unreadable(let problem):
+                        throw TallyErrors.unreadable(name, path: files.path(name), problem: problem)
+                    }
                 }
+                return .found(tallies)
             }
-            return tallies
+        } catch {
+            // Whatever failed here (a damaged file, a folder that cannot be read or locked), no tally was used.
+            throw ToolError(error.message + " Nothing was computed.", details: error.details)
+        }
+        switch outcome {
+        case .unknown(let name, let error):
+            // The tally tools' text and details unchanged, after where the reference is, as calc's other errors say it.
+            let written = references.first { $0.name == name }?.written ?? "{\(name)}"
+            let at = positions[name].map { CalcParser.at($0, of: text) } ?? "in \(text.quotedForMessage)"
+            throw ToolError(
+                "\(written) \(at): " + error.message.prefix(1).lowercased() + error.message.dropFirst(),
+                details: error.details
+            )
+        case .found(let tallies):
+            return references.compactMap { reference in
+                tallies[reference.name].map { UsedTally(reference: reference, tally: $0) }
+            }
         }
     }
 
     // MARK: Evaluation
 
-    /// The exact value of the expression, from the leaves up. A failure names the operation and where it is.
+    /// The exact value of the expression, from the leaves up, with each reference's number from `values`. A failure
+    /// names the operation and where it is.
     private static func evaluate(
-        _ expression: CalcExpression, text: String, tallies: [String: Tally], used: [UsedTally]
+        _ expression: CalcExpression, text: String, values: [Reference: Fraction], details: JSONObject?
     ) throws(ToolError) -> Fraction {
         try expression.fold { (node: CalcExpression, operands: [Fraction]) throws(ToolError) -> Fraction in
+            let result: Fraction?
             do throws(FractionError) {
-                return try combine(node, operands, tallies: tallies)
+                result = try combine(node, operands, values: values)
             } catch {
-                throw evaluationError(error, at: node, operands: operands, text: text, used: used)
+                throw evaluationError(error, at: node, operands: operands, text: text, details: details)
             }
+            guard let result else {
+                // Not reached: every reference is read before evaluating, and the parser checks the arguments.
+                throw ToolError(
+                    "calc has no value for \(node.rendered) \(CalcParser.at(node.position, of: text)), which is a bug "
+                        + "in abakus. Nothing was computed.",
+                    details: details
+                )
+            }
+            return result
         }
     }
 
-    /// One node, given the values of its children. The parser has checked the number of a call's arguments.
+    /// One node, given the values of its children; nil when something it needs is missing.
     private static func combine(
-        _ node: CalcExpression, _ operands: [Fraction], tallies: [String: Tally]
-    ) throws(FractionError) -> Fraction {
+        _ node: CalcExpression, _ operands: [Fraction], values: [Reference: Fraction]
+    ) throws(FractionError) -> Fraction? {
         switch node.node {
         case .number(let value, _):
             return try Fraction(value)
         case .tally(let name, let field):
-            guard let tally = tallies[name] else { preconditionFailure("calc: the tally \(name) was not read") }
-            return field == .count ? Fraction(tally.count) : try Fraction(tally.value)
+            return values[Reference(name: name, of: field)]
         case .negation:
-            return -operands[0]
+            return operands.first.map { -$0 }
         case .binary(let op, _, _):
+            guard operands.count == 2 else { return nil }
             let (lhs, rhs) = (operands[0], operands[1])
             switch op {
             case .add: return try lhs + rhs
@@ -225,10 +280,15 @@ public struct CalcTool: Tool {
             }
         case .call(let function, _):
             switch function {
-            case .abs: return operands[0].magnitude
-            case .round: return try operands[0].rounded(toPlaces: operands[1])
-            case .min: return operands.dropFirst().reduce(operands[0], Swift.min)
-            case .max: return operands.dropFirst().reduce(operands[0], Swift.max)
+            case .abs:
+                return operands.first?.magnitude
+            case .round:
+                guard operands.count == 2 else { return nil }
+                return try operands[0].rounded(toPlaces: operands[1])
+            case .min:
+                return operands.min()
+            case .max:
+                return operands.max()
             }
         }
     }
@@ -237,60 +297,107 @@ public struct CalcTool: Tool {
 
     /// An error while working out `node`: what happened, where (as the parser says it), and what to do instead.
     private static func evaluationError(
-        _ error: FractionError, at node: CalcExpression, operands: [Fraction], text: String, used: [UsedTally]
+        _ error: FractionError, at node: CalcExpression, operands: [Fraction], text: String, details: JSONObject?
     ) -> ToolError {
         let at = CalcParser.at(node.position, of: text)
+        let exponents = "\(Fraction.exponentRange.lowerBound) to \(Fraction.exponentRange.upperBound)"
+        let places = "\(Fraction.placesRange.lowerBound) to \(Fraction.placesRange.upperBound)"
+        let placesExamples = "round(x, 2) for two decimal places, round(x, 0) for a whole number, round(x, -3) for thousands."
         let message: String
         switch (error, node.node) {
         case (.divisionByZero, .binary(.power, let base, _)):
             message = "0 raised to a negative power \(at): the base\(named(base)) is 0, and 0 ^ -n is 1 / 0^n, a "
-                + "division by zero, which has no result. Check the base, or use an exponent of 0 or more."
+                + "division by zero. " + whileZero(base, "base")
         case (.divisionByZero, .binary(_, _, let divisor)):
-            message = "Division by zero \(at): the divisor\(named(divisor)) is 0, and dividing by 0 has no result. "
-                + "Check the divisor; if it can be 0 (a tally nothing was added to yet, say), handle that case without "
-                + "the division."
+            message = "Division by zero \(at): the divisor\(named(divisor)) is 0. " + whileZero(divisor, "divisor")
         case (.tooManyDigits, _):
             message = "\(operation(node)) \(at) gives a value with more than \(Fraction.digitLimit) digits in its "
                 + "numerator or denominator: calc keeps every value as an exact fraction and stops at "
-                + "\(Fraction.digitLimit) digits. Use a smaller exponent, or round an inner part with round(x, places) "
-                + "first."
-        case (.exponentNotWhole, .binary(.power, _, let exponent)):
+                + "\(Fraction.digitLimit) digits. " + fewerDigits(node)
+        case (.exponentNotWhole, .binary(.power, _, let exponent)) where operands.count == 2:
             message = "The power \(at) has the exponent \(value(exponent, operands[1])), which is not a whole number: "
-                + "calc has no roots and no fractional powers. ^ takes whole-number exponents from "
-                + "\(Fraction.exponentRange.lowerBound) to \(Fraction.exponentRange.upperBound)."
-        case (.exponentOutOfRange, .binary(.power, _, let exponent)):
-            message = "The power \(at) has the exponent \(value(exponent, operands[1])), outside "
-                + "\(Fraction.exponentRange.lowerBound) to \(Fraction.exponentRange.upperBound), the exponents ^ "
-                + "takes. Use an exponent in that range."
-        case (.placesNotWhole, .call(_, let arguments)):
+                + "calc has no roots and no fractional powers. ^ takes whole-number exponents from \(exponents)."
+        case (.exponentOutOfRange, .binary(.power, _, let exponent)) where operands.count == 2:
+            message = "The power \(at) has the exponent \(value(exponent, operands[1])), outside \(exponents), the "
+                + "exponents ^ takes. Use an exponent in that range."
+        case (.placesNotWhole, .call(_, let arguments)) where operands.count == 2 && arguments.count == 2:
             message = "round \(at) has the places \(value(arguments[1], operands[1])), which is not a whole number. "
-                + "Write a whole number from \(Fraction.placesRange.lowerBound) to \(Fraction.placesRange.upperBound): "
-                + "round(x, 2) for two decimal places, round(x, 0) for a whole number, round(x, -3) for thousands."
-        case (.placesOutOfRange, .call(_, let arguments)):
-            message = "round \(at) has the places \(value(arguments[1], operands[1])), outside "
-                + "\(Fraction.placesRange.lowerBound) to \(Fraction.placesRange.upperBound), the places round takes: "
-                + "round(x, 2) for two decimal places, round(x, 0) for a whole number, round(x, -3) for thousands."
+                + "Write a whole number from \(places): \(placesExamples)"
+        case (.placesOutOfRange, .call(_, let arguments)) where operands.count == 2 && arguments.count == 2:
+            message = "round \(at) has the places \(value(arguments[1], operands[1])), outside \(places), the places "
+                + "round takes: \(placesExamples)"
         default:
             // Not reached: each error comes from the operation it is paired with above, and overflow and underflow
             // only from the result.
             message = "\(operation(node)) \(at) cannot be worked out (\(error)). Nothing was computed."
         }
-        return ToolError(message, details: details(used))
+        return ToolError(message, details: details)
     }
 
-    /// The result does not fit a `Decimal`: the range errors of ADR-0005, with what to do.
-    private static func resultError(_ error: FractionError, used: [UsedTally]) -> ToolError {
-        let message = switch error {
-        case .overflow:
-            DecimalMath.overflow.message
-                + " Divide the expression by a power of ten (1e100, say) to see its leading digits."
-        case .underflow:
-            DecimalMath.underflow.message
-                + " Multiply the expression by a power of ten (1e100, say) to see its leading digits."
+    /// What to do about a divisor (or the base of a negative power) that is 0, by the tallies it uses.
+    private static func whileZero(_ operand: CalcExpression, _ role: String) -> String {
+        let names = tallyNames(in: operand).map(\.quotedForMessage)
+        let start = "While the \(role) is 0, the result has no value: report that, or "
+        switch names.count {
+        case 0: return start + "change the \(role)."
+        case 1: return start + "calculate again once something has been added to the tally \(names[0])."
         default:
-            "The result cannot be worked out (\(error)). Nothing was computed."
+            return start + "calculate again once the tallies \(names.listedInProse) have changed (details.tallies "
+                + "has their values)."
         }
-        return ToolError(message, details: details(used))
+    }
+
+    /// How to stay within the digit limit, by the operation that went past it.
+    private static func fewerDigits(_ node: CalcExpression) -> String {
+        switch node.node {
+        case .binary(.power, _, _): "Use a smaller exponent, or a base with fewer digits."
+        case .call(.round, _): "Round to fewer decimal places, or round a smaller value."
+        default: "Use smaller operands, or round an inner part first with round(x, places)."
+        }
+    }
+
+    /// The result does not fit a `Decimal`: how far out of range it is, and the power of ten that brings it back.
+    private static func resultError(_ error: FractionError, value: Fraction, details: JSONObject?) -> ToolError {
+        // 10^e <= |value| < 10^(e + 1)
+        let e = decimalExponent(of: value.magnitude)
+        let lies = value.negative ? "between -10^\(e + 1) and -10^\(e)" : "between 10^\(e) and 10^\(e + 1)"
+        let message: String
+        switch error {
+        case .overflow:
+            message = "The result is too large for exact decimal arithmetic, which ends below "
+                + "10^\(ExactDecimal.overflowExponent): it lies \(lies). Values on the way may be larger, up to "
+                + "\(Fraction.digitLimit) digits; only the result has to fit. "
+                + scaled(by: e, verb: "divide", op: "/", negative: value.negative)
+        case .underflow:
+            message = "The result is not 0, but it lies \(lies) and rounds to 0 at 10^\(ExactDecimal.minimumExponent), "
+                + "the finest step of exact decimal arithmetic. Values on the way may be smaller, with up to "
+                + "\(Fraction.digitLimit) digits in a denominator; only the result has to fit. "
+                + scaled(by: -e, verb: "multiply", op: "*", negative: value.negative)
+        default:
+            message = "The result cannot be worked out (\(error)). Nothing was computed."
+        }
+        return ToolError(message, details: details)
+    }
+
+    /// The advice to bring a result back into range with 10^k.
+    private static func scaled(by k: Int, verb: String, op: String, negative: Bool) -> String {
+        // 10^k has k + 1 digits.
+        guard k < Fraction.digitLimit else {
+            return "It cannot be brought into range: that takes a factor of 10^\(k), which has more than "
+                + "\(Fraction.digitLimit) digits."
+        }
+        return "To see its leading digits, \(verb) the whole expression by 10^\(k), as in (…) \(op) 10^\(k); that "
+            + "result lies between \(negative ? "-10 and -1" : "1 and 10")."
+    }
+
+    /// floor(log10(value)) for a value above 0, exactly.
+    private static func decimalExponent(of value: Fraction) -> Int {
+        let estimate = value.numerator.description.count - value.denominator.description.count
+        // value lies between 10^(estimate - 1) and 10^(estimate + 1); which side of 10^estimate decides.
+        let below = estimate >= 0
+            ? value.numerator < value.denominator * BigUInt.powerOfTen(estimate)
+            : value.numerator * BigUInt.powerOfTen(-estimate) < value.denominator
+        return below ? estimate - 1 : estimate
     }
 
     /// The tallies an expression used, for errors that come after reading them: a division by zero is often a
@@ -314,28 +421,52 @@ public struct CalcTool: Tool {
         }
     }
 
-    /// An operand as written (in `read`'s notation, in parentheses when it is an operation), after `separator`;
-    /// nothing when it is too long to repeat.
-    private static func shown(_ operand: CalcExpression, _ separator: String) -> String {
-        let text = operand.rendered
-        guard text.count <= 40 else { return "" }
-        if case .binary = operand.node { return separator + "(" + text + ")" }
-        return separator + text
+    /// The names of the tallies in an expression, each once, in order.
+    private static func tallyNames(in expression: CalcExpression) -> [String] {
+        var names: [String] = []
+        expression.fold { (node: CalcExpression, _: [Void]) in
+            if case .tally(let name, _) = node.node, !names.contains(name) { names.append(name) }
+        }
+        return names
+    }
+
+    /// An operand as the agent can find it in what it wrote: a number as written (`1e-50`), anything else as `read`
+    /// writes it, in parentheses when it is an operation; a long one is cut in the middle.
+    private static func written(_ operand: CalcExpression) -> String {
+        let text = switch operand.node {
+        case .number(_, let literal): literal
+        case .binary: "(" + operand.rendered + ")"
+        default: operand.rendered
+        }
+        guard text.count > 40 else { return text }
+        return String(text.prefix(20)) + "…" + String(text.suffix(19))
     }
 
     /// An operand that came to 0, after a space: nothing for a plain number, which is 0 as written.
     private static func named(_ operand: CalcExpression) -> String {
         if case .number = operand.node { return "" }
-        return shown(operand, " ")
+        return " " + written(operand)
     }
 
-    /// An operand as written and, unless that is its value already, the value it came to: `0.5`, `{rate} = 5/2`.
+    /// An operand as written and, unless that shows its value already, the value it came to: `1e-50`,
+    /// `(1 / 2) = 1/2`, `(10 ^ 1999) = a whole number of 2000 digits`.
     private static func value(_ operand: CalcExpression, _ value: Fraction) -> String {
-        let written = shown(operand, "")
-        if case .number = operand.node, !written.isEmpty { return written }
+        let written = written(operand)
+        if case .number = operand.node { return written }
         let exact = value.description
         if written == exact { return written }
-        let valueText = exact.count <= 40 ? exact : "a number with \(value.numerator.description.count) digits"
-        return written.isEmpty ? valueText : "\(written) = \(valueText)"
+        return written + " = " + (exact.count <= 40 ? exact : size(of: value))
+    }
+
+    /// A value too long to write out, by its size: `a whole number of 2000 digits`, `a fraction of 1 digit over
+    /// 51 digits`.
+    private static func size(of value: Fraction) -> String {
+        func digits(_ number: BigUInt) -> String {
+            let count = number.description.count
+            return count == 1 ? "1 digit" : "\(count) digits"
+        }
+        let sign = value.negative ? "negative " : ""
+        if value.isWholeNumber { return "a \(sign)whole number of \(digits(value.numerator))" }
+        return "a \(sign)fraction of \(digits(value.numerator)) over \(digits(value.denominator))"
     }
 }

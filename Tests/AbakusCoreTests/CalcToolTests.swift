@@ -175,7 +175,7 @@ import Testing
         try state.call("tally_set", ["name": "b", "value": 10, "count": 3])
         let result = try calc("{b:count} + {a} * {a:count} + {b} - {a} + {b:count} + {a:value}", in: state)
         #expect(result["result"] == 26)  // 3 + 2.5 * 4 + 10 - 2.5 + 3 + 2.5
-        #expect(result["read"] == "(((({b:count} + ({a} * {a:count})) + {b}) - {a}) + {b:count}) + {a}")
+        #expect(result["read"] == "(({b:count} + ({a} * {a:count}) + {b}) - {a}) + {b:count} + {a}")
         // Each (name, of) once, in the order of first appearance; {a:value} is {a}.
         #expect(result["tallies"] == [
             ["name": "b", "of": "count", "value": 3],
@@ -219,14 +219,16 @@ import Testing
         let state = TallyTestState()
         let empty = try #require(failure("{items} + 1", in: state))
         #expect(empty.message == """
-            There is no tally named "items". It may never have been created (check the spelling), it may have been \
-            dropped, or it may have expired: macOS deletes tallies that have not changed for about three days. No \
-            tallies exist right now. Nothing was computed.
+            {items} at character 1 of "{items} + 1": there is no tally named "items". It may never have been created \
+            (check the spelling), it may have been dropped, or it may have expired: macOS deletes tallies that have \
+            not changed for about three days. No tallies exist right now. Nothing was computed.
             """)
+        #expect(empty.details == ["name": "items", "existing": []])
         #expect(!FileManager.default.fileExists(atPath: state.url.path))  // reading creates no folder
 
         try state.call("tally_create", ["name": "other", "shared": true])
         let plain = try #require(failure("{other} / {items}", in: state))
+        #expect(plain.message.hasPrefix("{items} at character 11 of \"{other} / {items}\": there is no tally named \"items\"."))
         #expect(plain.message.hasSuffix("details.existing lists the tallies that exist. Nothing was computed."))
         #expect(plain.details == ["name": "items", "existing": ["other"]])
 
@@ -242,7 +244,8 @@ import Testing
         #expect(one.details?.keys == ["name", "matching", "existing"])
 
         try state.call("tally_create", ["name": "items"])
-        let two = try #require(failure("{items:count}", in: state))
+        let two = try #require(failure("1 + {items:count} * {items}", in: state))
+        #expect(two.message.hasPrefix("{items:count} at character 5 of"), "\(two.message)")
         #expect(two.message.contains("""
             They may belong to other sessions: write the full name, suffix included, only for the one you know you \
             mean (compare its created time with when you created yours). Nothing was computed.
@@ -266,6 +269,17 @@ import Testing
         #expect(error.details?["name"] == "broken")
     }
 
+    @Test func aTallyFileThatCannotBeOpenedComputesNothing() throws {
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "locked", "shared": true])
+        let file = state.file("locked")
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path) }
+        let error = try #require(failure("{locked} + 1", in: state))
+        #expect(error.message.hasPrefix("Cannot read \(file.path)"), "\(error.message)")
+        #expect(error.message.hasSuffix(" Nothing was computed."), "\(error.message)")
+    }
+
     @Test func anExpressionWithoutTalliesNeverTouchesTheStateFolder() throws {
         let state = TallyTestState()
         _ = try calc("1 + 2", in: state)
@@ -284,14 +298,13 @@ import Testing
 
     static let evaluationErrorCases: [(String, String)] = [
         ("1 + 10 / (5 - 5)", """
-            Division by zero at character 8 of "1 + 10 / (5 - 5)": the divisor (5 - 5) is 0, and dividing by 0 has \
-            no result. Check the divisor; if it can be 0 (a tally nothing was added to yet, say), handle that case \
-            without the division.
+            Division by zero at character 8 of "1 + 10 / (5 - 5)": the divisor (5 - 5) is 0. While the divisor is 0, \
+            the result has no value: report that, or change the divisor.
             """),
-        ("1/0", "Division by zero at character 2 of \"1/0\": the divisor is 0, and dividing"),
+        ("1/0", "Division by zero at character 2 of \"1/0\": the divisor is 0. While"),
         ("0^-1", """
             0 raised to a negative power at character 2 of "0^-1": the base is 0, and 0 ^ -n is 1 / 0^n, a division \
-            by zero, which has no result. Check the base, or use an exponent of 0 or more.
+            by zero. While the base is 0, the result has no value: report that, or change the base.
             """),
         ("(1 - 1) ^ -2", "0 raised to a negative power at character 9 of \"(1 - 1) ^ -2\": the base (1 - 1) is 0,"),
         ("2 ^ 0.5", """
@@ -304,12 +317,28 @@ import Testing
             takes. Use an exponent in that range.
             """),
         ("1^-(10^9)", "The power at character 2 of \"1^-(10^9)\" has the exponent -(10 ^ 9) = -1000000000, outside"),
+        // Operands too long to repeat: a number as written, anything else cut, with the size of its value.
+        ("2^1e-50", "The power at character 2 of \"2^1e-50\" has the exponent 1e-50, which is not a whole number"),
+        ("1^(10^1999)", "has the exponent (10 ^ 1999) = a whole number of 2000 digits, outside -9999 to 9999"),
+        ("2^(1 / 10^50)", "has the exponent (1 / (10 ^ 50)) = a fraction of 1 digit over 51 digits, which is not"),
+        ("2^(-1 / 10^50)", "has the exponent (-1 / (10 ^ 50)) = a negative fraction of 1 digit over 51 digits,"),
+        ("2^(1/3 + 1/7 + 1/11 + 1/13 + 1/17 + 1/19)", "has the exponent ((1 / 3) + (1 / 7) +…1 / 17) + (1 / 19)) = 732790/969969, which"),
+        // Too many digits: the advice depends on the operation.
         ("9^9999", """
             The power at character 2 of "9^9999" gives a value with more than 2000 digits in its numerator or \
             denominator: calc keeps every value as an exact fraction and stops at 2000 digits. Use a smaller \
-            exponent, or round an inner part with round(x, places) first.
+            exponent, or a base with fewer digits.
             """),
-        ("10^1000 * 10^1000", "The multiplication at character 9 of \"10^1000 * 10^1000\" gives a value with more than 2000 digits"),
+        ("10^1000 * 10^1000", """
+            The multiplication at character 9 of "10^1000 * 10^1000" gives a value with more than 2000 digits in its \
+            numerator or denominator: calc keeps every value as an exact fraction and stops at 2000 digits. Use \
+            smaller operands, or round an inner part first with round(x, places).
+            """),
+        ("round(10^1950 + 1/3, 128)", """
+            round at character 1 of "round(10^1950 + 1/3, 128)" gives a value with more than 2000 digits in its \
+            numerator or denominator: calc keeps every value as an exact fraction and stops at 2000 digits. Round to \
+            fewer decimal places, or round a smaller value.
+            """),
         ("round(1, 0.5)", """
             round at character 1 of "round(1, 0.5)" has the places 0.5, which is not a whole number. Write a whole \
             number from -165 to 128: round(x, 2) for two decimal places, round(x, 0) for a whole number, round(x, -3) \
@@ -317,21 +346,45 @@ import Testing
             """),
         ("2 * round(1, 129)", "round at character 5 of \"2 * round(1, 129)\" has the places 129, outside -165 to 128,"),
         ("round(1, -166)", "round at character 1 of \"round(1, -166)\" has the places -166, outside -165 to 128"),
+        // Out of range: by how much, and the power of ten that brings the result back.
         ("10^164 * 10", """
-            The result is too large for exact decimal arithmetic (about 10^165 or more). Divide the expression by a \
-            power of ten (1e100, say) to see its leading digits.
+            The result is too large for exact decimal arithmetic, which ends below 10^165: it lies between 10^165 and \
+            10^166. Values on the way may be larger, up to 2000 digits; only the result has to fit. To see its \
+            leading digits, divide the whole expression by 10^165, as in (…) / 10^165; that result lies between 1 \
+            and 10.
             """),
+        ("10^200 - 1", "it lies between 10^199 and 10^200."),
+        ("-(10^200) * 3", "it lies between -10^201 and -10^200. Values"),
+        ("-(10^200) * 3 ", "divide the whole expression by 10^200, as in (…) / 10^200; that result lies between -10 and -1."),
         ("1e-128 / 3", """
-            The result is too close to zero for exact decimal arithmetic (below 10^-128). Multiply the expression by \
-            a power of ten (1e100, say) to see its leading digits.
+            The result is not 0, but it lies between 10^-129 and 10^-128 and rounds to 0 at 10^-128, the finest step \
+            of exact decimal arithmetic. Values on the way may be smaller, with up to 2000 digits in a denominator; \
+            only the result has to fit. To see its leading digits, multiply the whole expression by 10^129, as in \
+            (…) * 10^129; that result lies between 1 and 10.
+            """),
+        ("10^-500", "it lies between 10^-500 and 10^-499 and rounds to 0"),
+        ("1 / (10^1999 * 9)", """
+            it lies between 10^-2000 and 10^-1999 and rounds to 0 at 10^-128, the finest step of exact decimal \
+            arithmetic. Values on the way may be smaller, with up to 2000 digits in a denominator; only the result \
+            has to fit. It cannot be brought into range: that takes a factor of 10^2000, which has more than 2000 \
+            digits.
             """),
     ]
 
+    /// Each expected text is the start of the message, or a part of it when it starts in lowercase.
     @Test(arguments: CalcToolTests.evaluationErrorCases)
     func evaluationErrorsSayWhereAndWhatToDo(expression: String, expected: String) throws {
         let error = try #require(failure(expression), "\(expression)")
-        #expect(error.message.hasPrefix(expected), "\(expression): \(error.message)")
+        let whole = expected.first?.isLowercase == true || expected.first == "("
+        #expect(whole ? error.message.contains(expected) : error.message.hasPrefix(expected), "\(expression): \(error.message)")
         #expect(error.details == nil)  // no tallies, no details
+    }
+
+    /// The scaling an out-of-range error suggests works.
+    @Test func theSuggestedPowerOfTenBringsTheResultIntoRange() throws {
+        #expect(try calc("(7 * 10^-500) * 10^500")["result"] == 7)
+        #expect(try calc("(-(10^200) * 3) / 10^200")["result"] == -3)
+        #expect(try calc("(1e-128 / 3) * 10^129")["result"] == .number("3.33333333333333"))
     }
 
     @Test func underflowStartsBelowHalfTheSmallestStep() throws {
@@ -339,7 +392,7 @@ import Testing
         let half = try calc("1e-128 / 2")
         #expect(half["result"] == .number("0." + String(repeating: "0", count: 127) + "1"))
         #expect(half["exact"] == false)
-        #expect(failure("1e-128 / 2.000001")?.message.hasPrefix("The result is too close to zero") == true)
+        #expect(failure("1e-128 / 2.000001")?.message.hasPrefix("The result is not 0, but it lies between 10^-129") == true)
     }
 
     @Test func errorsAfterReadingTalliesShowThem() throws {
@@ -348,14 +401,27 @@ import Testing
         try state.call("tally_create", ["name": "errors", "shared": true])
         try state.call("tally_add", ["name": "errors", "amount": 2])
         let error = try #require(failure("{errors} / {requests} * 100", in: state))
-        #expect(error.message.hasPrefix("""
-            Division by zero at character 10 of "{errors} / {requests} * 100": the divisor {requests} is 0, and \
-            dividing by 0 has no result.
-            """), "\(error.message)")
+        #expect(error.message == """
+            Division by zero at character 10 of "{errors} / {requests} * 100": the divisor {requests} is 0. While the \
+            divisor is 0, the result has no value: report that, or calculate again once something has been added to \
+            the tally "requests".
+            """)
         #expect(error.details == ["tallies": [
             ["name": "errors", "of": "value", "value": 2],
             ["name": "requests", "of": "value", "value": 0],
         ]])
+    }
+
+    @Test func aDivisorOfSeveralTalliesNamesThemAll() throws {
+        let state = TallyTestState()
+        for name in ["queued", "done", "errors"] {
+            try state.call("tally_create", ["name": .string(name), "shared": true])
+        }
+        let error = try #require(failure("{errors} / ({queued:count} - {done})", in: state))
+        #expect(error.message.hasSuffix("""
+            the divisor ({queued:count} - {done}) is 0. While the divisor is 0, the result has no value: report that, \
+            or calculate again once the tallies "queued" and "done" have changed (details.tallies has their values).
+            """), "\(error.message)")
     }
 
     @Test func errorsInLongExpressionsQuoteAnExcerpt() throws {
@@ -387,7 +453,8 @@ import Testing
             """)
         #expect(failure(["expression": .null])?.message == missing.message)
         let number = try #require(failure(["expression": 42]))
-        #expect(number.message.hasPrefix("expression must be a string with the formula, not a JSON number; e.g. {\"expression\":"))
+        #expect(number.message.hasPrefix("expression must be a string with the formula, not a number; e.g. {\"expression\":"))
+        #expect(failure(["expression": true])?.message.contains("not true;") == true)
         #expect(failure(["expression": ["1", "+", "2"]])?.message.contains("not a list") == true)
         #expect(failure(["expression": ""])?.message.contains("The expression is empty") == true)
     }

@@ -49,6 +49,19 @@ extension JSONValue {
         if case .null = self { return true }
         return false
     }
+
+    /// What the value is, for messages about an argument of the wrong kind: `null`, `true`, `false`, `a number`,
+    /// `a string`, `a list`, `an object`.
+    var kindForMessage: String {
+        switch self {
+        case .null: "null"
+        case .bool(let flag): String(flag)
+        case .number: "a number"
+        case .string: "a string"
+        case .array: "a list"
+        case .object: "an object"
+        }
+    }
 }
 
 extension JSONValue: ExpressibleByNilLiteral {

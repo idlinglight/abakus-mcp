@@ -199,9 +199,10 @@ The response has `total`, `count`, `mean` (null for an empty list) and `read`, h
   denominator of any value on the way.
 
 The response has `result` (a JSON number), `read` (the expression as it was understood: numbers written out,
-parentheses around every operation but the outermost) and `tallies`, each tally reference once with the number
-used (`{"name", "of", "value"}`; left out when there are none). A result that is a terminating decimal of at
-most 38 significant digits is exact. Otherwise it is rounded half away from zero to 15 significant digits (to
+parentheses around every operation but the outermost, except along a chain of `+` or of `*`: `1 + 2 + 3`) and
+`tallies`, each tally reference once with the number used (`{"name", "of", "value"}`; left out when there are
+none). A result that is a terminating decimal of at most 38 significant digits, with no digits below 10^-128, is
+exact. Otherwise it is rounded half away from zero to 15 significant digits (to
 whole units when the integer part is longer), and `exact: false` and `fraction`, the exact value as
 `"numerator/denominator"`, are added; `fraction` is left out when its numerator or denominator has more than
 100 digits. A tally whose value had to be rounded (`exact: false` in its state) makes the result
@@ -223,14 +224,15 @@ whole units when the integer part is longer), and `exact: false` and `fraction`,
 ```
 
 An error gives the position (characters counted from 1) and the expression, says what happened and what to
-write or do instead. An unknown tally is the tally tools' error (`details.existing`, `details.matching`) without
-any advice to create one, and nothing is computed. Errors found after the tallies were read show them:
+write or do instead. An unknown tally is the tally tools' error (`details.existing`, `details.matching`) after
+where the reference is, without any advice to create one, and nothing is computed. A result out of range says
+by which power of ten to scale the expression. Errors found after the tallies were read show them:
 
 ```text
 calc {"expression": "{errors-k3f9} / {queued}"}
-Division by zero at character 15 of "{errors-k3f9} / {queued}": the divisor {queued} is 0, and dividing by 0
-has no result. Check the divisor; if it can be 0 (a tally nothing was added to yet, say), handle that case
-without the division.
+Division by zero at character 15 of "{errors-k3f9} / {queued}": the divisor {queued} is 0. While the divisor
+is 0, the result has no value: report that, or calculate again once something has been added to the tally
+"queued".
 Details: {"tallies": [{"name": "errors-k3f9", "of": "value", "value": 37},
                       {"name": "queued", "of": "value", "value": 0}]}
 ```
@@ -320,7 +322,7 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/):
 - [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names; `tally_drop`'s advice for unknown names)
 - [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only)
 - [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC (amended: whole seconds in `text`)
-- [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name (amended: underflow and the readable policy in full, when `fraction` is left out, rounded tallies in the response, unknown names, errors while evaluating, parser details)
+- [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name (amended: underflow and the readable policy in full, when `fraction` is left out, rounded tallies in the response, unknown names, flat chains of + and * in `read`, errors while evaluating, parser details)
 
 ## License
 

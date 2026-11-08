@@ -61,14 +61,8 @@ public enum NumberReader {
             return try readLiteral(literal)
         case .string(let text):
             return try readString(text, decimal: decimal)
-        case .null:
-            throw ToolError("Expected a number or a number string, got null.")
-        case .bool(let flag):
-            throw ToolError("Expected a number or a number string, got \(flag).")
-        case .array:
-            throw ToolError("Expected a number or a number string, got a list.")
-        case .object:
-            throw ToolError("Expected a number or a number string, got an object.")
+        case .null, .bool, .array, .object:
+            throw ToolError("Expected a number or a number string, got \(value.kindForMessage).")
         }
     }
 

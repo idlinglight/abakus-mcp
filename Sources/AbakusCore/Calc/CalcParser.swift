@@ -671,19 +671,21 @@ struct CalcParser {
         // A decimal comma: plain digits, the comma, then digits that may carry an exponent or a suffix.
         let decimal = pieces.count == 2 && isPlain(first) && !pieces[1].contains(".")
 
+        // Both readings by name, each with its own rewrite: an agent took "put a space after it: 1, 234.5" for the
+        // way to write the number.
         let asOneNumber = switch (grouped, decimal) {
         case (true, true):
-            "If \(written) is one number, write \(pieces.joined()), or \(first).\(pieces[1]) if the comma is a decimal mark"
+            "If \(written) is one number, write \(pieces.joined()), or \(first).\(pieces[1]) if the comma is a decimal mark."
         case (true, false):
-            "If \(written) is one number, write \(pieces.joined())"
+            "If \(written) is one number, write \(pieces.joined())."
         case (false, true):
-            "If \(written) is one number with a decimal comma, write \(first).\(pieces[1])"
+            "If \(written) is one number with a decimal comma, write \(first).\(pieces[1])."
         case (false, false):
-            "If \(written) is one number, write it without separators and with \".\" as the decimal mark"
+            "If \(written) is one number, write it without separators and with \".\" as the decimal mark."
         }
         return ToolError(
             "A comma between two digits \(at(comma + 1)): calc takes no thousands separators, and its decimal mark is "
-                + "always \".\". \(asOneNumber); if the comma separates function arguments, put a space after it: "
+                + "always \".\". \(asOneNumber) If \(pieces.listedInProse) are separate arguments, write "
                 + "\(pieces.joined(separator: ", "))."
         )
     }
