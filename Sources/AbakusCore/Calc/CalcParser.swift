@@ -864,18 +864,27 @@ struct CalcParser {
         text(token.start, token.end).quotedForMessage
     }
 
-    /// `at character N of "<expression>"`; a long expression is cut to an excerpt around the position.
     private func at(_ position: Int) -> String {
-        "at character \(position) of \(excerpt(around: position))"
+        Self.at(position, of: expression, source: source)
     }
 
-    private func excerpt(around position: Int) -> String {
+    /// `at character N of "<expression>"`; a long expression is cut to an excerpt around the position. The calc
+    /// tool uses it too, for errors found while evaluating, so that both read alike.
+    static func at(_ position: Int, of expression: String) -> String {
+        at(position, of: expression, source: Array(expression))
+    }
+
+    private static func at(_ position: Int, of expression: String, source: [Character]) -> String {
+        "at character \(position) of \(excerpt(around: position, of: expression, source: source))"
+    }
+
+    private static func excerpt(around position: Int, of expression: String, source: [Character]) -> String {
         guard source.count > 60 else { return expression.quotedForMessage }
         let width = 50
         let index = min(max(position - 1, 0), source.count)
         let end = min(source.count, max(index - width / 2, 0) + width)
         let start = max(0, end - width)
-        let excerpt = (start > 0 ? "…" : "") + text(start, end) + (end < source.count ? "…" : "")
+        let excerpt = (start > 0 ? "…" : "") + String(source[start..<end]) + (end < source.count ? "…" : "")
         return excerpt.quotedForMessage
     }
 }

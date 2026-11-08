@@ -1,0 +1,419 @@
+@testable import AbakusCore
+import Foundation
+import Testing
+
+/// calc (ADR-0007) end to end through the tool: parsing, tallies, exact evaluation, the response and its errors.
+/// Every test has its own state folder (`TallyTestState`); the expected values were worked out with exact
+/// fractions independently of abakus.
+@Suite struct CalcToolTests {
+    private let tool = CalcTool()
+
+    // MARK: Definition
+
+    @Test func isListedAfterSum() {
+        #expect(ArithmeticTools.all.map(\.name) == ["sum", "calc"])
+        #expect(Catalog.tool(named: "calc") != nil)
+        #expect(Catalog.tools.map(\.name).suffix(3) == ["sum", "calc", "date_diff"])
+    }
+
+    @Test func annotationsAndSchema() throws {
+        #expect(tool.annotations == ToolAnnotations(title: "Exact calculation", readOnly: true, destructive: false, idempotent: true))
+        let schema = try #require(tool.inputSchema.objectValue)
+        #expect(schema["type"] == "object")
+        #expect(schema["required"] == ["expression"])
+        #expect(schema["additionalProperties"] == false)
+        #expect(schema["properties"]?.objectValue?.keys == ["expression"])
+        #expect(schema["properties"]?.objectValue?["expression"]?.objectValue?["type"] == "string")
+    }
+
+    // MARK: The probe's tasks
+
+    /// The tallies of the probe in ADR-0007: four of a session's own, with suffixes, and two shared ones.
+    private func probeState() throws -> TallyTestState {
+        let state = TallyTestState()
+        for (name, value, count) in [
+            ("errors-k3f9", "37", 37), ("requests-p2x7", "1250", 1250), ("effort-a1b2", "47.5", 12),
+            ("tokens-m4q8", "312400", 9), ("build-errors", "18", 18), ("builds", "240", 240),
+        ] {
+            try state.call("tally_create", ["name": .string(name), "shared": true])
+            try state.call("tally_set", ["name": .string(name), "value": .string(value), "count": .number(String(count))])
+        }
+        return state
+    }
+
+    static let probeCases: [(String, JSONObject)] = [
+        // T1: a rate from two tallies
+        ("{errors-k3f9} / {requests-p2x7} * 100", [
+            "result": .number("2.96"), "read": "({errors-k3f9} / {requests-p2x7}) * 100",
+            "tallies": [
+                ["name": "errors-k3f9", "of": "value", "value": 37],
+                ["name": "requests-p2x7", "of": "value", "value": 1250],
+            ],
+        ]),
+        // T2: the mean of a tally, 47.5 / 12 = 95/24 = 3.9583333…
+        ("{effort-a1b2} / {effort-a1b2:count}", [
+            "result": .number("3.95833333333333"), "exact": false, "fraction": "95/24",
+            "read": "{effort-a1b2} / {effort-a1b2:count}",
+            "tallies": [
+                ["name": "effort-a1b2", "of": "value", "value": .number("47.5")],
+                ["name": "effort-a1b2", "of": "count", "value": 12],
+            ],
+        ]),
+        // T3: what is left of a budget, 97600 / 4100 = 976/41 = 23.80487804878048780…
+        ("(410k - {tokens-m4q8}) / 410k * 100", [
+            "result": .number("23.8048780487805"), "exact": false, "fraction": "976/41",
+            "read": "((410000 - {tokens-m4q8}) / 410000) * 100",
+            "tallies": [["name": "tokens-m4q8", "of": "value", "value": 312400]],
+        ]),
+        // T4: rows per second, 1234567 / 9000 = 137.1741111…
+        ("1234567 / (2.5 * 3600)", [
+            "result": .number("137.174111111111"), "exact": false, "fraction": "1234567/9000",
+            "read": "1234567 / (2.5 * 3600)",
+        ]),
+        // T5 without the root: 3.5^2 + 12^2
+        ("3.5^2 + 12^2", ["result": .number("156.25"), "read": "(3.5 ^ 2) + (12 ^ 2)"]),
+        // T6: 1000 * 1.045^10 = 1552.969421732897124632822265625, exactly, then rounded to cents
+        ("round(1000 * 1.045^10, 2)", ["result": .number("1552.97"), "read": "round(1000 * (1.045 ^ 10), 2)"]),
+        // T7: the square of -20
+        ("(-20)^2", ["result": 400, "read": "(-20) ^ 2"]),
+        // T8: 19% VAT
+        ("2450.80 * 1.19", ["result": .number("2916.452"), "read": "2450.8 * 1.19"]),
+        // T9: two shared tallies, which have no suffix
+        ("{build-errors} / {builds}", [
+            "result": .number("0.075"), "read": "{build-errors} / {builds}",
+            "tallies": [
+                ["name": "build-errors", "of": "value", "value": 18],
+                ["name": "builds", "of": "value", "value": 240],
+            ],
+        ]),
+    ]
+
+    @Test(arguments: CalcToolTests.probeCases)
+    func probeTask(expression: String, expected: JSONObject) throws {
+        let state = try probeState()
+        let result = try calc(expression, in: state)
+        #expect(result == expected, "\(expression)")
+        #expect(result.keys == expected.keys, "\(expression)")
+    }
+
+    /// T5 as the probe wrote it: there is no square root, and the error says so.
+    @Test func probeTaskWithARootIsRefused() throws {
+        let error = try #require(failure("sqrt(3.5^2 + 12^2)"))
+        #expect(error.message.hasPrefix("There is no square root in calc: \"sqrt\" at character 1 of \"sqrt(3.5^2 + 12^2)\"."))
+        #expect(error.message.contains("no roots and no fractional powers"))
+    }
+
+    // MARK: Exact arithmetic
+
+    static let valueCases: [(String, String)] = [
+        ("1/3*3", "1"), ("0.1 + 0.2", "0.3"), ("-2^2", "-4"), ("2^3^2", "512"), ("2^-1", "0.5"), ("0^0", "1"),
+        ("2 * -3", "-6"), ("1 - -2", "3"), ("-0", "0"), ("7 - 7", "0"), ("abs(-2.5)", "2.5"), ("abs(3)", "3"),
+        ("min(4, -1, 2)", "-1"), ("max(4, -1, 2)", "4"), ("max(1/3, 0.3)", "0.333333333333333"),
+        ("round(2.5, 0)", "3"), ("round(-2.5, 0)", "-3"), ("round(12.5, 2)", "12.5"), ("round(1234, -2)", "1200"),
+        ("round(1/3, 2)", "0.33"), ("round(2/3, 5)", "0.66667"), ("1000 * 1.045^10", "1552.969421732897124632822265625"),
+        ("410k / 1M", "0.41"), ("1.5e3 * 2", "3000"), ("(1 + 2) * 3", "9"), ("6 / 2 * 3", "9"), ("2 ** 10", "1024"),
+        ("6 × 7 ÷ 2 − 1", "20"), ("1e-128 * 1", "0." + String(repeating: "0", count: 127) + "1"),
+        // Intermediate values beyond the result's range are fine.
+        ("10^200 / 10^199", "10"), ("1e-100 * 1e-100 * 1e150", "0." + String(repeating: "0", count: 49) + "1"),
+    ]
+
+    @Test(arguments: CalcToolTests.valueCases)
+    func worksOutExactly(expression: String, value: String) throws {
+        let result = try calc(expression)
+        #expect(result["result"] == .number(value), "\(expression): \(result)")
+    }
+
+    @Test func roundsOnceAtTheEnd() throws {
+        let third = try calc("1/3")
+        #expect(third == ["result": .number("0.333333333333333"), "exact": false, "fraction": "1/3", "read": "1 / 3"])
+        #expect(third.keys == ["result", "exact", "fraction", "read"])
+        #expect(try calc("-2/3") == ["result": .number("-0.666666666666667"), "exact": false, "fraction": "-2/3", "read": "-2 / 3"])
+        // Whole units when the integer part is longer than 15 digits; the fraction keeps the rest.
+        #expect(try calc("10^20 / 3") == [
+            "result": .number("33333333333333333333"), "exact": false, "fraction": "100000000000000000000/3",
+            "read": "(10 ^ 20) / 3",
+        ])
+        // A whole number past 38 digits is rounded; its fraction is the digits alone.
+        let power = try calc("2^200")
+        #expect(power["exact"] == false)
+        #expect(power["fraction"] == "1606938044258990275541962092341162602522202993782792835301376")
+        #expect(power["result"] == .number("16069380442589902755419620923411626025" + String(repeating: "0", count: 23)))
+    }
+
+    @Test func leavesOutAVeryLongFraction() throws {
+        // 1/3^210 has a denominator of 101 digits.
+        let result = try calc("1 / 3^210")
+        #expect(result["exact"] == false)
+        #expect(result["fraction"] == nil)
+        #expect(result.keys == ["result", "exact", "read"])
+        // 1/3^209 still fits: 100 digits.
+        #expect(try calc("1 / 3^209")["fraction"]?.stringValue?.count == 102)
+    }
+
+    /// The 1000 characters of `1+1+…+1` make a tree about 500 levels deep: evaluated without recursion, so the
+    /// 512 KB stack of a test thread is enough (a recursive walk overflowed it in a debug build).
+    @Test func evaluatesTheLongestChainWithoutRecursion() throws {
+        let sum = Array(repeating: "1", count: 500).joined(separator: "+")
+        #expect(sum.count == 999)
+        #expect(try calc(sum)["result"] == 500)
+        let difference = "1000" + String(repeating: "-2", count: 498)
+        #expect(difference.count == 1000)
+        #expect(try calc(difference)["result"] == 4)
+        let product = try calc("2" + String(repeating: "*2", count: 499))  // 2^500, 151 digits
+        #expect(product["result"] == .number("32733906078961418700131896968275991522" + String(repeating: "0", count: 113)))
+        #expect(product["exact"] == false)
+        #expect(product["fraction"] == nil)  // more than 100 digits
+    }
+
+    // MARK: Tallies
+
+    @Test func readsValuesAndCountsInOrderOfFirstAppearance() throws {
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "a", "shared": true])
+        try state.call("tally_set", ["name": "a", "value": .number("2.5"), "count": 4])
+        try state.call("tally_create", ["name": "b", "shared": true])
+        try state.call("tally_set", ["name": "b", "value": 10, "count": 3])
+        let result = try calc("{b:count} + {a} * {a:count} + {b} - {a} + {b:count} + {a:value}", in: state)
+        #expect(result["result"] == 26)  // 3 + 2.5 * 4 + 10 - 2.5 + 3 + 2.5
+        #expect(result["read"] == "(((({b:count} + ({a} * {a:count})) + {b}) - {a}) + {b:count}) + {a}")
+        // Each (name, of) once, in the order of first appearance; {a:value} is {a}.
+        #expect(result["tallies"] == [
+            ["name": "b", "of": "count", "value": 3],
+            ["name": "a", "of": "value", "value": .number("2.5")],
+            ["name": "a", "of": "count", "value": 4],
+            ["name": "b", "of": "value", "value": 10],
+        ])
+    }
+
+    @Test func aRoundedTallyMakesTheResultInexact() throws {
+        let state = TallyTestState()
+        try plant(TallyTest.tally("rough", value: "2.5", count: 2, exact: false), in: state)
+        try plant(TallyTest.tally("fine", value: "3", count: 1), in: state)
+
+        // The result itself needed no rounding: exact false, no fraction, the tally marked.
+        let doubled = try calc("{rough} * 2", in: state)
+        #expect(doubled == [
+            "result": 5, "exact": false, "read": "{rough} * 2",
+            "tallies": [["name": "rough", "of": "value", "value": .number("2.5"), "exact": false]],
+        ])
+        #expect(doubled.keys == ["result", "exact", "read", "tallies"])
+        #expect(doubled["tallies"]?.arrayValue?.first?.objectValue?.keys == ["name", "of", "value", "exact"])
+
+        // Rounded here as well: the fraction undoes this rounding.
+        let third = try calc("{rough} / 3 + {fine}", in: state)
+        #expect(third == [
+            "result": .number("3.83333333333333"), "exact": false, "fraction": "23/6", "read": "({rough} / 3) + {fine}",
+            "tallies": [
+                ["name": "rough", "of": "value", "value": .number("2.5"), "exact": false],
+                ["name": "fine", "of": "value", "value": 3],
+            ],
+        ])
+
+        // A count is always exact.
+        #expect(try calc("{rough:count} * 2", in: state) == [
+            "result": 4, "read": "{rough:count} * 2", "tallies": [["name": "rough", "of": "count", "value": 2]],
+        ])
+    }
+
+    @Test func anUnknownNameComputesNothingAndSuggestsNoCreation() throws {
+        let state = TallyTestState()
+        let empty = try #require(failure("{items} + 1", in: state))
+        #expect(empty.message == """
+            There is no tally named "items". It may never have been created (check the spelling), it may have been \
+            dropped, or it may have expired: macOS deletes tallies that have not changed for about three days. No \
+            tallies exist right now. Nothing was computed.
+            """)
+        #expect(!FileManager.default.fileExists(atPath: state.url.path))  // reading creates no folder
+
+        try state.call("tally_create", ["name": "other", "shared": true])
+        let plain = try #require(failure("{other} / {items}", in: state))
+        #expect(plain.message.hasSuffix("details.existing lists the tallies that exist. Nothing was computed."))
+        #expect(plain.details == ["name": "items", "existing": ["other"]])
+
+        let mine = try #require(try state.call("tally_create", ["name": "items"])["name"]?.stringValue)
+        let one = try #require(failure("{items} + 1", in: state))
+        #expect(one.message.hasSuffix("""
+            tally_create adds a random suffix to every name unless shared: true is passed, and a tally whose name \
+            starts with "items-" exists: "\(mine)" (created 2026-11-08T09:30:00Z, value 0, count 0). It may belong \
+            to another session: write its full name, suffix included, only if you know it is the one you mean \
+            (compare its created time with when you created yours). Nothing was computed. details.matching shows \
+            it; details.existing lists the tallies that exist.
+            """), "\(one.message)")
+        #expect(one.details?.keys == ["name", "matching", "existing"])
+
+        try state.call("tally_create", ["name": "items"])
+        let two = try #require(failure("{items:count}", in: state))
+        #expect(two.message.contains("""
+            They may belong to other sessions: write the full name, suffix included, only for the one you know you \
+            mean (compare its created time with when you created yours). Nothing was computed.
+            """), "\(two.message)")
+
+        for error in [empty, plain, one, two] {
+            let lowered = error.message.lowercased()
+            #expect(!lowered.contains("create a new") && !lowered.contains("create it"), "\(error.message)")
+            #expect(!lowered.contains("with tally_create"), "\(error.message)")
+        }
+        // The first unknown name in the text is the one reported.
+        #expect(failure("{nope} + {items}", in: state)?.details?["name"] == "nope")
+    }
+
+    @Test func anUnreadableTallyIsAnErrorThatNamesIt() throws {
+        let state = TallyTestState()
+        try state.plant("broken.json", "not json")
+        let error = try #require(failure("{broken} + 1", in: state))
+        #expect(error.message.hasPrefix("The tally \"broken\" cannot be read: it is not a tally file"))
+        #expect(error.message.hasSuffix(" Nothing was computed."))
+        #expect(error.details?["name"] == "broken")
+    }
+
+    @Test func anExpressionWithoutTalliesNeverTouchesTheStateFolder() throws {
+        let state = TallyTestState()
+        _ = try calc("1 + 2", in: state)
+        _ = failure("1 / 0", in: state)
+        #expect(!FileManager.default.fileExists(atPath: state.url.path))
+    }
+
+    @Test func neverChangesATally() throws {
+        let state = try probeState()
+        let before = try Data(contentsOf: state.file("effort-a1b2"))
+        _ = try calc("{effort-a1b2} / {effort-a1b2:count}", in: state)
+        #expect(try Data(contentsOf: state.file("effort-a1b2")) == before)
+    }
+
+    // MARK: Errors
+
+    static let evaluationErrorCases: [(String, String)] = [
+        ("1 + 10 / (5 - 5)", """
+            Division by zero at character 8 of "1 + 10 / (5 - 5)": the divisor (5 - 5) is 0, and dividing by 0 has \
+            no result. Check the divisor; if it can be 0 (a tally nothing was added to yet, say), handle that case \
+            without the division.
+            """),
+        ("1/0", "Division by zero at character 2 of \"1/0\": the divisor is 0, and dividing"),
+        ("0^-1", """
+            0 raised to a negative power at character 2 of "0^-1": the base is 0, and 0 ^ -n is 1 / 0^n, a division \
+            by zero, which has no result. Check the base, or use an exponent of 0 or more.
+            """),
+        ("(1 - 1) ^ -2", "0 raised to a negative power at character 9 of \"(1 - 1) ^ -2\": the base (1 - 1) is 0,"),
+        ("2 ^ 0.5", """
+            The power at character 3 of "2 ^ 0.5" has the exponent 0.5, which is not a whole number: calc has no \
+            roots and no fractional powers. ^ takes whole-number exponents from -9999 to 9999.
+            """),
+        ("2^(1/2)", "The power at character 2 of \"2^(1/2)\" has the exponent (1 / 2) = 1/2, which is not a whole number"),
+        ("2^10000", """
+            The power at character 2 of "2^10000" has the exponent 10000, outside -9999 to 9999, the exponents ^ \
+            takes. Use an exponent in that range.
+            """),
+        ("1^-(10^9)", "The power at character 2 of \"1^-(10^9)\" has the exponent -(10 ^ 9) = -1000000000, outside"),
+        ("9^9999", """
+            The power at character 2 of "9^9999" gives a value with more than 2000 digits in its numerator or \
+            denominator: calc keeps every value as an exact fraction and stops at 2000 digits. Use a smaller \
+            exponent, or round an inner part with round(x, places) first.
+            """),
+        ("10^1000 * 10^1000", "The multiplication at character 9 of \"10^1000 * 10^1000\" gives a value with more than 2000 digits"),
+        ("round(1, 0.5)", """
+            round at character 1 of "round(1, 0.5)" has the places 0.5, which is not a whole number. Write a whole \
+            number from -165 to 128: round(x, 2) for two decimal places, round(x, 0) for a whole number, round(x, -3) \
+            for thousands.
+            """),
+        ("2 * round(1, 129)", "round at character 5 of \"2 * round(1, 129)\" has the places 129, outside -165 to 128,"),
+        ("round(1, -166)", "round at character 1 of \"round(1, -166)\" has the places -166, outside -165 to 128"),
+        ("10^164 * 10", """
+            The result is too large for exact decimal arithmetic (about 10^165 or more). Divide the expression by a \
+            power of ten (1e100, say) to see its leading digits.
+            """),
+        ("1e-128 / 3", """
+            The result is too close to zero for exact decimal arithmetic (below 10^-128). Multiply the expression by \
+            a power of ten (1e100, say) to see its leading digits.
+            """),
+    ]
+
+    @Test(arguments: CalcToolTests.evaluationErrorCases)
+    func evaluationErrorsSayWhereAndWhatToDo(expression: String, expected: String) throws {
+        let error = try #require(failure(expression), "\(expression)")
+        #expect(error.message.hasPrefix(expected), "\(expression): \(error.message)")
+        #expect(error.details == nil)  // no tallies, no details
+    }
+
+    @Test func underflowStartsBelowHalfTheSmallestStep() throws {
+        // 0.5e-128 and up round to 1e-128: not an error, but not exact either.
+        let half = try calc("1e-128 / 2")
+        #expect(half["result"] == .number("0." + String(repeating: "0", count: 127) + "1"))
+        #expect(half["exact"] == false)
+        #expect(failure("1e-128 / 2.000001")?.message.hasPrefix("The result is too close to zero") == true)
+    }
+
+    @Test func errorsAfterReadingTalliesShowThem() throws {
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "requests", "shared": true])
+        try state.call("tally_create", ["name": "errors", "shared": true])
+        try state.call("tally_add", ["name": "errors", "amount": 2])
+        let error = try #require(failure("{errors} / {requests} * 100", in: state))
+        #expect(error.message.hasPrefix("""
+            Division by zero at character 10 of "{errors} / {requests} * 100": the divisor {requests} is 0, and \
+            dividing by 0 has no result.
+            """), "\(error.message)")
+        #expect(error.details == ["tallies": [
+            ["name": "errors", "of": "value", "value": 2],
+            ["name": "requests", "of": "value", "value": 0],
+        ]])
+    }
+
+    @Test func errorsInLongExpressionsQuoteAnExcerpt() throws {
+        let expression = String(repeating: "1 + ", count: 30) + "2 / (3 - 3) + " + String(repeating: "4 + ", count: 30) + "5"
+        let error = try #require(failure(expression))
+        #expect(error.message.hasPrefix("Division by zero at character 123 of \"…"), "\(error.message)")
+        #expect(error.message.contains("2 / (3 - 3)"), "\(error.message)")
+        #expect(error.message.contains("…\": the divisor (3 - 3) is 0"), "\(error.message)")
+    }
+
+    @Test func parseErrorsComeFromTheParser() throws {
+        #expect(failure("37 / 1250 %")?.message == """
+            Unexpected "%" at character 11 of "37 / 1250 %": there is no % operator, and it is not modulo either. For \
+            a percentage, multiply by 100 (37 / 1250 * 100); to add 10%, multiply by 1.1.
+            """)
+        #expect(failure("1,234 + 1")?.message.contains("thousands separators") == true)
+    }
+
+    // MARK: Arguments
+
+    @Test func refusesUnknownMissingAndNonStringArguments() throws {
+        #expect(failure(["expression": "1", "decimal": ","])?.message
+            == "Unknown argument \"decimal\". calc takes \"expression\" (required).")
+        #expect(failure(["expr": "1"])?.message.hasPrefix("Unknown argument \"expr\".") == true)
+        let missing = try #require(failure([:]))
+        #expect(missing.message == """
+            Missing argument "expression": pass the formula as a string, e.g. {"expression": "{errors-k3f9} / \
+            {requests-p2x7} * 100"}.
+            """)
+        #expect(failure(["expression": .null])?.message == missing.message)
+        let number = try #require(failure(["expression": 42]))
+        #expect(number.message.hasPrefix("expression must be a string with the formula, not a JSON number; e.g. {\"expression\":"))
+        #expect(failure(["expression": ["1", "+", "2"]])?.message.contains("not a list") == true)
+        #expect(failure(["expression": ""])?.message.contains("The expression is empty") == true)
+    }
+
+    // MARK: Helpers
+
+    private func calc(_ expression: String, in state: TallyTestState = TallyTestState()) throws(ToolError) -> JSONObject {
+        try tool.call(["expression": .string(expression)], in: state.context)
+    }
+
+    private func failure(_ expression: String, in state: TallyTestState = TallyTestState()) -> ToolError? {
+        failure(["expression": .string(expression)], in: state)
+    }
+
+    private func failure(_ arguments: JSONObject, in state: TallyTestState = TallyTestState()) -> ToolError? {
+        do {
+            _ = try tool.call(arguments, in: state.context)
+            return nil
+        } catch {
+            return error
+        }
+    }
+
+    /// Writes a tally file as tally tools would, for states they cannot reach directly (a value rounded long ago).
+    private func plant(_ tally: Tally, in state: TallyTestState) throws {
+        try FileManager.default.createDirectory(at: state.tallies, withIntermediateDirectories: true)
+        try tally.fileData().write(to: state.file(tally.name))
+    }
+}

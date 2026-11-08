@@ -22,6 +22,40 @@ struct Sum: ParsableCommand {
     }
 }
 
+struct Calc: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Work out one expression exactly, also over tallies (calc).",
+        discussion: """
+            Quote the expression: *, (, {, ^ and spaces mean something to the shell. Several arguments are joined \
+            with spaces. Examples: abakus calc '{errors-k3f9} / {requests-p2x7} * 100', abakus calc \
+            'round(1000 * 1.045^10, 2)', abakus calc -2^2
+            """
+    )
+
+    // Captures a leading minus too (-2^2, -{a}), which would otherwise be taken for an option.
+    @Argument(
+        parsing: .allUnrecognized,
+        help: ArgumentHelp("The expression, quoted: '(410k - {tokens-m4q8}) / 410k * 100'.", valueName: "expression")
+    )
+    var words: [String] = []
+
+    /// The words without a leading `--` terminator, which belongs to the command line, not to the expression.
+    private var expressionWords: ArraySlice<String> {
+        words.first == "--" ? words.dropFirst() : words[...]
+    }
+
+    // In validate() rather than run(), so that the usage shown is calc's.
+    func validate() throws {
+        if expressionWords.isEmpty {
+            throw ValidationError("Give the expression, quoted: abakus calc '{errors-k3f9} / {requests-p2x7} * 100'")
+        }
+    }
+
+    func run() throws {
+        try ToolRunner.run("calc", ["expression": .string(expressionWords.joined(separator: " "))])
+    }
+}
+
 struct DateDiff: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "date-diff",

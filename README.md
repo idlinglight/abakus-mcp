@@ -6,13 +6,15 @@ and from the command line:
 - **tallies**: named counters and running sums that keep their state across many turns and say when a
   threshold is reached ("at most 20 items this session", "self-check every 5 items");
 - **sum**: exact sums of numbers, including numbers written as text (`410k`, `1,234.5`, `1.234,5`);
+- **calc**: one formula worked out with exact fractions, also over tallies
+  (`{errors-k3f9} / {requests-p2x7} * 100`);
 - **date_diff**: the time between two dates, in calendar units and in exact totals.
 
 Some small tasks are done better by a small program than by a language model, yet are rarely worth writing
 ad-hoc tooling for. abakus is the pocket calculator for those. Its arithmetic is exact decimal arithmetic:
 `0.1 + 0.2` is `0.3`, and a result that had to be rounded says so.
 
-macOS only. Status: early, version 0.2.0.
+macOS only. Status: early, version 0.3.0.
 
 ## Install
 
@@ -40,6 +42,7 @@ Other MCP clients: the command is `abakus mcp` (stdio).
 | `tally_list` | List tallies with their state |
 | `tally_drop` | Delete a tally |
 | `sum` | Add a list of numbers exactly |
+| `calc` | Work out one expression exactly, also over tallies by name |
 | `date_diff` | Time between two dates or times, in calendar units and in totals |
 
 Every tool returns a JSON object. Errors say what happened and what to do next.
@@ -154,9 +157,13 @@ through binary floating point. Strings follow fixed rules ([ADR-0005](docs/adr/0
   accepted. So are more than 38 significant digits, magnitudes of 10^165 or more and digits below 10^-128:
   input is never rounded.
 
-Arithmetic is exact, with 38 significant digits. Values meant for reading (the mean of `sum`, the totals of
-`date_diff`) are exact when they fit; otherwise they keep 15 significant digits, rounded half away from zero,
-and the response says so (`mean_exact: false`). A non-zero value never comes out as 0.
+Numbers inside a `calc` expression are not number strings: they take no grouping and no `decimal` argument
+(see [calc](#calc)).
+
+Arithmetic is exact, with 38 significant digits; `calc` computes with exact fractions. Values meant for reading
+(the mean of `sum`, the totals of `date_diff`, the result of `calc`) are exact when they fit; otherwise they keep
+15 significant digits, rounded half away from zero, and the response says so (`mean_exact: false`,
+`exact: false`). A non-zero value never comes out as 0.
 
 ## sum
 
@@ -170,6 +177,62 @@ The response has `total`, `count`, `mean` (null for an empty list) and `read`, h
 {"numbers": ["1.234,5", "410k", 8], "decimal": ","}
 → {"total": 411242.5, "count": 3, "mean": 137080.833333333, "mean_exact": false,
    "read": [{"index": 0, "input": "1.234,5", "value": 1234.5}, {"index": 1, "input": "410k", "value": 410000}]}
+```
+
+## calc
+
+`{"expression": string}`. One expression, worked out with exact fractions and rounded once, at the end
+([ADR-0007](docs/adr/0007-calc.md)):
+
+- Numbers as in number strings, but without grouping: `12`, `0.5`, `.5`, `2.5e3`, `410k`, `1.5M`. The decimal
+  mark is always `.`; a comma directly between two digits is refused as a thousands separator, so function
+  arguments are separated by a comma and a space.
+- `+`, `-`, `*` (or `×`), `/` (or `÷`), `^` (or `**`) with a whole-number exponent from -9999 to 9999,
+  parentheses and a leading minus. `^` binds tighter than a leading minus and groups from the right: `-2^2` is
+  -4, `(-2)^2` is 4, `2^3^2` is 512. No implicit multiplication (`2(3+4)` is an error that shows where the `*`
+  goes), and no `%`: multiply by 100 for a percentage, or by 1.1 to add 10%.
+- `abs(x)`, `round(x, places)` (half away from zero), `min(a, b, …)`, `max(a, b, …)`. No roots, constants or
+  units.
+- `{name}` is a tally's value, `{name:count}` its count: any tally, shared ones too, by its full name. All
+  tallies an expression uses are read at the same moment; calc never changes them.
+- At most 1000 characters, nesting at most 64 deep, and at most 2000 digits in the numerator and the
+  denominator of any value on the way.
+
+The response has `result` (a JSON number), `read` (the expression as it was understood: numbers written out,
+parentheses around every operation but the outermost) and `tallies`, each tally reference once with the number
+used (`{"name", "of", "value"}`; left out when there are none). A result that is a terminating decimal of at
+most 38 significant digits is exact. Otherwise it is rounded half away from zero to 15 significant digits (to
+whole units when the integer part is longer), and `exact: false` and `fraction`, the exact value as
+`"numerator/denominator"`, are added; `fraction` is left out when its numerator or denominator has more than
+100 digits. A tally whose value had to be rounded (`exact: false` in its state) makes the result
+`exact: false` too, and its entry in `tallies` says `"exact": false`.
+
+```json
+{"expression": "{errors-k3f9} / {requests-p2x7} * 100"}
+→ {"result": 2.96, "read": "({errors-k3f9} / {requests-p2x7}) * 100",
+   "tallies": [{"name": "errors-k3f9", "of": "value", "value": 37},
+               {"name": "requests-p2x7", "of": "value", "value": 1250}]}
+
+{"expression": "{effort-a1b2} / {effort-a1b2:count}"}
+→ {"result": 3.95833333333333, "exact": false, "fraction": "95/24", "read": "{effort-a1b2} / {effort-a1b2:count}",
+   "tallies": [{"name": "effort-a1b2", "of": "value", "value": 47.5},
+               {"name": "effort-a1b2", "of": "count", "value": 12}]}
+
+{"expression": "round(1000 * 1.045^10, 2)"}
+→ {"result": 1552.97, "read": "round(1000 * (1.045 ^ 10), 2)"}
+```
+
+An error gives the position (characters counted from 1) and the expression, says what happened and what to
+write or do instead. An unknown tally is the tally tools' error (`details.existing`, `details.matching`) without
+any advice to create one, and nothing is computed. Errors found after the tallies were read show them:
+
+```text
+calc {"expression": "{errors-k3f9} / {queued}"}
+Division by zero at character 15 of "{errors-k3f9} / {queued}": the divisor {queued} is 0, and dividing by 0
+has no result. Check the divisor; if it can be 0 (a tally nothing was added to yet, say), handle that case
+without the division.
+Details: {"tallies": [{"name": "errors-k3f9", "of": "value", "value": 37},
+                      {"name": "queued", "of": "value", "value": 0}]}
 ```
 
 ## date_diff
@@ -207,6 +270,8 @@ abakus tally list
 abakus sum 410k 1,234.5 -3
 grep -oE '[0-9][0-9.]*k' build.log | abakus sum  # numbers from stdin
 abakus sum --decimal , 1.234,5
+abakus calc '{errors-k3f9} / {requests-p2x7} * 100'  # quote it: * ( { ^ mean something to the shell
+abakus calc -2^2                                 # -4; a leading minus is part of the expression
 abakus date-diff 2026-11-08 now
 abakus tools                                     # the tools and what they do
 abakus call sum '{"numbers": ["0.1", 0.2]}'      # any tool with JSON arguments, as over MCP
@@ -255,7 +320,7 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/):
 - [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names; `tally_drop`'s advice for unknown names)
 - [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only)
 - [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC (amended: whole seconds in `text`)
-- [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name
+- [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name (amended: underflow and the readable policy in full, when `fraction` is left out, rounded tallies in the response, unknown names, errors while evaluating, parser details)
 
 ## License
 
