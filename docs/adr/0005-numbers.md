@@ -104,8 +104,10 @@ Reading (`NumberReader`):
     `1` followed by 50 zeros is 10^50 and fine.
 - `NumberReader.rulesSummary` states the rules in two sentences, in `sum`'s description. Tools that take a
   number or two besides other things (the tallies) carry `NumberReader.rulesInBrief` instead, one sentence
-  with examples: the full rules once in the tool list are enough, and the error for an unreadable number
-  states them too ([ADR-0004](0004-tallies.md), amendment on the default suffix). `DecimalMark.argument` and
+  with examples that says an unreadable number is an error that says why, and points to `sum`'s
+  description: the full rules once in the tool list are enough ([ADR-0004](0004-tallies.md), amendment on the
+  default suffix). Every error about a number string, the range errors included, also lists the accepted
+  forms; errors about JSON literals and wrong types say only what is wrong. `DecimalMark.argument` and
   `DecimalMark.schema` read and describe a `decimal` argument the same way in every tool.
 
 The `sum` tool:
