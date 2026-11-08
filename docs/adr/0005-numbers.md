@@ -88,6 +88,21 @@ Reading (`NumberReader`):
   `DecimalMark.argument` and `DecimalMark.schema` read and describe a `decimal` argument the same way in
   every tool.
 
+The `sum` tool:
+
+- An empty `numbers` list is allowed: total 0, count 0, mean null. The sum of nothing is 0; a list that came
+  out empty is not a mistake by itself.
+- The total is the exact sum, rounded once; `total_exact: false` is added when it had to be rounded.
+- The mean is computed from the exact total. It is exact when it fits 38 digits (`[1, 2]` gives 1.5).
+  Otherwise it is rounded half away from zero to six more decimal places than the most precise input has
+  (`[1, 2, 3.5]` gives 2.1666667), and `mean_exact: false` is added. That rounding error stays below a
+  millionth of the inputs' last place, while 38 digits of 6666… would only hide the number. A mean too close
+  to zero to show is 0 and flagged, not an error that loses the total.
+- The `*_exact` flags appear only when false, so the common response stays short; the tool description says
+  that their absence means exact.
+- Unknown arguments are errors: a misspelt `decimal` would otherwise read numbers written the German way by
+  the default rules without a word.
+
 ### Consequences
 
 - Results are the same on every macOS version, whatever Foundation's arithmetic does.
