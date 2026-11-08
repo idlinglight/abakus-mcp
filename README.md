@@ -254,7 +254,7 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/):
 - [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names)
 - [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only)
 - [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC (amended: whole seconds in `text`)
-- [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name (proposed)
+- [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name
 
 ## License
 
