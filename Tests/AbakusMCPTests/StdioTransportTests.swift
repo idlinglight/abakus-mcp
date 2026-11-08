@@ -61,6 +61,23 @@ struct ScratchFiles: ~Copyable {
         #expect(try lines("12345678\n", maxLineLength: 8) == [.complete(Array("12345678".utf8))])
     }
 
+    @Test func nonBlockingInputWaitsForDataInsteadOfFailing() throws {
+        var ends: [Int32] = [0, 0]
+        #expect(pipe(&ends) == 0)
+        let (readEnd, writeEnd) = (ends[0], ends[1])
+        defer { close(readEnd) }
+        #expect(fcntl(readEnd, F_SETFL, fcntl(readEnd, F_GETFL) | O_NONBLOCK) == 0)
+        // The first read finds the pipe empty (EAGAIN); the data arrives a little later.
+        DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(100)) {
+            let bytes = Array("late\n".utf8)
+            _ = bytes.withUnsafeBytes { write(writeEnd, $0.baseAddress, $0.count) }
+            close(writeEnd)
+        }
+        var reader = LineReader(fileDescriptor: readEnd, maxLineLength: 1024)
+        #expect(try reader.next() == .complete(Array("late".utf8)))
+        #expect(try reader.next() == nil)
+    }
+
     @Test func tooLongLinesSpanningManyReadsAreDiscarded() throws {
         let long = String(repeating: "x", count: 300_000)
         #expect(try lines("first\n" + long + "\nafter\n", maxLineLength: 100_000) == [

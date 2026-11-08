@@ -27,7 +27,7 @@ extension MCPServer {
                 response = handle(line: bytes)
             case .tooLong:
                 response = JSONWriter.write(RPCResponse.error(id: nil, .invalidRequest(
-                    "The message is longer than \(maxLineLength) bytes and was discarded."
+                    "The message is longer than \(maxLineLength) bytes and was discarded. Keep each message below that size, e.g. by splitting a large input across several tool calls."
                 )))
             }
             guard let response else { continue }
@@ -62,6 +62,8 @@ struct LineReader {
     /// Set while the rest of a too long line is being dropped.
     private var discarding = false
     private var endOfInput = false
+    /// Every read lands here first; allocated once.
+    private var chunk = [UInt8](repeating: 0, count: 64 * 1024)
 
     init(fileDescriptor: Int32, maxLineLength: Int) {
         self.fileDescriptor = fileDescriptor
@@ -109,9 +111,12 @@ struct LineReader {
 
     private mutating func fill() throws(StdioError) {
         let descriptor = fileDescriptor
-        var chunk = [UInt8](repeating: 0, count: 64 * 1024)
         while true {
-            let count = chunk.withUnsafeMutableBytes { Darwin.read(descriptor, $0.baseAddress, $0.count) }
+            // errno is read inside the closure, right after read(2), before anything else can change it.
+            let (count, error) = chunk.withUnsafeMutableBytes { bytes -> (Int, Int32) in
+                let count = Darwin.read(descriptor, bytes.baseAddress, bytes.count)
+                return (count, count < 0 ? errno : 0)
+            }
             if count > 0 {
                 buffer.append(contentsOf: chunk[..<count])
                 return
@@ -120,23 +125,56 @@ struct LineReader {
                 endOfInput = true
                 return
             }
-            if errno == EINTR { continue }
-            throw StdioError(description: "Reading the input failed: \(String(cString: strerror(errno))).")
+            switch error {
+            case EINTR:
+                continue
+            case EAGAIN, EWOULDBLOCK:
+                // A non-blocking descriptor has no data yet: wait for some instead of failing.
+                let waitError = waitUntilReady(descriptor, for: POLLIN)
+                guard waitError == 0 else {
+                    throw StdioError(description: "Waiting for input failed: \(String(cString: strerror(waitError))).")
+                }
+            default:
+                throw StdioError(description: "Reading the input failed: \(String(cString: strerror(error))).")
+            }
         }
     }
 }
 
-/// Writes all of `bytes`, continuing after partial writes and interruptions. Returns false when the file
-/// descriptor refuses the data, e.g. because the reading end of a pipe has been closed.
+/// Writes all of `bytes`, continuing after partial writes and interruptions, and waiting while a non-blocking
+/// descriptor is full. Returns false when the file descriptor refuses the data, e.g. because the reading end
+/// of a pipe has been closed.
 func writeAll(_ bytes: [UInt8], to fileDescriptor: Int32) -> Bool {
     var offset = 0
     while offset < bytes.count {
-        let written = bytes[offset...].withUnsafeBytes { Darwin.write(fileDescriptor, $0.baseAddress, $0.count) }
-        if written < 0 {
-            if errno == EINTR { continue }
+        let (written, error) = bytes[offset...].withUnsafeBytes { bytes -> (Int, Int32) in
+            let written = Darwin.write(fileDescriptor, bytes.baseAddress, bytes.count)
+            return (written, written < 0 ? errno : 0)
+        }
+        if written >= 0 {
+            offset += written
+            continue
+        }
+        switch error {
+        case EINTR:
+            continue
+        case EAGAIN, EWOULDBLOCK:
+            guard waitUntilReady(fileDescriptor, for: POLLOUT) == 0 else { return false }
+        default:
             return false
         }
-        offset += written
     }
     return true
+}
+
+/// Blocks until `fileDescriptor` is ready for `event` (`POLLIN` or `POLLOUT`), or reports that it never will
+/// be (end of input, closed pipe), which the next read or write then shows. Returns 0, or the errno of a
+/// failed `poll`.
+private func waitUntilReady(_ fileDescriptor: Int32, for event: Int32) -> Int32 {
+    var request = pollfd(fd: fileDescriptor, events: Int16(event), revents: 0)
+    while true {
+        if poll(&request, 1, -1) >= 0 { return 0 }
+        let error = errno
+        if error != EINTR { return error }
+    }
 }
