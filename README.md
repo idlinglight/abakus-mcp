@@ -55,8 +55,8 @@ to leave other sessions' tallies alone unless they coordinate with them
 ([ADR-0004](docs/adr/0004-tallies.md)).
 
 Names: lowercase letters, digits, `.`, `_`, `-`, starting with a letter or digit, at most 64 characters
-including the suffix (so 59 as given, 64 with `shared: true`). Tallies untouched for about three days expire
-([ADR-0003](docs/adr/0003-state-in-user-temp-folder.md)).
+including the suffix (so 59 as given, 64 with `shared: true`); a longer name is refused with a suggestion cut
+to 59. Tallies untouched for about three days expire ([ADR-0003](docs/adr/0003-state-in-user-temp-folder.md)).
 
 Every response is the tally's full state; numbers that came as strings are listed under `read`.
 
@@ -74,6 +74,17 @@ the mark again. Thresholds never block. Each threshold's status is in every resp
    "thresholds": [{"limit": 20, "of": "value", "reached": false, "remaining": 20},
                   {"every": 5, "of": "count", "next": 5}],
    "created": "2026-11-08T09:30:00Z", "updated": "2026-11-08T09:30:00Z"}
+```
+
+`tally_create` always makes a new tally. Given a name that exists exactly, typically one it returned earlier,
+the new tally still gets a suffix, and the response adds a `note`: to continue the existing tally, add to it
+with `tally_add` and drop the new one with `tally_drop`.
+
+```json
+{"name": "review-k3f9"}
+→ {"name": "review-k3f9-p2x7", "value": 0, "count": 0, "thresholds": [],
+   "created": "2026-11-08T09:31:00Z", "updated": "2026-11-08T09:31:00Z",
+   "note": "A tally named \"review-k3f9\" already exists, and tally_create always makes a new tally: …"}
 ```
 
 `tally_add` `{name, amount? (default 1), decimal?}` adds `added`, `crossed` (`[]` if nothing) and `read`:
@@ -107,10 +118,26 @@ or `{"every": 5, "of": "count", "at": [5]}`; past 10 multiples,
 
 `tally_drop` `{name}` deletes the tally and returns its final state with `"dropped": true`.
 
-An unknown name may have expired or lack its suffix; the error lists the names that exist (a suffixed match
-first). Creating a shared tally under an existing name shows that tally and says to add to it only in
-coordination with whoever created it, or to leave `shared` out to count one's own work. An invalid name comes
-with a suggestion (`"Review Items"` → `"review-items"`).
+An unknown name is an error, never a new tally: the name may be misspelled, have expired, or lack its
+suffix. `details.existing` lists the tallies that exist (at most 20), those whose names start with the name
+and `-` first. Every tally but a shared one has a suffix, so those may belong to other sessions: they come
+with their state under `details.matching` (the first three in the message too), and the error says to use one
+only if you know you created it, and otherwise to create a new tally:
+
+```text
+tally_add {"name": "review"}
+There is no tally named "review". It may never have been created (check the spelling), or it may have
+expired: … a tally whose name starts with "review-" exists: "review-k3f9" (created 2026-11-08T09:30:00Z,
+value 21, count 6). It may belong to another session: use it only if you know you created it (compare its
+created time with when you created yours). If unsure, create a new tally with tally_create. …
+Details: {"name": "review",
+          "matching": [{"name": "review-k3f9", "value": 21, "count": 6, "created": "2026-11-08T09:30:00Z"}],
+          "existing": ["review-k3f9", "bytes"]}
+```
+
+Creating a shared tally under an existing name shows that tally and says to add to it only in coordination
+with whoever created it, or to leave `shared` out to count one's own work. An invalid name comes with a
+suggestion (`"Review Items"` → `"review-items"`).
 
 ## Numbers
 

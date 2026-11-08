@@ -68,6 +68,8 @@ expect "mcp modern: date_diff without a handshake" \
 created=$($abakus tally create items --every-count 2 --limit 5)
 name=$(print -r -- "$created" | jq -r .name)
 expect "cli: tally create appends a suffix" '.name | test("^items-[a-z0-9]{4}$")' "$created"
+expect "cli: tally create with an existing name makes a new tally and notes it" \
+  ".name != \"$name\" and (.note | test(\"already exists\"))" "$($abakus tally create "$name")"
 $abakus tally add "$name" >/dev/null
 added=$($abakus tally add "$name" 4)
 expect "cli: tally add reports the checkpoint and the limit" \

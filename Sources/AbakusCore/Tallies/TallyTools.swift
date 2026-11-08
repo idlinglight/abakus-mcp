@@ -14,11 +14,12 @@ struct TallyCreate: Tool {
         Create a tally: an exact value plus a count of additions, kept outside your context so it survives long \
         work and compaction. For counting work against a budget, a checkpoint every N items, or summing numbers \
         that arrive one at a time. Every tally gets a random suffix (items becomes items-k3f9), so each session \
-        counts its own; use the name in the response from then on. Pass shared: true only for a tally several \
-        sessions are meant to add to: the name is then used exactly, and creating fails if it exists. Leave other \
-        sessions' tallies alone unless you coordinate with them. Optional thresholds watch the value (default) or \
-        the count: limit (a ceiling), at (marks), every (a period); they inform and never block. Returns the new \
-        tally's state. \(NumberReader.rulesInBrief)
+        counts its own; use the name in the response from then on, and tally_add to continue it: tally_create \
+        always makes a new tally (with a note when the name given exists). Pass shared: true only for a tally \
+        several sessions are meant to add to: the name is then used exactly, and creating fails if it exists. \
+        Leave other sessions' tallies alone unless you coordinate with them. Optional thresholds watch the value \
+        (default) or the count: limit (a ceiling), at (marks), every (a period); they inform and never block. \
+        Returns the new tally's state. \(NumberReader.rulesInBrief)
         """
 
     let inputSchema: JSONValue = [
@@ -39,12 +40,18 @@ struct TallyCreate: Tool {
 
     let annotations = ToolAnnotations(title: "Create tally", readOnly: false, destructive: false, idempotent: false)
 
+    /// `unique` was the opt-in for the suffix in 0.1.0; agents may still have it in their prompts. What to do
+    /// instead depends on what it asked for.
+    static let uniqueHint: UnknownArguments.Hint = { value in
+        switch value.boolValue {
+        case true?: "Leave unique out: tally_create appends a random suffix by default now."
+        case false?: "To use the name exactly, without a suffix, pass shared: true instead; the name must not exist yet."
+        case nil: nil
+        }
+    }
+
     func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
-        var args = try TallyArguments(
-            arguments, allowed: ["name", "shared", "thresholds", "decimal"],
-            // `unique: true` was the opt-in for the suffix in 0.1.0; agents may still have it in their prompts.
-            hints: ["unique": "Leave unique out: tally_create always appends a random suffix now, unless shared: true is passed."]
-        )
+        var args = try TallyArguments(arguments, for: self, hints: ["unique": Self.uniqueHint])
         let requested = try args.name()
         let shared = try args.bool("shared") ?? false
         try TallyName.validate(requested, suffixed: !shared)
@@ -54,15 +61,21 @@ struct TallyCreate: Tool {
 
         return try TallyStore(context).change(creatingFolder: true) { files throws(ToolError) in
             let name: String
+            var note: String?
             if shared {
                 if let existing = try files.load(requested) { throw TallyErrors.exists(existing) }
                 name = requested
             } else {
                 name = try TallyName.suffixed(requested) { candidate throws(ToolError) in files.contains(candidate) }
+                // Typically a name tally_create returned earlier, given again after compaction. Creating never
+                // blocks on a name that may be someone else's (ADR-0004); the note says how to continue instead.
+                if files.contains(requested) { note = TallyResponse.recreatedNote(requested, as: name) }
             }
             let tally = Tally(name: name, thresholds: thresholds, created: now, updated: now)
             try files.save(tally)
-            return TallyResponse.state(tally, reads: reads)
+            var response = TallyResponse.state(tally, reads: reads)
+            if let note { response["note"] = .string(note) }
+            return response
         }
     }
 }
@@ -99,7 +112,7 @@ struct TallyAdd: Tool {
     let annotations = ToolAnnotations(title: "Add to tally", readOnly: false, destructive: false, idempotent: false)
 
     func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
-        var args = try TallyArguments(arguments, allowed: ["name", "amount", "decimal"])
+        var args = try TallyArguments(arguments, for: self)
         let name = try args.name()
         try TallyName.validate(name)
         let amount = try args.number("amount") ?? 1
@@ -165,7 +178,7 @@ struct TallySet: Tool {
     let annotations = ToolAnnotations(title: "Set tally", readOnly: false, destructive: true, idempotent: true)
 
     func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
-        var args = try TallyArguments(arguments, allowed: ["name", "value", "count", "thresholds", "decimal"])
+        var args = try TallyArguments(arguments, for: self)
         let name = try args.name()
         try TallyName.validate(name)
         let value = try args.number("value")
@@ -217,7 +230,7 @@ struct TallyList: Tool {
     let annotations = ToolAnnotations(title: "List tallies", readOnly: true, destructive: false, idempotent: true)
 
     func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
-        let args = try TallyArguments(arguments, allowed: ["prefix"])
+        let args = try TallyArguments(arguments, for: self)
         let prefix = try args.string("prefix") ?? ""
         let store = TallyStore(context)
 
@@ -273,14 +286,14 @@ struct TallyDrop: Tool {
     let annotations = ToolAnnotations(title: "Drop tally", readOnly: false, destructive: true, idempotent: true)
 
     func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
-        let args = try TallyArguments(arguments, allowed: ["name"])
+        let args = try TallyArguments(arguments, for: self)
         let name = try args.name()
         try TallyName.validate(name)
 
         return try TallyStore(context).change { files throws(ToolError) in
             switch try files.inspect(name) {
             case .missing:
-                throw TallyErrors.unknown(name, existing: try files.names())
+                throw try files.unknown(name)
             case .tally(let tally):
                 try files.delete(name)
                 return TallyResponse.state(tally, dropped: true)

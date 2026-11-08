@@ -27,13 +27,26 @@ enum TallyName {
             }
             throw ToolError(message, details: details)
         }
-        let room = maxLength - suffixLength - 1
-        if suffixed, name.utf8.count > room {
+        if suffixed, name.utf8.count > roomForSuffix {
+            let shortened = shortened(name)
             throw ToolError(
-                "\"\(name)\" is too long: tally_create appends a random suffix like \"-k3f9\", so the name may have at most \(room) characters.",
-                details: ["name": .string(name)]
+                "\"\(name)\" has \(name.utf8.count) characters, too many for tally_create: it appends a dash and a random suffix, \(suffixLength + 1) characters like \"-k3f9\", and a tally name has at most \(maxLength), so the name given may have at most \(roomForSuffix). Try \"\(shortened)\".",
+                details: ["name": .string(name), "suggestion": .string(shortened)]
             )
         }
+    }
+
+    /// The longest name tally_create can take, leaving room for `-` and the suffix.
+    static let roomForSuffix = maxLength - suffixLength - 1
+
+    /// A valid name cut to `roomForSuffix` characters, without a trailing `-`, `.` or `_` (which would look like a
+    /// separator before the suffix). Valid names are ASCII and start with a letter or digit, so this is never empty.
+    static func shortened(_ name: String) -> String {
+        var cut = name.prefix(roomForSuffix)
+        while let last = cut.last, last == "-" || last == "." || last == "_" {
+            cut.removeLast()
+        }
+        return String(cut)
     }
 
     /// A valid name close to an invalid one (`My Items` becomes `my-items`), or nil if there is none.

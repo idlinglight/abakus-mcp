@@ -64,27 +64,52 @@ enum TallyResponse {
         }
         return crossed
     }
+
+    /// The `note` on a tally_create response when a tally with exactly the given name exists, typically one that
+    /// tally_create returned earlier and the agent gave again (after compaction, say) to continue it.
+    static func recreatedNote(_ requested: String, as name: String) -> String {
+        "A tally named \"\(requested)\" already exists, and tally_create always makes a new tally: this one is \"\(name)\". If you meant to continue \"\(requested)\", add to it with tally_add and drop this new one with tally_drop."
+    }
 }
 
 /// Errors that name a tally, written for the agent that has to recover from them.
 enum TallyErrors {
     /// At most this many existing names go into an error's details.
     static let listedNames = 20
+    /// At most this many tallies that may be the asked-for name plus a suffix go into an error's message.
+    static let describedMatches = 3
 
-    static func unknown(_ name: String, existing names: [String]) -> ToolError {
+    /// `matching`: the readable tallies among `names` that start with `name` and `-`, at most `listedNames`.
+    static func unknown(_ name: String, existing names: [String], matching: [Tally]) -> ToolError {
         // tally_create appends a suffix unless shared: true; an agent may have lost it (e.g. to compaction) or
-        // used the name it asked for instead of the one it got.
+        // used the name it asked for instead of the one it got. But every tally but a shared one has a suffix,
+        // so a tally with the name plus a suffix is as likely another session's as this one's: the error shows
+        // when each was created and leaves the choice to an agent that knows, instead of suggesting one.
         let suffixed = names.filter { $0.hasPrefix("\(name)-") }
         var message = "There is no tally named \"\(name)\". It may never have been created (check the spelling), or it may have expired: macOS deletes tallies that have not changed for about three days."
-        if !suffixed.isEmpty {
-            let candidates = suffixed.prefix(3).map { "\"\($0)\"" }.joined(separator: " or ")
-            message += " tally_create appends a random suffix to the name unless shared: true is passed; did you mean \(candidates)?"
+        if matching.isEmpty {
+            message += names.isEmpty
+                ? " No tallies exist right now. Create it with tally_create; nothing is ever created by adding."
+                : " details.existing lists the tallies that exist. To start over, create it with tally_create."
+        } else {
+            let described = matching.prefix(describedMatches).map {
+                "\"\($0.name)\" (created \($0.created), value \($0.value), count \($0.count))"
+            }
+            let more = suffixed.count - described.count
+            let list = more > 0 ? described.joined(separator: ", ") + " and \(more) more" : described.listedInProse
+            message += " tally_create adds a random suffix to every name unless shared: true is passed, and "
+            message += suffixed.count == 1
+                ? "a tally whose name starts with \"\(name)-\" exists: \(list). It may belong to another session: use it only if you know you created it (compare its created time with when you created yours). If unsure, create a new tally with tally_create. details.matching shows it; details.existing lists the tallies that exist."
+                : "tallies whose names start with \"\(name)-\" exist: \(list). They may belong to other sessions: use one only if you know you created it (compare its created time with when you created yours). If unsure, create a new tally with tally_create. details.matching shows them; details.existing lists the tallies that exist."
         }
-        message += names.isEmpty
-            ? " No tallies exist right now. Create it with tally_create; nothing is ever created by adding."
-            : " details.existing lists the tallies that exist. To start over, create it with tally_create."
+        var details: JSONObject = ["name": .string(name)]
+        if !matching.isEmpty {
+            details["matching"] = .array(matching.map { tally in
+                ["name": .string(tally.name), "value": .decimal(tally.value), "count": .number(String(tally.count)), "created": .string(tally.created)]
+            })
+        }
         let shown = suffixed + names.filter { !suffixed.contains($0) }
-        var details: JSONObject = ["name": .string(name), "existing": .array(shown.prefix(listedNames).map(JSONValue.string))]
+        details["existing"] = .array(shown.prefix(listedNames).map(JSONValue.string))
         if names.count > listedNames {
             details["existing_total"] = .number(String(names.count))
         }
@@ -95,7 +120,7 @@ enum TallyErrors {
     static func exists(_ tally: Tally) -> ToolError {
         let state = TallyResponse.state(tally)
         return ToolError(
-            "A tally named \"\(tally.name)\" already exists (details.existing shows its state) and may be in use by other sessions. Add to it with tally_add only if you are coordinating with whoever created it. To count your own work, call tally_create without shared: the tally then gets a random suffix and is yours alone. If it is your own from earlier, tally_set or tally_drop starts it over.",
+            "A tally named \"\(tally.name)\" already exists (details.existing shows its state) and may be in use by other sessions. Add to it with tally_add only if you are coordinating with whoever created it. To count your own work, call tally_create without shared: the tally then gets a random suffix and is yours alone.",
             details: ["existing": .object(state)]
         )
     }

@@ -35,8 +35,26 @@ import Testing
         let longest = String(repeating: "x", count: 59)
         #expect(throws: Never.self) { try TallyName.validate(longest, suffixed: true) }
         let error = try #require(throws: ToolError.self) { try TallyName.validate(longest + "x", suffixed: true) }
-        #expect(error.message.contains("at most 59 characters"))
+        #expect(error.message == """
+            "\(longest)x" has 60 characters, too many for tally_create: it appends a dash and a random suffix, 5 \
+            characters like "-k3f9", and a tally name has at most 64, so the name given may have at most 59. Try \
+            "\(longest)".
+            """)
+        #expect(error.details?["suggestion"] == .string(longest))
+        // The way out is a shorter name, not shared: true, which would share the tally with other sessions.
+        #expect(!error.message.contains("shared"))
         #expect(throws: Never.self) { try TallyName.validate(longest + "x") }
+    }
+
+    /// Cut to 59 characters, without a separator left dangling before the suffix.
+    @Test func shortenedNamesFitAndEndInALetterOrDigit() throws {
+        let base = String(repeating: "a", count: 56)
+        #expect(TallyName.shortened(base + "bcdefgh") == base + "bcd")
+        #expect(TallyName.shortened(base + "b-._cd") == base + "b")
+        #expect(TallyName.shortened(base + "b.-") == base + "b")
+        let error = try #require(throws: ToolError.self) { try TallyName.validate(base + "bc_-x-y", suffixed: true) }
+        #expect(error.details?["suggestion"] == .string(base + "bc"))
+        #expect(throws: Never.self) { try TallyName.validate(base + "bc", suffixed: true) }
     }
 
     @Test func suffixedRetriesWhenTheSuffixIsTaken() throws {

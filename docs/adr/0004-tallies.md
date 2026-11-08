@@ -32,7 +32,8 @@ does not reliably know an identifier that is unique to its session.
 - `tally_add`, `tally_set` and `tally_drop` refuse an unknown name and never create one, so a typo or an
   expired tally shows up as an error instead of a new tally starting at 1. The error says the tally may never
   have been created or may have expired, and lists existing names (those with the given name plus a suffix
-  first, at most 20).
+  first, at most 20). (The amendment at the end adds the state of those suffixed matches and drops any
+  suggestion to use one.)
 - Thresholds watch the value or the count (default: the value). The argument is a list; each item has
   exactly one of `limit`, `at` (a list of marks) or `every`, and optionally `of: "value" | "count"`, e.g.
   `[{"limit": 20}, {"every": 5, "of": "count"}]`. Mixing is the point: effort points per item with a limit
@@ -81,26 +82,45 @@ consumers relying on `unique`.
 ### Decision
 
 - `tally_create` always appends `-` and four random characters from `[a-z0-9]` (`items` becomes
-  `items-k3f9`), drawn again while the name is taken, and returns the name to use. The name given may have
-  at most 59 characters. Two sessions asking for the same name get two tallies.
+  `items-k3f9`), drawn again while the name is taken, and returns the name to use. Two sessions asking for
+  the same name get two tallies.
+- The name given may have at most 59 characters: the suffix takes 5 of the 64. A longer name is an error
+  that says so and suggests the name cut to 59 characters, without a trailing `-`, `.` or `_`. It does not
+  suggest `shared: true`, which would turn a tally meant for one session's work into a shared one.
+- Given a name that exists exactly, `tally_create` still creates a new tally with a suffix: creating never
+  blocks on a name that may be someone else's. The typical case is an agent that gives a name it got earlier
+  (after compaction, say) to continue counting, so the response then carries a `note`: a tally with exactly
+  that name exists, `tally_create` always makes a new tally, and to continue the existing one, add to it with
+  `tally_add` and drop the new one with `tally_drop`.
 - `shared: true` (default false) uses the name exactly, up to 64 characters, for a tally several sessions are
   meant to add to. It is refused if the name exists; the error shows the existing tally, says to add to it
-  only when coordinating with whoever created it, and says to leave `shared` out to count one's own work.
+  only when coordinating with whoever created it, and says to leave `shared` out to count one's own work. It
+  does not offer `tally_set` or `tally_drop` to start the tally over: an agent cannot know that a shared tally
+  is its own, and starting it over would wipe the count of the sessions that share it.
 - `unique` is removed. Passing it is an unknown argument; the error lists the arguments the tool takes and
-  adds that the suffix is now the default.
+  adds what to do instead, by the value passed: for `true`, leave it out, the suffix is the default; for
+  `false`, pass `shared: true` for the exact name, which must not exist yet. Other values get no hint.
 - The server's instructions and `tally_create`'s description lead with the default, mention `shared: true`
   for collaborative tallies, and tell agents to leave other sessions' tallies alone unless they coordinate
   with them.
-- The error for an unknown name keeps listing suffixed matches first; the likely mistake is now adding to the
-  name asked for instead of the one returned.
+- The error for an unknown name keeps listing the tallies whose names start with the name and `-` first, the
+  likely mistake being to add to the name asked for instead of the one returned. But with a suffix on every
+  tally but shared ones, such a tally is as likely another session's, so the error does not ask "did you
+  mean": it gives each one's `created` time, value and count (up to three in the message, up to 20 under
+  `details.matching`), says they may belong to other sessions, to use one only when the agent knows it
+  created it (comparing created times), and otherwise to create a new tally.
 - The number rules appear in full in `sum`'s description only; the tally tools carry one sentence
-  (`NumberReader.rulesInBrief`), since an unreadable number's error states the rules anyway.
+  (`NumberReader.rulesInBrief`) that says an unreadable number is an error that says why, and points to
+  `sum`'s description. Every error about a number string also lists the accepted forms
+  ([ADR-0005](0005-numbers.md)).
 
 ### Consequences
 
 - A session that counts its own work cannot collide with another by accident, and does not have to know
   about sharing to be safe. Sharing on purpose is one explicit argument.
 - Tally names in responses and in `tally_list` carry suffixes; an agent that loses the name finds it with
-  `tally_list` and a prefix, or in the unknown-name error.
+  `tally_list` and a prefix, or in the unknown-name error, and tells its own from others' by when it was
+  created. An agent that cannot tell starts a new tally and loses its earlier count, which is better than
+  adding to another session's.
 - Agents still see every tally of the user in `tally_list`; leaving other sessions' tallies alone is guidance
   in the descriptions, not enforced.

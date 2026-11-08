@@ -31,8 +31,8 @@ struct NumberReading {
     }
 }
 
-/// The arguments of one tally tool call. Unknown keys are refused, so a typo (`amout`) fails loudly instead of
-/// being ignored, and JSON null counts as absent.
+/// The arguments of one tally tool call. Keys the tool's schema does not list are refused (`UnknownArguments`),
+/// so a typo (`amout`) fails loudly instead of being ignored, and JSON null counts as absent.
 struct TallyArguments {
     private let raw: JSONObject
     private(set) var numbers: NumberReading
@@ -40,14 +40,8 @@ struct TallyArguments {
     var reads: [NumberRead] { numbers.reads }
 
     /// `hints` adds a sentence to the error for particular unknown keys, such as an argument that was removed.
-    init(_ raw: JSONObject, allowed: [String], hints: [String: String] = [:]) throws(ToolError) {
-        for key in raw.keys where !allowed.contains(key) {
-            let quoted = allowed.map { "\"\($0)\"" }
-            let list = quoted.count > 1 ? quoted.dropLast().joined(separator: ", ") + " and " + quoted.last! : quoted.joined()
-            var message = "Unknown argument \"\(key)\". This tool takes \(list)."
-            if let hint = hints[key] { message += " " + hint }
-            throw ToolError(message, details: ["argument": .string(key)])
-        }
+    init(_ raw: JSONObject, for tool: some Tool, hints: [String: UnknownArguments.Hint] = [:]) throws(ToolError) {
+        try UnknownArguments.refuse(raw, for: tool, hints: hints)
         self.raw = raw
         numbers = NumberReading(decimal: try DecimalMark.argument(raw["decimal"]))  // read as every tool reads it
     }
