@@ -1,6 +1,7 @@
 # ADR-0005: Numbers: exact decimals, read by stated rules
 
-Status: accepted, 2026-11-08; amended 2026-11-08 (see the end)
+Status: accepted, 2026-11-08; amended 2026-11-08 (see the end); amended 2026-11-08 (the rules in full in
+`sum`'s description only)
 
 ## Context
 
@@ -101,9 +102,11 @@ Reading (`NumberReader`):
   - Values a `Decimal` cannot hold exactly: more than 38 significant digits, 10^165 or more (`1e400`), or
     digits below 10^-128 (`1.5e-128`). Input is never rounded. Trailing zeros are not significant digits:
     `1` followed by 50 zeros is 10^50 and fine.
-- `NumberReader.rulesSummary` states the rules in two sentences for tool descriptions;
-  `DecimalMark.argument` and `DecimalMark.schema` read and describe a `decimal` argument the same way in
-  every tool.
+- `NumberReader.rulesSummary` states the rules in two sentences, in `sum`'s description. Tools that take a
+  number or two besides other things (the tallies) carry `NumberReader.rulesInBrief` instead, one sentence
+  with examples: the full rules once in the tool list are enough, and the error for an unreadable number
+  states them too ([ADR-0004](0004-tallies.md), amendment on the default suffix). `DecimalMark.argument` and
+  `DecimalMark.schema` read and describe a `decimal` argument the same way in every tool.
 
 The `sum` tool:
 

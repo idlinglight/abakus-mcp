@@ -25,7 +25,7 @@ struct FailingTool: Tool {
     func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
         if arguments["withDetails"]?.boolValue == true {
             throw ToolError(
-                "A tally named \"items\" already exists. Use another name, or pass unique: true.",
+                "A tally named \"items\" already exists. Add to it only if you coordinate with whoever created it.",
                 details: ["name": "items", "value": .number("3.5"), "count": 2]
             )
         }

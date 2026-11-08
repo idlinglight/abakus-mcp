@@ -3,59 +3,110 @@ import Foundation
 import Testing
 
 @Suite struct TallyCreateTests {
-    @Test func returnsTheNewTallysState() throws {
+    @Test func returnsTheNewTallysStateUnderASuffixedName() throws {
         let state = TallyTestState()
         let response = try state.call("tally_create", ["name": "items"])
         #expect(response.keys == ["name", "value", "count", "thresholds", "created", "updated"])
+        let name = try #require(response["name"]?.stringValue)
+        #expect(name.wholeMatch(of: /items-[a-z0-9]{4}/) != nil)
         #expect(response == [
-            "name": "items", "value": 0, "count": 0, "thresholds": [],
+            "name": .string(name), "value": 0, "count": 0, "thresholds": [],
             "created": "2026-11-08T09:30:00Z", "updated": "2026-11-08T09:30:00Z",
         ])
+        #expect(FileManager.default.fileExists(atPath: state.file(name).path))
+        #expect(!FileManager.default.fileExists(atPath: state.file("items").path))
     }
 
     @Test func writesOnePrivateFileWithDecimalsAsStrings() throws {
         let state = TallyTestState()
-        try state.call("tally_create", ["name": "budget", "thresholds": [["limit": .number("2490123.5")]]])
+        let created = try state.call("tally_create", ["name": "budget", "thresholds": [["limit": .number("2490123.5")]]])
+        let file = state.file(try #require(created["name"]?.stringValue))
         #expect(TallyTest.permissions(state.url) == 0o700)
         #expect(TallyTest.permissions(state.tallies) == 0o700)
-        #expect(TallyTest.permissions(state.file("budget")) == 0o600)
+        #expect(TallyTest.permissions(file) == 0o600)
 
-        let file = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: state.file("budget"))) as? [String: Any])
-        #expect(file["format"] as? Int == 1)
-        #expect(file["value"] as? String == "0")
-        let thresholds = try #require(file["thresholds"] as? [[String: Any]])
+        let contents = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        #expect(contents["format"] as? Int == 1)
+        #expect(contents["value"] as? String == "0")
+        let thresholds = try #require(contents["thresholds"] as? [[String: Any]])
         #expect(thresholds.first?["limit"] as? String == "2490123.5")
     }
 
-    @Test func refusesAnExistingNameAndShowsIt() throws {
+    /// Two sessions asking for the same name each count on their own.
+    @Test func everyCreateGetsANameOfItsOwn() throws {
         let state = TallyTestState()
-        try state.call("tally_create", ["name": "items"])
-        try state.call("tally_add", ["name": "items", "amount": 3])
-        let error = try #require(state.failure("tally_create", ["name": "items"]))
-        #expect(error.message.contains("already exists"))
-        #expect(error.message.contains("unique: true"))
-        let existing = try #require(error.details?["existing"]?.objectValue)
-        #expect(existing["name"] == "items")
-        #expect(existing["value"] == 3)
-    }
-
-    @Test func uniqueAppendsASuffixAndReturnsTheName() throws {
-        let state = TallyTestState()
-        let first = try #require(try state.call("tally_create", ["name": "items", "unique": true])["name"]?.stringValue)
-        let second = try #require(try state.call("tally_create", ["name": "items", "unique": true])["name"]?.stringValue)
+        let first = try #require(try state.call("tally_create", ["name": "items"])["name"]?.stringValue)
+        let second = try #require(try state.call("tally_create", ["name": "items"])["name"]?.stringValue)
         #expect(first.wholeMatch(of: /items-[a-z0-9]{4}/) != nil)
         #expect(second.wholeMatch(of: /items-[a-z0-9]{4}/) != nil)
         #expect(first != second)
+        try state.call("tally_add", ["name": .string(first), "amount": 3])
+        #expect(try state.call("tally_add", ["name": .string(second)])["value"] == 1)
         #expect(TallyTest.names(try state.call("tally_list"), in: "tallies") == [first, second].sorted())
+    }
+
+    @Test func aSharedTallyDoesNotBlockSuffixedOnes() throws {
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "items", "shared": true])
+        let own = try #require(try state.call("tally_create", ["name": "items"])["name"]?.stringValue)
+        #expect(own.hasPrefix("items-"))
+        #expect(TallyTest.names(try state.call("tally_list"), in: "tallies") == ["items", own])
+    }
+
+    @Test func nameLengthsLeaveRoomForTheSuffixUnlessShared() throws {
+        let state = TallyTestState()
+        let longest = String(repeating: "x", count: 59)
+        let suffixed = try #require(try state.call("tally_create", ["name": .string(longest)])["name"]?.stringValue)
+        #expect(suffixed.utf8.count == 64)
+        let error = try #require(state.failure("tally_create", ["name": .string(longest + "x")]))
+        #expect(error.message.contains("suffix"))
+        #expect(error.message.contains("at most 59 characters"))
+        let full = String(repeating: "y", count: 64)
+        #expect(try state.call("tally_create", ["name": .string(full), "shared": true])["name"] == .string(full))
+    }
+
+    @Test func sharedUsesTheNameExactly() throws {
+        let state = TallyTestState()
+        let response = try state.call("tally_create", ["name": "build-errors", "shared": true])
+        #expect(response["name"] == "build-errors")
+        #expect(FileManager.default.fileExists(atPath: state.file("build-errors").path))
+        #expect(try state.call("tally_create", ["name": "plain", "shared": false])["name"]?.stringValue?.hasPrefix("plain-") == true)
+    }
+
+    @Test func sharedRefusesAnExistingNameAndShowsIt() throws {
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "items", "shared": true])
+        try state.call("tally_add", ["name": "items", "amount": 3])
+        let error = try #require(state.failure("tally_create", ["name": "items", "shared": true]))
+        #expect(error.message.contains("already exists"))
+        #expect(error.message.contains("only if you are coordinating with whoever created it"))
+        #expect(error.message.contains("without shared"))
+        #expect(!error.message.contains("unique"))
+        let existing = try #require(error.details?["existing"]?.objectValue)
+        #expect(existing["name"] == "items")
+        #expect(existing["value"] == 3)
+        #expect(try state.call("tally_list")["tallies"]?.arrayValue?.count == 1)  // nothing new
+    }
+
+    @Test func uniqueIsGoneAndTheErrorSaysWhatToDoInstead() throws {
+        let state = TallyTestState()
+        let error = try #require(state.failure("tally_create", ["name": "items", "unique": true]))
+        #expect(error.message == """
+            Unknown argument "unique". This tool takes "name", "shared", "thresholds" and "decimal". Leave unique \
+            out: tally_create always appends a random suffix now, unless shared: true is passed.
+            """)
+        #expect(error.details?["argument"] == "unique")
+        #expect(!FileManager.default.fileExists(atPath: state.url.path))
     }
 
     @Test func refusesInvalidNamesWithASuggestion() throws {
         let state = TallyTestState()
         let error = try #require(state.failure("tally_create", ["name": "Items"]))
         #expect(error.details?["suggestion"] == "items")
+        #expect(state.failure("tally_create", ["name": "Items", "shared": true])?.details?["suggestion"] == "items")
         #expect(state.failure("tally_create", ["name": 5])?.message.contains("must be a string") == true)
         #expect(state.failure("tally_create", [:])?.message.contains("Missing argument \"name\"") == true)
-        #expect(state.failure("tally_create", ["name": "items", "unique": "yes"])?.message.contains("true or false") == true)
+        #expect(state.failure("tally_create", ["name": "items", "shared": "yes"])?.message.contains("true or false") == true)
     }
 
     @Test func showsHowThresholdStringsWereRead() throws {
@@ -76,7 +127,7 @@ import Testing
 @Suite struct TallyAddTests {
     @Test func countsOneByDefault() throws {
         let state = TallyTestState()
-        try state.call("tally_create", ["name": "items"])
+        try state.call("tally_create", ["name": "items", "shared": true])
         try state.call("tally_add", ["name": "items"])
         let response = try state.call("tally_add", ["name": "items"])
         #expect(response.keys == ["name", "value", "count", "added", "crossed", "thresholds", "created", "updated"])
@@ -88,7 +139,7 @@ import Testing
 
     @Test func addsExactlyAndShowsHowStringsWereRead() throws {
         let state = TallyTestState()
-        try state.call("tally_create", ["name": "sum"])
+        try state.call("tally_create", ["name": "sum", "shared": true])
         try state.call("tally_add", ["name": "sum", "amount": .number("0.1")])
         let response = try state.call("tally_add", ["name": "sum", "amount": "0.2"])
         #expect(response["value"] == .number("0.3"))
@@ -98,22 +149,24 @@ import Testing
 
     @Test func negativeAmountsSubtract() throws {
         let state = TallyTestState()
-        try state.call("tally_create", ["name": "stock"])
+        try state.call("tally_create", ["name": "stock", "shared": true])
         let response = try state.call("tally_add", ["name": "stock", "amount": -4])
         #expect(response["value"] == -4)
         #expect(response["count"] == 1)
     }
 
+    /// The likely mistake: adding to the name asked for instead of the suffixed one tally_create returned.
     @Test func refusesAnUnknownNameAndSaysWhy() throws {
         let state = TallyTestState()
-        try state.call("tally_create", ["name": "other"])
-        let unique = try #require(try state.call("tally_create", ["name": "items", "unique": true])["name"]?.stringValue)
+        try state.call("tally_create", ["name": "other", "shared": true])
+        let suffixed = try #require(try state.call("tally_create", ["name": "items"])["name"]?.stringValue)
         let error = try #require(state.failure("tally_add", ["name": "items"]))
         #expect(error.message.contains("no tally named \"items\""))
         #expect(error.message.contains("expired"))
         #expect(error.message.contains("three days"))
-        #expect(error.message.contains(unique))
-        #expect(error.details?["existing"] == [.string(unique), "other"])  // suffixed names first
+        #expect(error.message.contains("random suffix"))
+        #expect(error.message.contains(suffixed))
+        #expect(error.details?["existing"] == [.string(suffixed), "other"])  // suffixed names first
     }
 
     @Test func capsTheListOfExistingNames() throws {
@@ -135,7 +188,7 @@ import Testing
 
     @Test func refusesUnknownArgumentsAndBadDecimalMarks() throws {
         let state = TallyTestState()
-        try state.call("tally_create", ["name": "items"])
+        try state.call("tally_create", ["name": "items", "shared": true])
         let typo = try #require(state.failure("tally_add", ["name": "items", "amout": 5]))
         #expect(typo.message.contains("\"amout\""))
         let mark = try #require(state.failure("tally_add", ["name": "items", "amount": "1", "decimal": ";"]))
@@ -155,7 +208,7 @@ import Testing
     @Test func effortPointsWithALimitOnTheValueAndACheckpointOnTheCount() throws {
         let state = TallyTestState()
         try state.call("tally_create", [
-            "name": "effort", "thresholds": [["limit": 20], ["every": 5, "of": "count"]],
+            "name": "effort", "shared": true, "thresholds": [["limit": 20], ["every": 5, "of": "count"]],
         ])
         var response = JSONObject()
         for points in [3, 4, 2, 5] {
@@ -196,7 +249,7 @@ import Testing
 
     @Test func updatesTheTimeFromTheContextClock() throws {
         let state = TallyTestState()
-        try state.call("tally_create", ["name": "items"])
+        try state.call("tally_create", ["name": "items", "shared": true])
         state.clock.advance(by: 90)
         let response = try state.call("tally_add", ["name": "items"])
         #expect(response["created"] == "2026-11-08T09:30:00Z")
@@ -206,7 +259,7 @@ import Testing
     /// The reviewer's reproducer: this used to loop forever while holding the lock.
     @Test func everyOneNearThirtyEightDigitsFinishes() throws {
         let state = TallyTestState()
-        try state.call("tally_create", ["name": "big", "thresholds": [["every": 1]]])
+        try state.call("tally_create", ["name": "big", "shared": true, "thresholds": [["every": 1]]])
         try state.call("tally_set", ["name": "big", "value": "400000000000000000000000000000000000000"])
         let response = try state.call("tally_add", ["name": "big", "amount": 10])
         #expect(response["value"] == .number("400000000000000000000000000000000000010"))
@@ -230,7 +283,7 @@ import Testing
 @Suite struct TallySetTests {
     @Test func setsValueCountAndThresholdsWithoutCrossing() throws {
         let state = TallyTestState()
-        try state.call("tally_create", ["name": "items", "thresholds": [["at": [5]]]])
+        try state.call("tally_create", ["name": "items", "shared": true, "thresholds": [["at": [5]]]])
         let response = try state.call("tally_set", ["name": "items", "value": "10", "count": 4])
         #expect(response["value"] == 10)
         #expect(response["count"] == 4)
@@ -253,7 +306,7 @@ import Testing
 
     @Test func refusesNothingToSetBadCountsAndUnknownNames() throws {
         let state = TallyTestState()
-        try state.call("tally_create", ["name": "items"])
+        try state.call("tally_create", ["name": "items", "shared": true])
         #expect(state.failure("tally_set", ["name": "items"])?.message.contains("Nothing to set") == true)
         #expect(state.failure("tally_set", ["name": "items", "count": -1])?.message.contains("whole number") == true)
         #expect(state.failure("tally_set", ["name": "items", "count": .number("2.5")])?.message.contains("whole number") == true)
@@ -267,7 +320,7 @@ import Testing
     @Test func listsSortedWithFullStateAndTheFolder() throws {
         let state = TallyTestState()
         for name in ["b", "a-2", "a"] {
-            try state.call("tally_create", ["name": .string(name), "thresholds": [["limit": 3]]])
+            try state.call("tally_create", ["name": .string(name), "shared": true, "thresholds": [["limit": 3]]])
         }
         let response = try state.call("tally_list")
         #expect(response.keys == ["folder", "tallies"])
@@ -288,7 +341,7 @@ import Testing
 
     @Test func reportsUnreadableFilesAndIgnoresForeignOnes() throws {
         let state = TallyTestState()
-        try state.call("tally_create", ["name": "good"])
+        try state.call("tally_create", ["name": "good", "shared": true])
         try state.plant("broken.json", "{ not json")
         try state.plant("Notes.json", "{}")  // not a tally name
         try state.plant("readme.txt", "hello")
@@ -301,7 +354,7 @@ import Testing
 @Suite struct TallyDropTests {
     @Test func returnsTheFinalStateAndForgetsTheTally() throws {
         let state = TallyTestState()
-        try state.call("tally_create", ["name": "items"])
+        try state.call("tally_create", ["name": "items", "shared": true])
         try state.call("tally_add", ["name": "items", "amount": 2])
         let response = try state.call("tally_drop", ["name": "items"])
         #expect(response.keys.prefix(3) == ["name", "dropped", "value"])
@@ -371,7 +424,7 @@ import Testing
 
     @Test func aFailedSaveSaysTheTallyIsUnchanged() throws {
         let state = TallyTestState()
-        try state.call("tally_create", ["name": "items"])
+        try state.call("tally_create", ["name": "items", "shared": true])
         let before = try Data(contentsOf: state.file("items"))
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: state.tallies.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: state.tallies.path) }
@@ -396,7 +449,7 @@ import Testing
         try state.plant("items.json", text)
         let error = try #require(state.failure("tally_add", ["name": "items"]))
         #expect(error.message.contains("newer version of abakus"))
-        #expect(state.failure("tally_create", ["name": "items"])?.message.contains("newer version") == true)
+        #expect(state.failure("tally_create", ["name": "items", "shared": true])?.message.contains("newer version") == true)
         #expect(try String(contentsOf: state.file("items"), encoding: .utf8) == text)
     }
 
@@ -479,11 +532,24 @@ import Testing
         }
     }
 
+    /// In brief: the full rules are in sum's description, once.
     @Test func toolsThatTakeNumbersSayHowTheyAreRead() {
         for tool in TallyTools.all where ["tally_create", "tally_add", "tally_set"].contains(tool.name) {
-            #expect(tool.description.contains(NumberReader.rulesSummary), "\(tool.name)")
+            #expect(tool.description.contains(NumberReader.rulesInBrief), "\(tool.name)")
+            #expect(!tool.description.contains(NumberReader.rulesSummary), "\(tool.name)")
             #expect(tool.inputSchema.objectValue?["properties"]?.objectValue?["decimal"] == DecimalMark.schema, "\(tool.name)")
         }
+    }
+
+    @Test func createLeadsWithTheSuffixAndOffersShared() throws {
+        let create = try #require(TallyTools.all.first { $0.name == "tally_create" })
+        #expect(create.description.contains("Every tally gets a random suffix"))
+        #expect(create.description.contains("shared: true"))
+        #expect(create.description.contains("Leave other sessions' tallies alone unless you coordinate with them."))
+        let properties = try #require(create.inputSchema.objectValue?["properties"]?.objectValue)
+        #expect(properties.keys == ["name", "shared", "thresholds", "decimal"])
+        #expect(properties["shared"]?.objectValue?["default"] == false)
+        #expect(TallyTools.all.allSatisfy { !$0.description.contains("unique") })
     }
 }
 

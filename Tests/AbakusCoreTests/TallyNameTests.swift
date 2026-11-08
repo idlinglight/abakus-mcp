@@ -31,21 +31,23 @@ import Testing
         #expect(TallyName.suggestion(for: String(repeating: "A", count: 70)) == String(repeating: "a", count: 64))
     }
 
-    @Test func uniqueNeedsRoomForTheSuffix() {
+    @Test func aSuffixedNameNeedsRoomForTheSuffix() throws {
         let longest = String(repeating: "x", count: 59)
-        #expect(throws: Never.self) { try TallyName.validate(longest, unique: true) }
-        #expect(throws: ToolError.self) { try TallyName.validate(longest + "x", unique: true) }
+        #expect(throws: Never.self) { try TallyName.validate(longest, suffixed: true) }
+        let error = try #require(throws: ToolError.self) { try TallyName.validate(longest + "x", suffixed: true) }
+        #expect(error.message.contains("at most 59 characters"))
+        #expect(throws: Never.self) { try TallyName.validate(longest + "x") }
     }
 
-    @Test func uniqueRetriesWhenTheSuffixIsTaken() throws {
+    @Test func suffixedRetriesWhenTheSuffixIsTaken() throws {
         var suffixes = ["k3f9", "k3f9", "a1b2"].makeIterator()
-        let name = try TallyName.unique(base: "items", isTaken: { $0 == "items-k3f9" }, suffix: { suffixes.next()! })
+        let name = try TallyName.suffixed("items", isTaken: { $0 == "items-k3f9" }, suffix: { suffixes.next()! })
         #expect(name == "items-a1b2")
     }
 
-    @Test func uniqueGivesUpAfterManyCollisions() {
+    @Test func suffixedGivesUpAfterManyCollisions() {
         #expect(throws: ToolError.self) {
-            try TallyName.unique(base: "items", isTaken: { _ in true }, suffix: { "aaaa" })
+            try TallyName.suffixed("items", isTaken: { _ in true }, suffix: { "aaaa" })
         }
     }
 

@@ -72,12 +72,13 @@ enum TallyErrors {
     static let listedNames = 20
 
     static func unknown(_ name: String, existing names: [String]) -> ToolError {
-        // A name created with unique: true carries a suffix, which an agent may have lost (e.g. to compaction).
+        // tally_create appends a suffix unless shared: true; an agent may have lost it (e.g. to compaction) or
+        // used the name it asked for instead of the one it got.
         let suffixed = names.filter { $0.hasPrefix("\(name)-") }
         var message = "There is no tally named \"\(name)\". It may never have been created (check the spelling), or it may have expired: macOS deletes tallies that have not changed for about three days."
         if !suffixed.isEmpty {
             let candidates = suffixed.prefix(3).map { "\"\($0)\"" }.joined(separator: " or ")
-            message += " Names created with unique: true carry a suffix; did you mean \(candidates)?"
+            message += " tally_create appends a random suffix to the name unless shared: true is passed; did you mean \(candidates)?"
         }
         message += names.isEmpty
             ? " No tallies exist right now. Create it with tally_create; nothing is ever created by adding."
@@ -90,10 +91,11 @@ enum TallyErrors {
         return ToolError(message, details: details)
     }
 
+    /// Only `shared: true` can run into an existing name; without it, tally_create picks a free suffix.
     static func exists(_ tally: Tally) -> ToolError {
         let state = TallyResponse.state(tally)
         return ToolError(
-            "A tally named \"\(tally.name)\" already exists (details.existing shows its state); another session may be using it. To count on your own, call tally_create with unique: true, which appends a random suffix. To share this tally on purpose, add to it with tally_add. To start over, tally_drop it first.",
+            "A tally named \"\(tally.name)\" already exists (details.existing shows its state) and may be in use by other sessions. Add to it with tally_add only if you are coordinating with whoever created it. To count your own work, call tally_create without shared: the tally then gets a random suffix and is yours alone. If it is your own from earlier, tally_set or tally_drop starts it over.",
             details: ["existing": .object(state)]
         )
     }

@@ -39,12 +39,14 @@ struct TallyArguments {
 
     var reads: [NumberRead] { numbers.reads }
 
-    init(_ raw: JSONObject, allowed: [String]) throws(ToolError) {
+    /// `hints` adds a sentence to the error for particular unknown keys, such as an argument that was removed.
+    init(_ raw: JSONObject, allowed: [String], hints: [String: String] = [:]) throws(ToolError) {
         for key in raw.keys where !allowed.contains(key) {
-            throw ToolError(
-                "Unknown argument \"\(key)\". This tool takes \(allowed.map { "\"\($0)\"" }.joined(separator: ", ")).",
-                details: ["argument": .string(key)]
-            )
+            let quoted = allowed.map { "\"\($0)\"" }
+            let list = quoted.count > 1 ? quoted.dropLast().joined(separator: ", ") + " and " + quoted.last! : quoted.joined()
+            var message = "Unknown argument \"\(key)\". This tool takes \(list)."
+            if let hint = hints[key] { message += " " + hint }
+            throw ToolError(message, details: ["argument": .string(key)])
         }
         self.raw = raw
         numbers = NumberReading(decimal: try DecimalMark.argument(raw["decimal"]))  // read as every tool reads it

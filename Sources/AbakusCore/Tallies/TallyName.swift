@@ -4,7 +4,7 @@ enum TallyName {
     static let maxLength = 64
     static let suffixLength = 4
     static let suffixAlphabet = Array("abcdefghijklmnopqrstuvwxyz0123456789")
-    /// How often `unique` draws a new suffix when the drawn one is taken.
+    /// How often `suffixed` draws a new suffix when the drawn one is taken.
     static let suffixAttempts = 32
 
     static let rule = "a tally name uses lowercase letters, digits, '.', '_' and '-', starts with a letter or digit, and has at most 64 characters"
@@ -16,8 +16,8 @@ enum TallyName {
     }
 
     /// Throws an error that states the rule and, where one exists, a valid name close to the given one.
-    /// With `unique`, the name must leave room for the suffix (`-` and four characters).
-    static func validate(_ name: String, unique: Bool = false) throws(ToolError) {
+    /// With `suffixed`, the name must leave room for the suffix (`-` and four characters).
+    static func validate(_ name: String, suffixed: Bool = false) throws(ToolError) {
         guard isValid(name) else {
             var message = "\"\(name)\" is not a valid tally name: \(rule)."
             var details: JSONObject = ["name": .string(name)]
@@ -28,9 +28,9 @@ enum TallyName {
             throw ToolError(message, details: details)
         }
         let room = maxLength - suffixLength - 1
-        if unique, name.utf8.count > room {
+        if suffixed, name.utf8.count > room {
             throw ToolError(
-                "\"\(name)\" is too long for unique: true, which appends a suffix like \"-k3f9\": use at most \(room) characters.",
+                "\"\(name)\" is too long: tally_create appends a random suffix like \"-k3f9\", so the name may have at most \(room) characters.",
                 details: ["name": .string(name)]
             )
         }
@@ -50,8 +50,8 @@ enum TallyName {
     }
 
     /// `base` plus `-` and a random suffix that `isTaken` does not report as taken.
-    static func unique(
-        base: String,
+    static func suffixed(
+        _ base: String,
         isTaken: (String) throws(ToolError) -> Bool,
         suffix: () -> String = randomSuffix
     ) throws(ToolError) -> String {

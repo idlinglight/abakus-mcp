@@ -4,26 +4,31 @@ import ArgumentParser
 struct TallyCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "tally",
-        abstract: "Named tallies: an exact value and a count, shared by all sessions of the user.",
+        abstract: "Named tallies: an exact value and a count that last across many turns.",
         discussion: """
-            Tallies live in the per-user temporary folder (or ABAKUS_STATE_DIR) and disappear after about three \
-            days untouched. Names: lowercase letters, digits, '.', '_' and '-', at most 64 characters.
+            Tallies live in the per-user temporary folder (or ABAKUS_STATE_DIR), one folder for all sessions of the \
+            user, and disappear after about three days untouched. `tally create` appends a random suffix to the \
+            name unless --shared is given. Names: lowercase letters, digits, '.', '_' and '-', at most 64 \
+            characters including the suffix.
             """,
         subcommands: [Create.self, Add.self, Set.self, List.self, Drop.self]
     )
 
     struct Create: ParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Create a tally (tally_create).")
+        static let configuration = CommandConfiguration(
+            abstract: "Create a tally (tally_create).",
+            discussion: "Prints the new tally; its name has a random suffix (items → items-k3f9) unless --shared is given."
+        )
 
-        @Argument(help: "The name. Refused if it exists, unless --unique is given.") var name: String
-        @Flag(help: "Append a random suffix (items → items-k3f9) and print the name to use.") var unique = false
+        @Argument(help: "The name, at most 59 characters (64 with --shared).") var name: String
+        @Flag(help: "Use the name exactly, for a tally several sessions add to. Refused if the name exists.") var shared = false
         @OptionGroup var thresholds: ThresholdOptions
         @OptionGroup var decimal: DecimalOption
 
         func run() throws {
             var arguments: JSONObject = ["name": .string(name)]
-            if unique {
-                arguments["unique"] = true
+            if shared {
+                arguments["shared"] = true
             }
             if let list = thresholds.list() {
                 arguments["thresholds"] = list
