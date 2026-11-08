@@ -1,6 +1,7 @@
 /// A non-negative integer of any size: little-endian 64-bit limbs, never with a zero limb on top (zero has no
-/// limbs). Just the arithmetic exact decimal results need (`ExactDecimal`, ADR-0005); not a general library.
-struct BigUInt: Sendable, Equatable, Comparable {
+/// limbs). Just the arithmetic exact decimal results (`ExactDecimal`, ADR-0005) and exact fractions (`Fraction`,
+/// ADR-0007) need; not a general library.
+struct BigUInt: Sendable, Equatable, Comparable, CustomStringConvertible {
     private(set) var limbs: [UInt64]
 
     static let zero = BigUInt(limbs: [])
@@ -71,16 +72,9 @@ struct BigUInt: Sendable, Equatable, Comparable {
     /// `lhs - rhs`; `lhs` must not be smaller than `rhs`.
     static func - (lhs: BigUInt, rhs: BigUInt) -> BigUInt {
         precondition(lhs >= rhs, "BigUInt subtraction below zero")
-        var result = lhs.limbs
-        var borrow: UInt64 = 0
-        for i in 0..<result.count {
-            let b = i < rhs.limbs.count ? rhs.limbs[i] : 0
-            let (partial, overflow1) = result[i].subtractingReportingOverflow(b)
-            let (difference, overflow2) = partial.subtractingReportingOverflow(borrow)
-            result[i] = difference
-            borrow = (overflow1 ? 1 : 0) + (overflow2 ? 1 : 0)
-        }
-        return BigUInt(limbs: result)
+        var result = lhs
+        result.subtract(rhs)
+        return result
     }
 
     func multiplied(by other: BigUInt) -> BigUInt {
@@ -190,6 +184,105 @@ struct BigUInt: Sendable, Equatable, Comparable {
             value = quotient
             zeros += 1
         }
+    }
+
+    /// The decimal digits, most significant first; "0" for zero.
+    var description: String {
+        if isZero { return "0" }
+        let chunkSize = BigUInt.powersOfTen[19].limbs[0]
+        var chunks: [UInt64] = []
+        var value = self
+        while !value.isZero {
+            let (quotient, remainder) = value.quotientAndRemainder(dividingBy: chunkSize)
+            chunks.append(remainder)
+            value = quotient
+        }
+        var text = String(chunks.removeLast())
+        for chunk in chunks.reversed() {
+            let digits = String(chunk)
+            text += String(repeating: "0", count: 19 - digits.count) + digits
+        }
+        return text
+    }
+
+    // MARK: Greatest common divisor
+
+    /// The greatest common divisor; `gcd(0, x)` is `x`. Binary GCD (Stein's algorithm): subtractions and shifts,
+    /// because Euclid's algorithm on the bitwise long division above would be far too slow for numbers of thousands
+    /// of digits. When one number is much longer than the other, one division first brings it down to size.
+    static func gcd(_ a: BigUInt, _ b: BigUInt) -> BigUInt {
+        var (u, v) = a >= b ? (a, b) : (b, a)
+        if v.isZero { return u }
+        if v.limbs.count == 1 {
+            // The common case of a small denominator: one pass for the remainder, then 64-bit numbers.
+            var x = v.limbs[0]
+            var y = u.remainder(dividingBy: x)
+            while y != 0 { (x, y) = (y, x % y) }
+            return BigUInt(x)
+        }
+        if u.limbs.count >= 3 * v.limbs.count {
+            // The division costs about bits(u) × limbs(v); the subtractions it saves, bits(u) × limbs(u).
+            u = u.quotientAndRemainder(dividingBy: v).remainder
+            if u.isZero { return v }
+        }
+        let commonZeros = min(u.trailingZeroBitCount, v.trailingZeroBitCount)
+        u.shiftRight(by: u.trailingZeroBitCount)
+        v.shiftRight(by: v.trailingZeroBitCount)
+        // Both odd from here on. Their difference is even, and halving it keeps the gcd, which is odd.
+        while u != v {
+            if u < v { swap(&u, &v) }
+            u.subtract(v)
+            u.shiftRight(by: u.trailingZeroBitCount)
+        }
+        return commonZeros == 0 ? u : u.multiplied(by: BigUInt.powerOfTwo(commonZeros))
+    }
+
+    var trailingZeroBitCount: Int {
+        guard let index = limbs.firstIndex(where: { $0 != 0 }) else { return 0 }
+        return index * 64 + limbs[index].trailingZeroBitCount
+    }
+
+    static func powerOfTwo(_ exponent: Int) -> BigUInt {
+        BigUInt(limbs: [UInt64](repeating: 0, count: exponent / 64) + [1 << UInt64(exponent % 64)])
+    }
+
+    /// `self % divisor` for a single limb, without building the quotient.
+    private func remainder(dividingBy divisor: UInt64) -> UInt64 {
+        precondition(divisor != 0, "BigUInt division by zero")
+        var remainder: UInt64 = 0
+        for limb in limbs.reversed() {
+            remainder = divisor.dividingFullWidth((high: remainder, low: limb)).remainder
+        }
+        return remainder
+    }
+
+    /// `self -= other` in place; `self` must not be smaller.
+    private mutating func subtract(_ other: BigUInt) {
+        var borrow: UInt64 = 0
+        for i in 0..<limbs.count {
+            if i >= other.limbs.count && borrow == 0 { break }
+            let b = i < other.limbs.count ? other.limbs[i] : 0
+            let (partial, overflow1) = limbs[i].subtractingReportingOverflow(b)
+            let (difference, overflow2) = partial.subtractingReportingOverflow(borrow)
+            limbs[i] = difference
+            borrow = (overflow1 || overflow2) ? 1 : 0
+        }
+        precondition(borrow == 0, "BigUInt subtraction below zero")
+        while limbs.last == 0 { limbs.removeLast() }
+    }
+
+    /// `self >>= bits` in place.
+    private mutating func shiftRight(by bits: Int) {
+        let limbShift = min(bits / 64, limbs.count)
+        let bitShift = UInt64(bits % 64)
+        if limbShift > 0 { limbs.removeFirst(limbShift) }
+        if bitShift > 0 {
+            for i in 0..<limbs.count {
+                let carried = i + 1 < limbs.count ? limbs[i + 1] << (64 - bitShift) : 0
+                limbs[i] = (limbs[i] >> bitShift) | carried
+            }
+        }
+        while limbs.last == 0 { limbs.removeLast() }
     }
 
     /// 10^0 ... 10^19, the powers of ten that fit one limb.
