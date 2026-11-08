@@ -89,14 +89,16 @@ private func d(_ text: String) -> Decimal {
         #expect(message(true).contains("got true"))
     }
 
-    @Test(arguments: [("0.1", "0.1"), ("-0", "0"), ("2.5e3", "2500"), ("1E-2", "0.01"), ("123456", "123456")])
+    @Test(arguments: [("0.1", "0.1"), ("-0", "0"), ("2.5e3", "2500"), ("1E-2", "0.01"), ("123456", "123456"),
+                      ("0e5", "0"), ("-0.5E+2", "-50"), ("10", "10")])
     func readsJSONNumbers(literal: String, expected: String) throws {
         #expect(try NumberReader.read(.number(literal)) == d(expected))
         // A JSON number always uses "."; the decimal argument is for strings.
         #expect(try NumberReader.read(.number(literal), decimal: .comma) == d(expected))
     }
 
-    @Test(arguments: ["01", "1.", ".5", "+1", "1e", "0x1", "1,5", "1k", " 1", "", "NaN", "1E400", "1e-129",
+    @Test(arguments: ["01", "-01", "-", "1.", ".5", "+1", "1e", "1e+", "1.5e3.2", "1..5", "--1", "0x1", "1,5", "1k",
+                      " 1", "1 ", "", "NaN", "1E400", "1e-129",
                       "12345678901234567890123456789012345678901"])
     func refusesInvalidOrUnholdableJSONNumbers(literal: String) {
         #expect(throws: ToolError.self, "\(literal)") { try NumberReader.read(.number(literal)) }

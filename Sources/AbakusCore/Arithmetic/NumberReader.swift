@@ -67,13 +67,15 @@ public enum NumberReader {
     // MARK: Strings
 
     private static func readString(_ original: String, decimal: DecimalMark) throws(ToolError) -> Decimal {
-        let shown = quoted(original)
         do {
             return try build(try scan(original, decimal: decimal))
         } catch .format(let problem) {
-            throw ToolError("Cannot read \(shown) as a number: \(problem) \(accepted(decimal))", details: ["input": .string(original)])
+            throw ToolError(
+                "Cannot read \(original.quotedForMessage) as a number: \(problem) \(accepted(decimal))",
+                details: ["input": .string(original)]
+            )
         } catch {
-            throw ToolError("Cannot read \(shown) as a number: \(error.text)", details: ["input": .string(original)])
+            throw ToolError("Cannot read \(original.quotedForMessage) as a number: \(error.text)", details: ["input": .string(original)])
         }
     }
 
@@ -269,15 +271,42 @@ public enum NumberReader {
     }
 
     private static func unexpected(_ c: Unicode.Scalar) -> String {
-        "\(quoted(String(c))) is not part of a number (units, currency signs and % are not accepted; pass the bare number)."
+        "\(String(c).quotedForMessage) is not part of a number (units, currency signs and % are not accepted; pass the bare number)."
     }
 
     // MARK: JSON number literals
 
+    /// The JSON grammar for numbers (RFC 8259, section 6): `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`. By hand,
+    /// because a Swift `Regex` match costs tens of microseconds, which adds up over long lists.
+    static func isJSONNumber(_ literal: String) -> Bool {
+        let s = Array(literal.utf8)
+        var i = 0
+        func skipDigits() -> Int {
+            let start = i
+            while i < s.count, s[i] >= UInt8(ascii: "0"), s[i] <= UInt8(ascii: "9") { i += 1 }
+            return i - start
+        }
+        if i < s.count, s[i] == UInt8(ascii: "-") { i += 1 }
+        guard i < s.count else { return false }
+        if s[i] == UInt8(ascii: "0") {
+            i += 1
+        } else if skipDigits() == 0 {
+            return false
+        }
+        if i < s.count, s[i] == UInt8(ascii: ".") {
+            i += 1
+            if skipDigits() == 0 { return false }
+        }
+        if i < s.count, s[i] == UInt8(ascii: "e") || s[i] == UInt8(ascii: "E") {
+            i += 1
+            if i < s.count, s[i] == UInt8(ascii: "+") || s[i] == UInt8(ascii: "-") { i += 1 }
+            if skipDigits() == 0 { return false }
+        }
+        return i == s.count
+    }
+
     private static func readLiteral(_ literal: String) throws(ToolError) -> Decimal {
-        // The JSON grammar for numbers (RFC 8259, section 6).
-        let jsonNumber = /-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?/
-        guard literal.wholeMatch(of: jsonNumber) != nil else {
+        guard isJSONNumber(literal) else {
             throw ToolError(
                 "\(literal) is not a valid JSON number. Pass it as a string to have it read by the string rules.",
                 details: ["input": .string(literal)]
@@ -310,9 +339,5 @@ public enum NumberReader {
             preconditionFailure("NumberReader let through a value Decimal cannot hold: \(parts)")
         }
         return rounded.value
-    }
-
-    private static func quoted(_ text: String) -> String {
-        "\"" + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
     }
 }
