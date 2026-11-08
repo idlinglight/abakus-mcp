@@ -1,13 +1,34 @@
 # abakus
 
 Small, exact helpers for AI agents, served over the [Model Context Protocol](https://modelcontextprotocol.io)
-and from the command line: named tallies that keep a count across many turns and say when a threshold is
-reached, exact sums of numbers given as text, and the time between two dates.
+and from the command line:
 
-The idea: some small tasks are done better by a small program than by a language model, yet are rarely
-worth writing ad-hoc tooling for. abakus is the pocket calculator for those.
+- **tallies**: named counters and running sums that keep their state across many turns and say when a
+  threshold is reached ("at most 20 items this session", "self-check every 5 items");
+- **sum**: exact sums of numbers, including numbers written as text (`410k`, `1,234.5`, `1.234,5`);
+- **date_diff**: the time between two dates, in calendar units and in exact totals.
 
-Status: under construction, not yet usable.
+Some small tasks are done better by a small program than by a language model, yet are rarely worth writing
+ad-hoc tooling for. abakus is the pocket calculator for those. Its arithmetic is exact decimal arithmetic:
+`0.1 + 0.2` is `0.3`, and a result that had to be rounded says so.
+
+macOS only. Status: first version (0.1.0).
+
+## Install
+
+```sh
+./install.zsh
+```
+
+builds a release binary, runs the end-to-end check (`dev/check.zsh`) against it, and only then installs
+`~/.local/bin/abakus` and its zsh completion (`~/.local/share/zsh/site-functions/_abakus`). To offer the tools
+to Claude Code in every project, register it once:
+
+```sh
+claude mcp add --scope user abakus -- ~/.local/bin/abakus mcp
+```
+
+Other MCP clients: the command is `abakus mcp` (stdio).
 
 ## Tools
 
@@ -15,27 +36,175 @@ Status: under construction, not yet usable.
 |---|---|
 | `tally_create` | Create a named tally, optionally with a unique suffix and thresholds |
 | `tally_add` | Add an amount (default 1); says when a threshold is crossed |
-| `tally_set` | Change a tally's value, count or thresholds |
-| `tally_list` | Show tallies |
+| `tally_set` | Correct a tally's value, count or thresholds |
+| `tally_list` | List tallies with their state |
 | `tally_drop` | Delete a tally |
 | `sum` | Add a list of numbers exactly |
 | `date_diff` | Time between two dates or times, in calendar units and in totals |
 
+Every tool returns a JSON object. Errors say what happened and what to do next.
+
+## Tallies
+
+A tally is a named, exact `value` plus a `count` of additions, kept in a file so it survives long work and
+context compaction. Names are shared by all sessions of the user: lowercase letters, digits, `.`, `_`, `-`,
+starting with a letter or digit, at most 64 characters. When counting your own work, create with
+`unique: true` and use the returned name. Tallies untouched for about three days expire
+([ADR-0003](docs/adr/0003-state-in-user-temp-folder.md)).
+
+Every response is the tally's full state; numbers that came as strings are listed under `read`.
+
+**Thresholds** are a list; each item has exactly one of `limit` (a ceiling), `at` (a list of marks) or
+`every` (a period), and optionally `of: "value"` (default) or `"count"`. An addition crosses a mark when it
+takes the tally from below the mark to the mark or past it; a tally that goes back down and up again reports
+the mark again. Thresholds never block. Each threshold's status is in every response: a limit says
+`reached` and `remaining` or `over`; `at` and `every` say the `next` mark.
+
+`tally_create` `{name, unique?, thresholds?, decimal?}`
+
+```json
+{"name": "review", "unique": true, "thresholds": [{"limit": 20}, {"every": 5, "of": "count"}]}
+→ {"name": "review-k3f9", "value": 0, "count": 0,
+   "thresholds": [{"limit": 20, "of": "value", "reached": false, "remaining": 20},
+                  {"every": 5, "of": "count", "next": 5}],
+   "created": "2026-11-08T09:30:00Z", "updated": "2026-11-08T09:30:00Z"}
+```
+
+`tally_add` `{name, amount? (default 1), decimal?}` adds `added`, `crossed` (`[]` if nothing) and `read`:
+
+```json
+{"name": "review-k3f9", "amount": "6"}
+→ {"name": "review-k3f9", "value": 21, "count": 6, "added": 6, "read": [{"input": "6", "value": 6}],
+   "crossed": [{"limit": 20, "of": "value"}],
+   "thresholds": [{"limit": 20, "of": "value", "reached": true, "over": 1},
+                  {"every": 5, "of": "count", "next": 10}],
+   "created": "2026-11-08T09:30:00Z", "updated": "2026-11-08T09:36:00Z"}
+```
+
+Crossings look like `{"limit": 20, "of": "value"}`, `{"at": [1000000], "of": "value"}` (the marks crossed)
+or `{"every": 5, "of": "count", "at": [5]}`; past 10 multiples,
+`{"every": 1, "of": "value", "times": 250, "first": 1, "last": 250}`. A tally that ever had to round says
+`"exact": false`.
+
+`tally_set` `{name, value?, count?, thresholds?, decimal?}` corrects a tally, reports no crossings;
+`thresholds: []` removes them all.
+
+`tally_list` `{prefix?}` lists tallies sorted by name, and the folder they are kept in:
+
+```json
+{"prefix": "bytes"}
+→ {"folder": "/var/folders/…/T/abakus/tallies",
+   "tallies": [{"name": "bytes", "value": 2490123.5, "count": 1,
+                "thresholds": [{"at": [1000000, 5000000], "of": "value", "next": 5000000}],
+                "created": "2026-11-08T09:36:00Z", "updated": "2026-11-08T09:36:00Z"}]}
+```
+
+`tally_drop` `{name}` deletes the tally and returns its final state with `"dropped": true`.
+
+An unknown name may have expired; the error lists the names that exist (a suffixed match first). Creating
+an existing name shows that tally and suggests `unique: true`. An invalid name comes with a suggestion
+(`"Review Items"` → `"review-items"`).
+
+## Numbers
+
+Every number argument takes a JSON number or a string. JSON numbers are read from their literal text, never
+through binary floating point. Strings follow fixed rules ([ADR-0005](docs/adr/0005-numbers.md)):
+
+- The decimal mark is `.`, or `,` when the call passes `"decimal": ","`. The other mark may only group
+  thousands, in groups of three: `1,234,567.5` (or `1.234.567,5`).
+- An optional sign (`+`, `-`, `−`), an optional exponent (`2.5e3`) or one suffix: `k`/`K` (thousand), `M`
+  (million), `G` (billion), `T` (trillion). A lowercase `m` is refused, as are a suffix with an exponent and a
+  space before the suffix (`410 k`). `.5` is 0.5; `5.` is refused. Whitespace around the number is ignored.
+- Anything else (units, currency signs, `%`, spaces inside) is an error that names the input and says what is
+  accepted. So are more than 38 significant digits, magnitudes of 10^165 or more and digits below 10^-128:
+  input is never rounded.
+
+Arithmetic is exact, with 38 significant digits. Values meant for reading (the mean of `sum`, the totals of
+`date_diff`) are exact when they fit; otherwise they keep 15 significant digits, rounded half away from zero,
+and the response says so (`mean_exact: false`). A non-zero value never comes out as 0.
+
+## sum
+
+`{"numbers": [number | string, …], "decimal": "." | ","}`. `numbers` is required and may be empty.
+
+The response has `total`, `count`, `mean` (null for an empty list) and `read`, how each string was read
+(`{"index", "input", "value"}`; left out when there are no strings). `total_exact: false` or
+`mean_exact: false` appear when a value had to be rounded.
+
+```json
+{"numbers": ["1.234,5", "410k", 8], "decimal": ","}
+→ {"total": 411242.5, "count": 3, "mean": 137080.833333333, "mean_exact": false,
+   "read": [{"index": 0, "input": "1.234,5", "value": 1234.5}, {"index": 1, "input": "410k", "value": 410000}]}
+```
+
+## date_diff
+
+`{"from": string, "to": string}`. `from` is required; `to` defaults to now. Each is an ISO 8601 date
+(`2026-11-08`, read as 00:00 UTC), a date-time with `Z` or an offset (`2026-11-08T14:30:00+01:00`; seconds
+optional, up to 9 fractional digits), or `"now"`. A date-time without an offset is read as UTC and noted.
+Years 1583 to 9999 ([ADR-0006](docs/adr/0006-date-differences.md)).
+
+The response has `from` and `to` in UTC, `from_is_now` / `to_is_now` when the current time was used,
+`to_before_from`, a `calendar` breakdown (`years`, `months`, `days`, `hours`, `minutes`, `seconds`; Gregorian,
+UTC, counted forward from the earlier instant, so Jan 31 + 1 month = Feb 28/29), a short `text`, `totals`
+(`days`, `hours`, `minutes`, `seconds`) and `notes` when something was assumed. When `to` is before `from`,
+every number is negative.
+
+```json
+{"from": "2026-11-08T14:30:00+01:00", "to": "2027-01-20"}
+→ {"from": "2026-11-08T13:30:00Z", "to": "2027-01-20T00:00:00Z", "to_before_from": false,
+   "calendar": {"years": 0, "months": 2, "days": 11, "hours": 10, "minutes": 30, "seconds": 0},
+   "text": "2 months 1 week 4 days 10 hours 30 minutes",
+   "totals": {"days": 72.4375, "hours": 1738.5, "minutes": 104310, "seconds": 6258600}}
+```
+
+## Command line
+
+Each command runs one tool and prints the JSON an agent would get; errors go to stderr with exit status 1.
+
+```sh
+abakus tally create review --unique --limit 20 --every-count 5
+abakus tally add review-k3f9 6
+abakus tally list
+abakus sum 410k 1,234.5 -3
+grep -o '[0-9.]*k' build.log | abakus sum        # numbers from stdin
+abakus sum --decimal , 1.234,5
+abakus date-diff 2026-11-08 now
+abakus tools                                     # the tools and what they do
+abakus call sum '{"numbers": ["0.1", 0.2]}'      # any tool with JSON arguments, as over MCP
+```
+
+`--help` on any command says the rest.
+
+## MCP protocol support
+
+`abakus mcp` speaks MCP over stdio: newline-delimited JSON-RPC 2.0, one message per line, diagnostics on
+stderr. It exits when stdin closes.
+
+Supported protocol revisions: **2026-07-28** (stateless: `server/discover`, version and capabilities in each
+request's `_meta`) and **2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05** (`initialize` handshake).
+`tools/list` and `tools/call` work with or without a handshake.
+
+The server offers tools only: no resources, prompts, logging or subscriptions, and it never sends requests to
+the client. A tool's result comes back as compact JSON text and, on revisions that have it (2025-06-18 and
+later), also as `structuredContent`. A tool error comes back as a result with `isError: true` and a readable
+message. Numbers keep their exact text from request to response. Details and edge cases:
+[ADR-0002](docs/adr/0002-own-mcp-server.md).
+
 ## State
 
-Tallies live in `abakus/` in the per-user temporary folder (`/var/folders/…/T/abakus/`), one file per tally,
-shared by every session of the same user. macOS deletes files there that have not been touched for three days.
-`ABAKUS_STATE_DIR` points abakus at a different folder. See [ADR-0003](docs/adr/0003-state-in-user-temp-folder.md).
-
-## Requirements
-
-- macOS 15 or later, Swift 6.2 or later (Xcode 27 or the matching command line tools).
+Tallies live in `abakus/tallies/` in the per-user temporary folder (`/var/folders/…/T/`), one JSON file per
+tally, shared by every session of the same user and guarded by a lock on the folder. macOS deletes files there
+that have not been touched for three days. `ABAKUS_STATE_DIR` points abakus at a different folder.
 
 ## Build and test
+
+Requires macOS 15 or later and Swift 6.2 or later (Xcode 27 or its command line tools).
 
 ```sh
 swift build
 swift test
+dev/check.zsh      # end to end against .build/debug/abakus: both MCP eras and the CLI, in a scratch folder
 ```
 
 ## Decisions
@@ -43,10 +212,11 @@ swift test
 Architecture decisions are recorded in [`docs/adr/`](docs/adr/):
 
 - [ADR-0001](docs/adr/0001-one-package-one-binary.md): One Swift package, one binary, MCP first
-- [ADR-0002](docs/adr/0002-own-mcp-server.md): Own MCP server instead of the Swift SDK
-- [ADR-0003](docs/adr/0003-state-in-user-temp-folder.md): State: one file per tally in the per-user temporary folder
-- [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform
-- [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules
+- [ADR-0002](docs/adr/0002-own-mcp-server.md): Own MCP server instead of the Swift SDK (amended: supported revisions, error mapping)
+- [ADR-0003](docs/adr/0003-state-in-user-temp-folder.md): State: one file per tally in the per-user temporary folder (amended: locking)
+- [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings)
+- [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail)
+- [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC
 
 ## License
 
