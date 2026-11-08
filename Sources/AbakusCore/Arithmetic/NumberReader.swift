@@ -265,15 +265,20 @@ public enum NumberReader {
         return Parts(negative: negative, digits: integer + fraction, exponent: exponent - fraction.count)
     }
 
-    private static func isSign(_ c: Unicode.Scalar) -> Bool {
+    // The three helpers below are internal so that calc's parser accepts the same signs, digits and suffixes.
+
+    /// `+`, `-` or `−` (U+2212).
+    static func isSign(_ c: Unicode.Scalar) -> Bool {
         c == "+" || c == "-" || c == "\u{2212}"
     }
 
-    private static func digitValue(_ c: Unicode.Scalar) -> UInt8? {
+    /// The value of an ASCII digit; other digits (`١`, `²`) are not digits here.
+    static func digitValue(_ c: Unicode.Scalar) -> UInt8? {
         ("0"..."9").contains(c) ? UInt8(c.value - 48) : nil
     }
 
-    private static func suffixPower(_ c: Unicode.Scalar) -> Int? {
+    /// The power of ten of a suffix: `k`/`K` 3, `M` 6, `G` 9, `T` 12.
+    static func suffixPower(_ c: Unicode.Scalar) -> Int? {
         switch c {
         case "k", "K": 3
         case "M": 6

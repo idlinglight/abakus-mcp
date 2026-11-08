@@ -22,11 +22,6 @@ struct CalcExpression: Sendable, Equatable {
         /// A function call with its arguments; the parser has checked their number.
         case call(CalcFunction, [CalcExpression])
     }
-
-    init(position: Int, node: Node) {
-        self.position = position
-        self.node = node
-    }
 }
 
 /// What a tally reference stands for. The raw values are the response's `of`.
@@ -91,17 +86,19 @@ extension CalcExpression {
     func fold<Result, Failure: Error>(
         _ combine: (CalcExpression, [Result]) throws(Failure) -> Result
     ) throws(Failure) -> Result {
-        // Each entry: a node, and how many of its children have been pushed already.
-        var pending: [(expression: CalcExpression, pushed: Int)] = [(self, 0)]
+        // A node is visited once: it goes back on the stack to be combined after its children, which go on top in
+        // reverse, so they are worked out first and in order.
+        var steps: [FoldStep] = [.visit(self)]
         var results: [Result] = []
-        while let (expression, pushed) = pending.popLast() {
-            let children = expression.children
-            if pushed < children.count {
-                pending.append((expression, pushed + 1))
-                pending.append((children[pushed], 0))
-            } else {
-                let operands = Array(results.suffix(children.count))
-                results.removeLast(children.count)
+        while let step = steps.popLast() {
+            switch step {
+            case .visit(let expression):
+                let children = expression.children
+                steps.append(.combine(expression, childCount: children.count))
+                steps.append(contentsOf: children.reversed().map(FoldStep.visit))
+            case .combine(let expression, let childCount):
+                let operands = Array(results.suffix(childCount))
+                results.removeLast(childCount)
                 results.append(try combine(expression, operands))
             }
         }
@@ -134,6 +131,12 @@ extension CalcExpression {
                 return function.rawValue + "(" + parts.joined(separator: ", ") + ")"
             }
         }
+    }
+
+    /// One step of `fold`: visit a node (push its children), or combine it with the results of its children.
+    private enum FoldStep {
+        case visit(CalcExpression)
+        case combine(CalcExpression, childCount: Int)
     }
 
     /// An operand's text, in parentheses when the operand is a binary operation.

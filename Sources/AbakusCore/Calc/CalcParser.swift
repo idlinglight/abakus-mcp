@@ -29,15 +29,15 @@ struct CalcParser {
     static func parse(
         _ expression: String, maximumLength: Int = CalcParser.maximumLength
     ) throws(ToolError) -> CalcExpression {
-        let count = expression.count
-        if count > maximumLength {
+        let source = Array(expression)
+        if source.count > maximumLength {
             throw ToolError(
-                "The expression has \(count) characters; calc takes at most \(maximumLength). Work out parts of it in "
-                    + "separate calls and combine their results in a shorter expression."
+                "The expression has \(source.count) characters; calc takes at most \(maximumLength). Work out parts of "
+                    + "it in separate calls and combine their results in a shorter expression."
             )
         }
-        var parser = CalcParser(expression)
-        if parser.source.allSatisfy(\.isWhitespace) {
+        var parser = CalcParser(expression, source: source)
+        if source.allSatisfy(\.isWhitespace) {
             throw ToolError(
                 "The expression is \(expression.isEmpty ? "empty" : "only whitespace"). Write a calculation such as "
                     + "{errors-k3f9} / {requests-p2x7} * 100 or 1250 * 1.19."
@@ -58,9 +58,9 @@ struct CalcParser {
     /// The nesting level: open parentheses and calls, and waiting leading minus signs and powers.
     private var depth = 0
 
-    private init(_ expression: String) {
+    private init(_ expression: String, source: [Character]) {
         self.expression = expression
-        source = Array(expression)
+        self.source = source
         token = Token(kind: .end, start: 0, end: 0)
     }
 
@@ -197,7 +197,7 @@ struct CalcParser {
                     if case .close = token.kind { throw arityError(function, 0, firstArgument: nil, at: position) }
                     levels.append(Level(kind: .call(function, name: position, open: open), argumentStart: token.start))
                 default:
-                    throw expectedOperand()
+                    throw expectedOperand(in: levels[levels.count - 1].kind)
                 }
                 continue
             }
@@ -342,9 +342,14 @@ struct CalcParser {
         } else {
             message += " Write * before character \(token.position) where a multiplication is meant."
         }
-        if previous.isNumber && token.isNumber {
-            message += " If \(text(previous.start, token.end)) is one number, write it without spaces: "
-                + "\(text(previous.start, previous.end) + text(token.start, token.end))."
+        // Two runs of digits (1 234) may be one number with a space; joined, they must still be a number calc reads.
+        // Anything else joined as text (1.5 .5, 1k 500, 1e3 5) would be a different number, or none.
+        let joined = text(previous.start, previous.end) + text(token.start, token.end)
+        let digits = joined.compactMap(\.calcDigit)
+        if previous.isNumber && token.isNumber && digits.count == joined.count,
+            (try? NumberReader.build(NumberReader.Parts(negative: false, digits: digits, exponent: 0))) != nil
+        {
+            message += " If \(text(previous.start, token.end)) is one number, write it without spaces: \(joined)."
         }
         throw ToolError(message)
     }
@@ -365,7 +370,8 @@ struct CalcParser {
         }
     }
 
-    private func expectedOperand() -> ToolError {
+    /// No operand where one has to come; `level` is what is being read there.
+    private func expectedOperand(in level: Level.Kind) -> ToolError {
         let operand = "a number, a tally like {errors-k3f9}, a function call or \"(\""
         guard let previous else {
             return ToolError("Unexpected \(quoted(token)) \(at(token.position)): the expression has to start with \(operand).")
@@ -375,7 +381,15 @@ struct CalcParser {
         }
         let found = "Unexpected \(quoted(token)) \(at(token.position))"
         switch (previous.kind, token.kind) {
-        case (.comma, .close), (.comma, .comma), (.open, .comma):
+        case (.open, .comma):
+            if case .group = level {
+                return ToolError(
+                    "\(found): nothing comes before it in the parentheses. Commas only separate the arguments of a "
+                        + "function call, such as max(1, 2), and numbers take no thousands separators."
+                )
+            }
+            return ToolError("\(found): a function argument is missing. Remove the extra comma, or write the argument.")
+        case (.comma, .close), (.comma, .comma):
             return ToolError("\(found): a function argument is missing. Remove the extra comma, or write the argument.")
         case (.times, .times):
             return ToolError(
@@ -408,6 +422,8 @@ struct CalcParser {
                 return Token(kind: .power, start: index - 2, end: index)
             }
             return single(.times)
+        case "\u{00B7}" where digit(at: index - 1) != nil && digit(at: index + 1) != nil:
+            throw raisedDot(at: index)
         case "\u{00D7}", "\u{00B7}": return single(.times)
         case "/", "\u{00F7}": return single(.divide)
         case "^": return single(.power)
@@ -420,6 +436,22 @@ struct CalcParser {
     private mutating func single(_ kind: Token.Kind) -> Token {
         index += 1
         return Token(kind: kind, start: index - 1, end: index)
+    }
+
+    /// `·` directly between two digits: a raised decimal point in some notations (1·5 for 1.5), a multiplication
+    /// in others. Read either way, it could be off by far, so it is refused.
+    private func raisedDot(at index: Int) -> ToolError {
+        // The number before it ends at the dot; the one after it starts there.
+        let left = previous.map { text($0.start, $0.end) } ?? text(index - 1, index)
+        let right = text(index + 1, literalEnd(from: index + 1))
+        var readings = "\(left) * \(right) for a multiplication"
+        if left.allSatisfy({ $0.calcDigit != nil }) && !right.contains(".") {
+            readings = "\(left).\(right) for a decimal, or " + readings
+        }
+        return ToolError(
+            "A \"·\" between two digits \(at(index + 1)) can be a raised decimal point or a multiplication. Write "
+                + "\(readings)."
+        )
     }
 
     private func unexpectedCharacter(_ c: Character, at index: Int) -> ToolError {
@@ -484,7 +516,7 @@ struct CalcParser {
         if let e = char(at: index), e == "e" || e == "E" {
             var next = index + 1
             var exponentNegative = false
-            if let sign = char(at: next), Self.isSign(sign) {
+            if let sign = char(at: next), sign.isSign {
                 exponentNegative = sign != "+"
                 next += 1
             }
@@ -522,7 +554,7 @@ struct CalcParser {
         if index > lettersStart {
             let letters = text(lettersStart, index)
             let number = text(start, lettersStart)
-            if letters.count == 1, let power = Self.suffixPower(letters) {
+            if letters.count == 1, let power = letters.first?.suffixPower {
                 if hasExponent {
                     throw ToolError(
                         "The number \(text(start, index)) \(at(start + 1)) has both an exponent and a suffix: use one "
@@ -532,6 +564,10 @@ struct CalcParser {
                 exponent += power
             } else if letters == "m" {
                 throw ToolError(milli(number: number, at: lettersStart + 1))
+            } else if isWordOfItsOwn(at: lettersStart) {
+                // 2abs(-3), 2pi, 2sqrt(4): the number ends here, and the word gets its own message (a missing *,
+                // no constants, no roots).
+                index = lettersStart
             } else {
                 var message = "Unexpected \(letters.quotedForMessage) after the number \(number) \(at(lettersStart + 1)): "
                     + "calc takes no units; write the bare number (\(number))."
@@ -562,6 +598,22 @@ struct CalcParser {
         }
     }
 
+    private static let roots: Set<String> = ["sqrt", "root", "cbrt"]
+    private static let constants: Set<String> = ["pi", "e", "tau", "phi", "inf", "infinity", "nan"]
+
+    /// Whether the letters at `start`, right after a number, are better read as a word than as a unit: a function
+    /// name (in any case), a root, a constant, or any word followed by `(`.
+    private func isWordOfItsOwn(at start: Int) -> Bool {
+        var end = start
+        while let c = char(at: end), c.isASCIILetter || c.calcDigit != nil || c == "_" { end += 1 }
+        let word = text(start, end).lowercased()
+        if CalcFunction(rawValue: word) != nil || Self.roots.contains(word) || Self.constants.contains(word) {
+            return true
+        }
+        while let c = char(at: end), c.isWhitespace { end += 1 }
+        return char(at: end) == "("
+    }
+
     private func milli(number: String, at position: Int) -> String {
         "A lowercase \"m\" after \(number) \(at(position)) could mean milli or million: write \(number)M for million; "
             + "calc takes no units."
@@ -572,18 +624,20 @@ struct CalcParser {
         return switch problem {
         case .tooLarge:
             ToolError(
-                "\(found) is too large: calc reads numbers below 10^165. Values on the way to the result may be "
-                    + "larger, so a large factor that is divided again can be written as a product (1e100 * 1e100)."
+                "\(found) is too large: calc reads numbers below 10^\(ExactDecimal.overflowExponent). Values on the way "
+                    + "to the result may be larger, so a large factor that is divided again can be written as a "
+                    + "product (1e100 * 1e100)."
             )
         case .tooManyDigits(let count):
             ToolError(
-                "\(found) has \(count) significant digits: calc reads at most 38 and never rounds a number it is given. "
-                    + "Round it to 38 significant digits or fewer."
+                "\(found) has \(count) significant digits: calc reads at most \(ExactDecimal.precision) and never rounds "
+                    + "a number it is given. Round it to \(ExactDecimal.precision) significant digits or fewer."
             )
         case .tooSmall:
             ToolError(
-                "\(found) has digits below 10^-128, the finest step calc reads, and calc never rounds a number it is "
-                    + "given. Round it to 128 decimal places or fewer."
+                "\(found) has digits below 10^\(ExactDecimal.minimumExponent), the finest step calc reads, and calc "
+                    + "never rounds a number it is given. Round it to \(-ExactDecimal.minimumExponent) decimal places "
+                    + "or fewer."
             )
         case .format(let problem):
             ToolError("\(found) cannot be read: \(problem)")
@@ -591,40 +645,69 @@ struct CalcParser {
     }
 
     /// A comma directly between two digits: a thousands separator, a decimal comma, or arguments without a space.
+    /// Each rewrite offered keeps the value of the reading it names, suffix and exponent included (`1,5k` is 1.5k
+    /// with a decimal comma, never 15); where no rewrite keeps it, the message only says what to change.
     private func thousandsSeparator(numberStart: Int, comma: Int) -> ToolError {
-        var end = comma
-        while let c = char(at: end), c == "," || c == "." || c.calcDigit != nil { end += 1 }
-        var run = text(numberStart, end)
-        while let last = run.last, last == "," || last == "." { run.removeLast() }
-        let asNumber: String
-        if let point = run.firstIndex(of: "."), let firstComma = run.firstIndex(of: ","), point < firstComma {
-            // 1.5,2 or 1.234,5: no one way to read it as a number in calc's notation.
-            asNumber = "write it without separators and with \".\" as the decimal mark"
-        } else if run.filter({ $0 == "," }).count == 1 && !run.contains(".") {
-            asNumber = "write \(run.replacingOccurrences(of: ",", with: "")) (or "
-                + "\(run.replacingOccurrences(of: ",", with: ".")) if the comma is a decimal mark)"
-        } else {
-            asNumber = "write \(run.replacingOccurrences(of: ",", with: ""))"
+        // The literals the commas join: 1,234.5e3 is "1" and "234.5e3"; 1e3,5 is "1e3" and "5".
+        var pieces: [String] = []
+        var start = numberStart
+        while true {
+            let end = literalEnd(from: start)
+            pieces.append(text(start, end))
+            guard char(at: end) == ",", digit(at: end - 1) != nil, digit(at: end + 1) != nil else { break }
+            start = end + 1
+        }
+        let written = pieces.joined(separator: ",")
+        let isPlain = { (piece: String) in !piece.isEmpty && piece.allSatisfy { $0.calcDigit != nil } }
+        let leadingDigits = { (piece: String) in piece.prefix { $0.calcDigit != nil }.count }
+
+        // Thousands separators: a first group of one to three digits (not starting with 0, which reads as a decimal
+        // comma), plain groups of three, and a last group of three digits that may carry a fraction, an exponent or
+        // a suffix.
+        let first = pieces[0]
+        let grouped = isPlain(first) && first.count <= 3 && !first.hasPrefix("0")
+            && pieces.dropFirst().dropLast().allSatisfy { isPlain($0) && $0.count == 3 }
+            && leadingDigits(pieces[pieces.count - 1]) == 3
+        // A decimal comma: plain digits, the comma, then digits that may carry an exponent or a suffix.
+        let decimal = pieces.count == 2 && isPlain(first) && !pieces[1].contains(".")
+
+        let asOneNumber = switch (grouped, decimal) {
+        case (true, true):
+            "If \(written) is one number, write \(pieces.joined()), or \(first).\(pieces[1]) if the comma is a decimal mark"
+        case (true, false):
+            "If \(written) is one number, write \(pieces.joined())"
+        case (false, true):
+            "If \(written) is one number with a decimal comma, write \(first).\(pieces[1])"
+        case (false, false):
+            "If \(written) is one number, write it without separators and with \".\" as the decimal mark"
         }
         return ToolError(
             "A comma between two digits \(at(comma + 1)): calc takes no thousands separators, and its decimal mark is "
-                + "always \".\". If \(run) is one number, \(asNumber); if the comma separates function arguments, put "
-                + "a space after it: \(run.replacingOccurrences(of: ",", with: ", "))."
+                + "always \".\". \(asOneNumber); if the comma separates function arguments, put a space after it: "
+                + "\(pieces.joined(separator: ", "))."
         )
     }
 
-    private static func isSign(_ c: Character) -> Bool {
-        c == "+" || c == "-" || c == "\u{2212}"
-    }
-
-    private static func suffixPower(_ letter: String) -> Int? {
-        switch letter {
-        case "k", "K": 3
-        case "M": 6
-        case "G": 9
-        case "T": 12
-        default: nil
+    /// Where a literal starting at `start` ends, for messages: digits, an optional fraction, then an exponent or one
+    /// suffix (a suffix only when no letter follows it).
+    private func literalEnd(from start: Int) -> Int {
+        var end = start
+        while digit(at: end) != nil { end += 1 }
+        if char(at: end) == ".", digit(at: end + 1) != nil {
+            end += 1
+            while digit(at: end) != nil { end += 1 }
         }
+        if let e = char(at: end), e == "e" || e == "E" {
+            var next = end + 1
+            if char(at: next)?.isSign == true { next += 1 }
+            if digit(at: next) != nil {
+                end = next
+                while digit(at: end) != nil { end += 1 }
+                return end
+            }
+        }
+        if char(at: end)?.suffixPower != nil, char(at: end + 1)?.isASCIILetter != true { end += 1 }
+        return end
     }
 
     // MARK: Tally references
@@ -706,26 +789,36 @@ struct CalcParser {
         let found = "\(word.quotedForMessage) \(at(start + 1))"
         let known = "calc has the functions abs, round, min and max, reads tallies in braces like {errors-k3f9}, and "
             + "has no constants."
-        if ["sqrt", "root", "cbrt"].contains(lowercased) {
+        // Written right after a number (2pi, 2sqrt(4)), the word also lacks the * of a multiplication.
+        var star = ""
+        if let previous, previous.isNumber, previous.end == start {
+            star = " A multiplication also needs a * after \(text(previous.start, previous.end))."
+        }
+        if Self.roots.contains(lowercased) {
             return ToolError(
                 "There is no square root in calc: \(found). This version has no roots and no fractional powers (^ "
-                    + "takes whole-number exponents); the functions are abs, round, min and max."
+                    + "takes whole-number exponents); the functions are abs, round, min and max." + star
             )
         }
         if word != lowercased, let function = CalcFunction(rawValue: lowercased) {
-            return ToolError("Function names are lowercase: \(found) is not one. Write \(function.usage).")
+            return ToolError("Function names are lowercase: \(found) is not one. Write \(function.usage)." + star)
         }
-        if ["pi", "e", "tau", "phi", "inf", "infinity", "nan"].contains(lowercased) {
+        if Self.constants.contains(lowercased) {
             return ToolError(
                 "Unknown name \(found): calc has no constants; write the value as a number. It has the functions abs, "
-                    + "round, min and max, and reads tallies in braces like {errors-k3f9}."
+                    + "round, min and max, and reads tallies in braces like {errors-k3f9}." + star
             )
         }
         if word == "x" || word == "X" {
             return ToolError("Unexpected \(found): for a multiplication, write * (or ×).")
         }
+        var afterWord = start + word.count
+        while let c = char(at: afterWord), c.isWhitespace { afterWord += 1 }
+        if char(at: afterWord) == "(" {
+            return ToolError("Unknown function \(found): calc has the functions abs, round, min and max." + star)
+        }
         if let previous, case .leaf(.number(_, let literal)) = previous.kind {
-            if Self.suffixPower(word) != nil {
+            if word.count == 1, word.first?.suffixPower != nil {
                 return ToolError(
                     "Unexpected space before \(found): a suffix follows its number directly (write \(literal)\(word), "
                         + "not \(literal) \(word)); after a space, a letter reads like a unit."
@@ -738,11 +831,6 @@ struct CalcParser {
             )
         }
 
-        var afterWord = start + word.count
-        while let c = char(at: afterWord), c.isWhitespace { afterWord += 1 }
-        if char(at: afterWord) == "(" {
-            return ToolError("Unknown function \(found): calc has the functions abs, round, min and max.")
-        }
         // A tally name written without braces: the word with the `-` and `.` parts that follow it.
         var end = start
         while let c = char(at: end), c.isASCIILetter || c.calcDigit != nil || c == "_" || c == "-" || c == "." {
@@ -752,6 +840,8 @@ struct CalcParser {
         var message = "Unknown name \(found): \(known)"
         if TallyName.isValid(candidate) {
             message += " If \(candidate) is a tally, write {\(candidate)}."
+        } else if TallyName.isValid(candidate.lowercased()) {
+            message += " If \(candidate) is a tally, write {\(candidate.lowercased())}: tally names are lowercase."
         }
         return ToolError(message)
     }
@@ -790,12 +880,22 @@ struct CalcParser {
     }
 }
 
+/// Digits, signs and suffixes by NumberReader's rules, so that both readers accept the same ones.
 private extension Character {
-    /// The value of an ASCII digit; other digits (`١`, `²`) are not digits in calc.
-    var calcDigit: UInt8? {
-        guard let ascii = asciiValue, ascii >= 48, ascii <= 57 else { return nil }
-        return ascii - 48
+    /// The character as one Unicode scalar, or nil when it is several (a digit with a combining mark, "\r\n").
+    var onlyScalar: Unicode.Scalar? {
+        let scalars = unicodeScalars
+        return scalars.count == 1 ? scalars.first : nil
     }
+
+    /// The value of an ASCII digit; other digits (`١`, `²`) are not digits.
+    var calcDigit: UInt8? { onlyScalar.flatMap(NumberReader.digitValue) }
+
+    /// The power of ten of a suffix: `k`/`K`, `M`, `G`, `T`.
+    var suffixPower: Int? { onlyScalar.flatMap(NumberReader.suffixPower) }
+
+    /// `+`, `-` or `−`.
+    var isSign: Bool { onlyScalar.map(NumberReader.isSign) ?? false }
 
     var isASCIILetter: Bool {
         guard let ascii = asciiValue else { return false }

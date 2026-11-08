@@ -55,6 +55,9 @@ import Testing
         ("6 \u{2212} 2", "6 - 2"), ("\u{2212}2", "-2"), ("6 \u{00D7} 2", "6 * 2"), ("6 \u{00B7} 2", "6 * 2"),
         ("6 \u{00F7} 2", "6 / 2"), ("2 ** 3", "2 ^ 3"), ("2**-1", "2 ^ -1"), ("1\t+\n2", "1 + 2"),
         ("1\u{00A0}+\u{2009}2", "1 + 2"), ("2^3**2", "2 ^ (3 ^ 2)"),
+        // "·" is a multiplication unless it stands directly between two digits.
+        ("3 \u{00B7}4", "3 * 4"), ("3\u{00B7} 4", "3 * 4"), ("2\u{00B7}{x}", "2 * {x}"), ("{a}\u{00B7}2", "{a} * 2"),
+        ("5k\u{00B7}2", "5000 * 2"), ("(1)\u{00B7}(2)", "1 * 2"),
     ]
 
     @Test(arguments: CalcParserTests.spellingCases)
@@ -126,6 +129,14 @@ import Testing
         ("ERRORS / 2", ["\"ERRORS\" at character 1", "braces"]),
         ("log(5)", ["Unknown function \"log\" at character 1", "abs, round, min and max"]),
         ("errors-k3f9 / 5", ["character 1", "write {errors-k3f9}"]), ("1 + total", ["character 5", "{total}"]),
+        ("Errors-k3f9 / 2", ["\"Errors\" at character 1", "write {errors-k3f9}: tally names are lowercase"]),
+        // A word right after a number: a missing *, or the word's own message
+        ("2abs(-3)", ["Missing operator at character 2", "2 * abs(-3)"]), ("3max(1, 2)", ["3 * max(1, 2)"]),
+        ("2sqrt(4)", ["no square root", "character 2", "needs a * after 2"]),
+        ("2pi", ["\"pi\" at character 2", "no constants", "needs a * after 2"]), ("2PI", ["no constants"]),
+        ("2Abs(1)", ["lowercase", "abs(x)", "needs a * after 2"]),
+        ("2log(5)", ["Unknown function \"log\" at character 2", "needs a * after 2"]),
+        ("2exp(1)", ["Unknown function \"exp\" at character 2"]), ("5k(2)", ["Missing operator", "5k * (2)"]),
         ("5 x 3", ["\"x\" at character 3", "write *"]), ("abs 5", ["Expected \"(\" after abs at character 1", "abs(x)"]),
         // Implicit multiplication
         ("2(3+4)", ["Missing operator at character 2", "2 * (3+4)"]),
@@ -166,6 +177,11 @@ import Testing
         ("2 +", ["ends after \"+\" at character 3"]), ("-", ["ends after \"-\" at character 1"]),
         ("2 * * 3", ["character 5", "** without a space"]), ("(1 + )", ["\")\" at character 6", "has to follow \"+\""]),
         ("1, 2", ["\",\" at character 2", "arguments of a function call"]), ("(1, 2)", ["\",\" at character 3"]),
+        ("(, 1) + 2", ["\",\" at character 2", "nothing comes before it in the parentheses", "max(1, 2)", "thousands"]),
+        ("2 * (,3)", ["\",\" at character 6", "nothing comes before it"]),
+        // "·" between two digits: a raised decimal point or a multiplication
+        ("1\u{00B7}5", ["\"·\" between two digits at character 2", "1.5 for a decimal", "1 * 5 for a multiplication"]),
+        ("2 + 1\u{00B7}5k", ["character 6", "1.5k for a decimal", "1 * 5k"]),
         // Function calls
         ("abs()", ["abs takes 1 argument, but none was given at character 1"]), ("abs(1, 2)", ["but 2 were given"]),
         ("round(5)", ["round takes 2 arguments", "1 was given", "round(5, 0)"]),
@@ -204,6 +220,36 @@ import Testing
             #expect(!text.contains("decimal:"), "\(expression): \(text)")
             #expect(!text.contains("groups of three"), "\(expression): \(text)")
         }
+    }
+
+    /// A rewrite an error offers keeps the value of the reading it names: suffixes and exponents travel along, and
+    /// where no rewrite keeps the value, there is none.
+    static let rewriteCases: [(String, [String], [String])] = [
+        // Commas between digits
+        ("1,5k * 2", ["1,5k is one number with a decimal comma, write 1.5k;", "space after it: 1, 5k."], ["write 15", "1.5;"]),
+        ("1,234.5e3", ["write 1234.5e3;", "1, 234.5e3."], ["1234.5;", "1234.5 "]),
+        ("1e3,5", ["write it without separators", "1e3, 5."], ["1e35", "1e3.5"]),
+        ("12,345k", ["write 12345k, or 12.345k if the comma is a decimal mark"], []),
+        ("0,5", ["0,5 is one number with a decimal comma, write 0.5;"], ["write 05"]),
+        ("1,5", ["1,5 is one number with a decimal comma, write 1.5;"], ["write 15"]),
+        ("1,234", ["write 1234, or 1.234 if the comma is a decimal mark"], []),
+        // Two numbers with only a space between them
+        ("1 234", ["1 * 234", "write it without spaces: 1234."], []),
+        ("1.5 .5", ["1.5 * .5"], ["without spaces", "1.5.5"]),
+        ("1k 500", ["1k * 500"], ["without spaces", "1k500"]),
+        ("1e3 5", ["1e3 * 5"], ["without spaces", "1e35"]),
+        ("12345678901234567890 123456789012345678901", ["Missing operator"], ["without spaces"]),
+        // "·" between digits
+        ("1e3\u{00B7}5", ["1e3 * 5 for a multiplication"], ["for a decimal"]),
+        ("1.5\u{00B7}2", ["1.5 * 2 for a multiplication"], ["for a decimal"]),
+        ("1\u{00B7}2.5", ["1 * 2.5 for a multiplication"], ["for a decimal"]),
+    ]
+
+    @Test(arguments: CalcParserTests.rewriteCases)
+    func rewritesKeepTheValue(expression: String, present: [String], absent: [String]) {
+        let text = message(expression)
+        for fragment in present { #expect(text.contains(fragment), "\(expression): \(text)") }
+        for fragment in absent { #expect(!text.contains(fragment), "\(expression): \(text)") }
     }
 
     // MARK: Limits
@@ -436,6 +482,8 @@ private func variant(_ expression: CalcExpression, using random: inout SplitMix6
         case .divide: ["/", "\u{00F7}"].randomElement(using: &random)!
         case .power: ["^", "**"].randomElement(using: &random)!
         }
+        // "·" directly between two digits is refused (a raised decimal point?), so it gets spaces.
+        if spelling == "\u{00B7}" { return operand(left, &random) + " · " + operand(right, &random) }
         return operand(left, &random) + space(&random) + spelling + space(&random) + operand(right, &random)
     case .call(let function, let arguments):
         // A comma that separates arguments is followed by a space, or a digit could follow it directly.
