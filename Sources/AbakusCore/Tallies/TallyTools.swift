@@ -56,9 +56,8 @@ struct TallyCreate: Tool {
                 name = requested
             }
             let tally = Tally(name: name, thresholds: thresholds, created: now, updated: now)
-            let response = try TallyResponse.state(tally, reads: reads)
             try files.save(tally)
-            return response
+            return TallyResponse.state(tally, reads: reads)
         }
     }
 }
@@ -102,6 +101,9 @@ struct TallyAdd: Tool {
         let now = Tally.timestamp(context.now())
         let reads = args.reads
 
+        // Every error below is raised before the file is replaced, so a failed add never changed the tally.
+        // Thresholds cannot make it fail: one that cannot be evaluated gets a `problem` note, and the addition
+        // counts (thresholds inform, they never block).
         return try TallyStore(context).change { files throws(ToolError) in
             let before = try files.existing(name)
             var after = before
@@ -119,15 +121,10 @@ struct TallyAdd: Tool {
             after.exact = before.exact && sum.exact
             after.count = count
             after.updated = now
-            var crossed: [JSONObject] = []
-            for threshold in after.thresholds {
-                if let crossing = try threshold.crossing(from: before, to: after) {
-                    crossed.append(crossing)
-                }
-            }
-            let response = try TallyResponse.state(after, added: amount, reads: reads, crossed: crossed)
             try files.save(after)
-            return response
+            return TallyResponse.state(
+                after, added: amount, reads: reads, crossed: TallyResponse.crossings(from: before, to: after)
+            )
         }
     }
 }
@@ -184,9 +181,8 @@ struct TallySet: Tool {
             if let count { tally.count = count }
             if let thresholds { tally.thresholds = thresholds }
             tally.updated = now
-            let response = try TallyResponse.state(tally, reads: reads)
             try files.save(tally)
-            return response
+            return TallyResponse.state(tally, reads: reads)
         }
     }
 }
@@ -224,12 +220,22 @@ struct TallyList: Tool {
             var tallies: [JSONValue] = []
             var unreadable: [JSONValue] = []
             for name in try files.names() where name.hasPrefix(prefix) {
+                // Only loading decides "unreadable". A readable tally is always listed with its state; a
+                // threshold whose status cannot be computed carries its own `problem` note.
+                let loaded: TallyStore.Files.Loaded
                 do throws(ToolError) {
-                    if let tally = try files.load(name) {
-                        tallies.append(.object(try TallyResponse.state(tally)))
-                    }
+                    loaded = try files.inspect(name)
                 } catch {
                     unreadable.append(["name": .string(name), "problem": .string(error.message)])
+                    continue
+                }
+                switch loaded {
+                case .tally(let tally):
+                    tallies.append(.object(TallyResponse.state(tally)))
+                case .unreadable(let problem):
+                    unreadable.append(["name": .string(name), "problem": .string(problem)])
+                case .missing:
+                    break
                 }
             }
             var response: JSONObject = ["folder": .string(store.folder.url.path), "tallies": .array(tallies)]
@@ -271,9 +277,8 @@ struct TallyDrop: Tool {
             case .missing:
                 throw TallyErrors.unknown(name, existing: try files.names())
             case .tally(let tally):
-                let response = try TallyResponse.state(tally, dropped: true)
                 try files.delete(name)
-                return response
+                return TallyResponse.state(tally, dropped: true)
             case .unreadable(let problem):
                 // A file this version cannot read must not block its name forever: delete it, say what was wrong.
                 try files.delete(name)

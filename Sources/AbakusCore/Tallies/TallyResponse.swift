@@ -11,13 +11,16 @@ enum TallyResponse {
     /// - `dropped`: the tally was just deleted (`tally_drop`).
     /// - `added`, `crossed`: what a `tally_add` added and crossed (`crossed` is present, possibly empty, on adds).
     /// - `reads`: numbers that came as strings, and how they were read.
+    ///
+    /// Never fails: thresholds only inform (ADR-0004), so one whose status cannot be computed (arithmetic
+    /// beyond Decimal's range) carries a `problem` note instead of taking the response down with it.
     static func state(
         _ tally: Tally,
         dropped: Bool = false,
         added: Decimal? = nil,
         reads: [NumberRead] = [],
         crossed: [JSONObject]? = nil
-    ) throws(ToolError) -> JSONObject {
+    ) -> JSONObject {
         var object: JSONObject = ["name": .string(tally.name)]
         if dropped { object["dropped"] = true }
         object["value"] = .decimal(tally.value)
@@ -28,14 +31,38 @@ enum TallyResponse {
             object["read"] = .array(reads.map { ["input": .string($0.input), "value": .decimal($0.value)] })
         }
         if let crossed { object["crossed"] = .array(crossed.map(JSONValue.object)) }
-        var thresholds: [JSONValue] = []
-        for threshold in tally.thresholds {
-            thresholds.append(.object(try threshold.status(of: tally)))
-        }
-        object["thresholds"] = .array(thresholds)
+        object["thresholds"] = .array(tally.thresholds.map { .object(status($0, of: tally)) })
         object["created"] = .string(tally.created)
         object["updated"] = .string(tally.updated)
         return object
+    }
+
+    static func status(_ threshold: Threshold, of tally: Tally) -> JSONObject {
+        do throws(ToolError) {
+            return try threshold.status(of: tally)
+        } catch {
+            var object = threshold.spec
+            object["problem"] = .string("Its status cannot be computed: \(error.message)")
+            return object
+        }
+    }
+
+    /// What going from `before` to `after` crossed, threshold by threshold. Never fails: a threshold whose
+    /// crossing cannot be computed is listed with a `problem` note, and the addition still counts.
+    static func crossings(from before: Tally, to after: Tally) -> [JSONObject] {
+        var crossed: [JSONObject] = []
+        for threshold in after.thresholds {
+            do throws(ToolError) {
+                if let crossing = try threshold.crossing(from: before, to: after) {
+                    crossed.append(crossing)
+                }
+            } catch {
+                var object = threshold.spec
+                object["problem"] = .string("Whether this addition crossed one of its marks cannot be computed: \(error.message)")
+                crossed.append(object)
+            }
+        }
+        return crossed
     }
 }
 
@@ -64,7 +91,7 @@ enum TallyErrors {
     }
 
     static func exists(_ tally: Tally) -> ToolError {
-        let state = (try? TallyResponse.state(tally)) ?? ["name": .string(tally.name)]
+        let state = TallyResponse.state(tally)
         return ToolError(
             "A tally named \"\(tally.name)\" already exists (details.existing shows its state); another session may be using it. To count on your own, call tally_create with unique: true, which appends a random suffix. To share this tally on purpose, add to it with tally_add. To start over, tally_drop it first.",
             details: ["existing": .object(state)]

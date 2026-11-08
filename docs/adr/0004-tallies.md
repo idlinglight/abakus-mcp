@@ -1,7 +1,7 @@
 # ADR-0004: Tallies: named values with a count, created explicitly, with thresholds that inform
 
 Status: accepted, 2026-11-08; amended 2026-11-08 (threshold argument shape, crossing rule and "once", unique
-suffix, `tally_set` and exactness, unknown names and arguments)
+suffix, `tally_set` and exactness, unknown names and arguments, thresholds that cannot be computed)
 
 ## Context
 
@@ -42,7 +42,10 @@ does not reliably know an identifier that is unique to its session.
   - `every`: a period with the marks p, 2p, 3p, … (positive multiples only). The addition that reaches or
     passes a multiple says so; one addition can pass several (up to 10 are listed, beyond that a count with
     the first and the last).
-  Thresholds inform; they never block an addition.
+  Thresholds inform; they never block an addition. That holds when a threshold cannot be evaluated either
+  (arithmetic beyond `Decimal`'s range, such as a tiny period on a huge value): the addition is saved, and
+  that threshold carries a `problem` note in `crossed` and in its status. `tally_list` and `tally_drop` work
+  the same way. An addition fails only before anything is saved, and its error says the tally is unchanged.
 - Crossing: an addition crosses a mark `m` when `before < m <= after`. Upward only: negative amounts are
   allowed and report nothing. "Once" means once per upward crossing: a tally that goes back below a mark (a
   negative amount, `tally_set`) and rises again reports it again. The rule needs only the old and the new

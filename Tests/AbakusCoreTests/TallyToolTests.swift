@@ -319,6 +319,62 @@ import Testing
     }
 }
 
+/// Thresholds only inform: one whose arithmetic fails (here value / every overflows Decimal) must not stop a
+/// tally from being added to, listed or dropped.
+@Suite struct TallyUncomputableThresholdTests {
+    private static let huge = "1" + String(repeating: "0", count: 159)  // 1e159; 1e159 / 1e-7 overflows
+
+    private func plant(_ state: TallyTestState) throws {
+        try state.plantTally(TallyTest.tally("odd", value: Self.huge, thresholds: [Threshold(.every(TallyTest.decimal("0.0000001")))]))
+    }
+
+    private func problem(_ object: JSONObject, in key: String) -> String? {
+        object[key]?.arrayValue?.first?.objectValue?["problem"]?.stringValue
+    }
+
+    @Test func listShowsTheTallyWithANoteNotAsUnreadable() throws {
+        let state = TallyTestState()
+        try plant(state)
+        let response = try state.call("tally_list")
+        #expect(response["unreadable"] == nil)
+        let tally = try #require(response["tallies"]?.arrayValue?.first?.objectValue)
+        #expect(tally["name"] == "odd")
+        #expect(problem(tally, in: "thresholds")?.contains("cannot be computed") == true)
+        #expect(problem(tally, in: "thresholds")?.contains("too large") == true)
+    }
+
+    @Test func addCountsAndSaysWhatItCouldNotCompute() throws {
+        let state = TallyTestState()
+        try plant(state)
+        let response = try state.call("tally_add", ["name": "odd", "amount": .number("1" + String(repeating: "0", count: 150))])
+        #expect(response["count"] == 1)
+        #expect(problem(response, in: "crossed")?.contains("crossed one of its marks cannot be computed") == true)
+        #expect(problem(response, in: "thresholds") != nil)
+        #expect(try state.call("tally_list")["tallies"]?.arrayValue?.first?.objectValue?["count"] == 1)  // saved
+    }
+
+    @Test func dropStillDeletesAndReturnsTheState() throws {
+        let state = TallyTestState()
+        try plant(state)
+        let response = try state.call("tally_drop", ["name": "odd"])
+        #expect(response["dropped"] == true)
+        #expect(response["value"] == .number(Self.huge))
+        #expect(problem(response, in: "thresholds") != nil)
+        #expect(!FileManager.default.fileExists(atPath: state.file("odd").path))
+    }
+
+    @Test func aFailedSaveSaysTheTallyIsUnchanged() throws {
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "items"])
+        let before = try Data(contentsOf: state.file("items"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: state.tallies.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: state.tallies.path) }
+        let error = try #require(state.failure("tally_add", ["name": "items"]))
+        #expect(error.message.contains("Nothing was saved"))
+        #expect(try Data(contentsOf: state.file("items")) == before)
+    }
+}
+
 @Suite struct TallyFileTests {
     @Test func roundTripsEveryField() throws {
         let tally = TallyTest.tally(

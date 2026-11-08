@@ -71,8 +71,14 @@ struct TallyStore: Sendable {
             contents.contains(Self.fileName(name))
         }
 
+        /// Replaces the tally's file in one rename, so a failure means the old file, if any, is untouched; the
+        /// error says so.
         func save(_ tally: Tally) throws(ToolError) {
-            try contents.write(try tally.fileData(), to: Self.fileName(tally.name))
+            do throws(ToolError) {
+                try contents.write(try tally.fileData(), to: Self.fileName(tally.name))
+            } catch {
+                throw ToolError("\(error.message) Nothing was saved: the tally is as it was before this call.", details: error.details)
+            }
         }
 
         func delete(_ name: String) throws(ToolError) {
