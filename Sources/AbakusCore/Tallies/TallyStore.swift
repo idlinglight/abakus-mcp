@@ -69,14 +69,14 @@ struct TallyStore: Sendable {
 
         /// The error for a name without a tally: the tallies there are, and the state of those that may be the
         /// name plus a suffix. One that cannot be read is left out of the latter; it is still among the names.
-        func unknown(_ name: String) throws(ToolError) -> ToolError {
+        func unknown(_ name: String, use: TallyErrors.UnknownNameUse = .change) throws(ToolError) -> ToolError {
             let names = try names()
             let candidates = names.filter { $0.hasPrefix("\(name)-") }.prefix(TallyErrors.listedNames)
             let matching = candidates.compactMap { candidate -> Tally? in
                 guard case .tally(let tally)? = try? inspect(candidate) else { return nil }
                 return tally
             }
-            return TallyErrors.unknown(name, existing: names, matching: matching)
+            return TallyErrors.unknown(name, existing: names, matching: matching, use: use)
         }
 
         func contains(_ name: String) -> Bool {

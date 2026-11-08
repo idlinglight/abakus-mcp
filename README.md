@@ -122,7 +122,8 @@ An unknown name is an error, never a new tally: the name may be misspelled, have
 suffix. `details.existing` lists the tallies that exist (at most 20), those whose names start with the name
 and `-` first. Every tally but a shared one has a suffix, so those may belong to other sessions: they come
 with their state under `details.matching` (the first three in the message too), and the error says to use one
-only if you know you created it, and otherwise to create a new tally:
+only if you know you created it, and otherwise to create a new tally (`tally_drop` says to leave it instead:
+tallies expire by themselves):
 
 ```text
 tally_add {"name": "review"}
@@ -251,7 +252,7 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/):
 - [ADR-0001](docs/adr/0001-one-package-one-binary.md): One Swift package, one binary, MCP first
 - [ADR-0002](docs/adr/0002-own-mcp-server.md): Own MCP server instead of the Swift SDK (amended: supported revisions, error mapping)
 - [ADR-0003](docs/adr/0003-state-in-user-temp-folder.md): State: one file per tally in the per-user temporary folder (amended: locking)
-- [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names)
+- [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names; `tally_drop`'s advice for unknown names)
 - [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only)
 - [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC (amended: whole seconds in `text`)
 - [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name

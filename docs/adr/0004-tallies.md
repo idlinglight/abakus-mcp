@@ -2,7 +2,8 @@
 
 Status: accepted, 2026-11-08; amended 2026-11-08 (threshold argument shape, crossing rule and "once", unique
 suffix, `tally_set` and exactness, unknown names and arguments, thresholds that cannot be computed); amended
-2026-11-08 (a random suffix by default, `shared: true` for an exact name; see the end)
+2026-11-08 (a random suffix by default, `shared: true` for an exact name; see the end); amended 2026-11-08
+(the advice for unknown names in `tally_drop`)
 
 ## Context
 
@@ -124,3 +125,13 @@ consumers relying on `unique`.
   adding to another session's.
 - Agents still see every tally of the user in `tally_list`; leaving other sessions' tallies alone is guidance
   in the descriptions, not enforced.
+
+## Amendment 2026-11-08: the advice for unknown names in `tally_drop`
+
+The error for an unknown name told every tool's caller to create a new tally when unsure, which makes no sense
+for a drop. `tally_drop`'s error now names a repeated drop as the first possible cause, and says, when tallies
+with the name plus a suffix exist, to drop one only when the agent knows it created it and otherwise to leave it
+to expire; without such tallies, that nothing was dropped. `tally_add` and `tally_set` keep the advice to create a
+new tally. `tally_add`'s description no longer points to `tally_list` for finding a name, which steered agents
+towards other sessions' tallies; it and `tally_set`'s description say that the error shows the tallies whose
+names start with the name given, with when each was created.

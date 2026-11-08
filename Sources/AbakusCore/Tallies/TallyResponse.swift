@@ -79,28 +79,65 @@ enum TallyErrors {
     /// At most this many tallies that may be the asked-for name plus a suffix go into an error's message.
     static let describedMatches = 3
 
+    /// What the caller meant to do with a name that has no tally: the advice in the error depends on it.
+    enum UnknownNameUse {
+        /// tally_add, tally_set: the agent wants to keep counting, so creating a tally is the way forward.
+        case change
+        /// tally_drop: nothing to create; a repeated drop ends here too, and a tally that may be another
+        /// session's is better left to expire.
+        case drop
+
+        /// Why the name may have no tally, before the expiry that applies to every use.
+        var causes: String {
+            switch self {
+            case .change: "It may never have been created (check the spelling), or it may have expired"
+            case .drop: "It may already have been dropped (a repeated tally_drop ends here), it may never have been created (check the spelling), or it may have expired"
+            }
+        }
+
+        /// The advice when no tally has the name plus a suffix.
+        func withoutMatches(noTallies: Bool) -> String {
+            switch (self, noTallies) {
+            case (.change, true): "No tallies exist right now. Create it with tally_create; nothing is ever created by adding."
+            case (.change, false): "details.existing lists the tallies that exist. To start over, create it with tally_create."
+            case (.drop, true): "No tallies exist right now, so there is nothing to drop."
+            case (.drop, false): "details.existing lists the tallies that exist. Nothing was dropped."
+            }
+        }
+
+        /// What to do with tallies that have the name plus a suffix and may be another session's.
+        func withMatches(one: Bool) -> (verb: String, ifUnsure: String) {
+            switch self {
+            case .change: ("use", "If unsure, create a new tally with tally_create.")
+            case .drop: ("drop", "If unsure, leave \(one ? "it" : "them") to expire.")
+            }
+        }
+    }
+
     /// `matching`: the readable tallies among `names` that start with `name` and `-`, at most `listedNames`.
-    static func unknown(_ name: String, existing names: [String], matching: [Tally]) -> ToolError {
+    static func unknown(
+        _ name: String, existing names: [String], matching: [Tally], use: UnknownNameUse
+    ) -> ToolError {
         // tally_create appends a suffix unless shared: true; an agent may have lost it (e.g. to compaction) or
         // used the name it asked for instead of the one it got. But every tally but a shared one has a suffix,
         // so a tally with the name plus a suffix is as likely another session's as this one's: the error shows
         // when each was created and leaves the choice to an agent that knows, instead of suggesting one.
         let suffixed = names.filter { $0.hasPrefix("\(name)-") }
-        var message = "There is no tally named \"\(name)\". It may never have been created (check the spelling), or it may have expired: macOS deletes tallies that have not changed for about three days."
+        var message = "There is no tally named \"\(name)\". \(use.causes): macOS deletes tallies that have not changed for about three days."
         if matching.isEmpty {
-            message += names.isEmpty
-                ? " No tallies exist right now. Create it with tally_create; nothing is ever created by adding."
-                : " details.existing lists the tallies that exist. To start over, create it with tally_create."
+            message += " " + use.withoutMatches(noTallies: names.isEmpty)
         } else {
             let described = matching.prefix(describedMatches).map {
                 "\"\($0.name)\" (created \($0.created), value \($0.value), count \($0.count))"
             }
             let more = suffixed.count - described.count
             let list = more > 0 ? described.joined(separator: ", ") + " and \(more) more" : described.listedInProse
+            let one = suffixed.count == 1
+            let (verb, ifUnsure) = use.withMatches(one: one)
             message += " tally_create adds a random suffix to every name unless shared: true is passed, and "
-            message += suffixed.count == 1
-                ? "a tally whose name starts with \"\(name)-\" exists: \(list). It may belong to another session: use it only if you know you created it (compare its created time with when you created yours). If unsure, create a new tally with tally_create. details.matching shows it; details.existing lists the tallies that exist."
-                : "tallies whose names start with \"\(name)-\" exist: \(list). They may belong to other sessions: use one only if you know you created it (compare its created time with when you created yours). If unsure, create a new tally with tally_create. details.matching shows them; details.existing lists the tallies that exist."
+            message += one
+                ? "a tally whose name starts with \"\(name)-\" exists: \(list). It may belong to another session: \(verb) it only if you know you created it (compare its created time with when you created yours). \(ifUnsure) details.matching shows it; details.existing lists the tallies that exist."
+                : "tallies whose names start with \"\(name)-\" exist: \(list). They may belong to other sessions: \(verb) one only if you know you created it (compare its created time with when you created yours). \(ifUnsure) details.matching shows them; details.existing lists the tallies that exist."
         }
         var details: JSONObject = ["name": .string(name)]
         if !matching.isEmpty {
