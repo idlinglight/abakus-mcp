@@ -93,14 +93,16 @@ public enum NumberReader {
             + "k, M, G or T (410k)."
     }
 
-    private struct Parts {
+    /// A number taken apart, before the range checks. Internal for calc's parser, which reads the form of its
+    /// literals itself (no grouping, errors about expressions) and leaves the value and the range to `build`.
+    struct Parts {
         var negative: Bool
         /// Integer and fraction digits together, most significant first.
         var digits: [UInt8]
         var exponent: Int
     }
 
-    private enum Problem: Error {
+    enum Problem: Error {
         case format(String)
         case tooLarge
         case tooManyDigits(Int)
@@ -333,7 +335,8 @@ public enum NumberReader {
 
     // MARK: Building the value
 
-    private static func build(_ parts: Parts) throws(Problem) -> Decimal {
+    /// The value of `parts`, or `.tooLarge`, `.tooManyDigits` or `.tooSmall` when a `Decimal` cannot hold it exactly.
+    static func build(_ parts: Parts) throws(Problem) -> Decimal {
         var digits = Array(parts.digits.drop { $0 == 0 })
         if digits.isEmpty { return 0 }
         var exponent = parts.exponent
