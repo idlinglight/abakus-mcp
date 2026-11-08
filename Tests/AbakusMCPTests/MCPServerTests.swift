@@ -260,7 +260,7 @@ import Testing
         #expect(call["isError"] == true)
         #expect(call["content"] == [[
             "type": "text",
-            "text": "A tally named \"items\" already exists. Use another name, or pass unique: true.\nDetails: {\"name\":\"items\",\"value\":3.5,\"count\":2}",
+            "text": "A tally named \"items\" already exists. Add to it only if you coordinate with whoever created it.\nDetails: {\"name\":\"items\",\"value\":3.5,\"count\":2}",
         ]])
         #expect(call["structuredContent"] == nil)
     }

@@ -23,10 +23,11 @@ public struct DateDiffTool: Tool {
         calendar and totals is negative; text gives the size only. The breakdown counts forward from the earlier \
         instant: whole years, then months, then days, hours, minutes, seconds. A month added to Jan 31 ends on the \
         last day of February, so Jan 31 to Feb 28 is 1 month and Jan 31 to Mar 1 is 1 month 1 day. In text, 7 or \
-        more days are written as weeks and days. totals.seconds is always exact. Other totals that do not come out \
-        even are rounded half away from zero to 15 significant digits (1 hour is 0.0416666666666667 days) and \
-        flagged with days_exact: false, hours_exact: false or minutes_exact: false. Leap seconds are ignored: every \
-        day has 86400 seconds.
+        more days are written as weeks and days, and fractions of a second are left out ("less than 1 second" when \
+        that is all there is); calendar and totals keep them. totals.seconds is always exact. Other totals that do \
+        not come out even are rounded half away from zero to 15 significant digits (1 hour is 0.0416666666666667 \
+        days) and flagged with days_exact: false, hours_exact: false or minutes_exact: false. Leap seconds are \
+        ignored: every day has 86400 seconds.
         """
 
     public let inputSchema: JSONValue = [
@@ -55,9 +56,7 @@ public struct DateDiffTool: Tool {
     }()
 
     public func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
-        if let unknown = arguments.keys.first(where: { !["from", "to"].contains($0) }) {
-            throw ToolError("Unknown argument \"\(unknown)\". date_diff takes from (required) and to.")
-        }
+        try UnknownArguments.refuse(arguments, for: self)
         var cachedNow: Instant?
         let now = { () throws(ToolError) -> Instant in
             if let cachedNow { return cachedNow }
@@ -133,7 +132,8 @@ public struct DateDiffTool: Tool {
             "seconds": .decimal(negative && !seconds.isZero ? -seconds : seconds),
         ]
         result["text"] = .string(Self.text(
-            years: years, months: months, days: days, hours: hours, minutes: minutes, seconds: seconds
+            years: years, months: months, days: days, hours: hours, minutes: minutes, seconds: parts.second ?? 0,
+            fraction: fraction != 0
         ))
 
         let totalNanoseconds = BigUInt(UInt64(endSeconds - earlier.seconds)).timesPowerOfTen(9) + BigUInt(UInt64(fraction))
@@ -148,17 +148,19 @@ public struct DateDiffTool: Tool {
         result["totals"] = .object(totals)
     }
 
-    /// "1 year 2 months 2 weeks 3 days 4 hours 5 minutes 6.5 seconds", leaving out zero parts.
-    static func text(years: Int, months: Int, days: Int, hours: Int, minutes: Int, seconds: Decimal) -> String {
+    /// "1 year 2 months 2 weeks 3 days 4 hours 5 minutes 6 seconds", leaving out zero parts and the fraction of a
+    /// second (`fraction`: whether there is one), which only `calendar` and `totals` keep (ADR-0006). A difference
+    /// of a fraction only is "less than 1 second", so a non-zero difference never reads as "0 seconds".
+    static func text(years: Int, months: Int, days: Int, hours: Int, minutes: Int, seconds: Int, fraction: Bool) -> String {
         func part(_ count: Int, _ unit: String) -> String? {
             count == 0 ? nil : "\(count) \(unit)\(count == 1 ? "" : "s")"
         }
-        var parts = [
+        let parts = [
             part(years, "year"), part(months, "month"), part(days / 7, "week"), part(days % 7, "day"),
-            part(hours, "hour"), part(minutes, "minute"),
+            part(hours, "hour"), part(minutes, "minute"), part(seconds, "second"),
         ].compactMap { $0 }
-        if !seconds.isZero || parts.isEmpty {
-            parts.append("\(seconds.description) second\(seconds == 1 ? "" : "s")")
+        if parts.isEmpty {
+            return fraction ? "less than 1 second" : "0 seconds"
         }
         return parts.joined(separator: " ")
     }

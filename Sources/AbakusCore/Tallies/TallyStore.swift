@@ -62,9 +62,21 @@ struct TallyStore: Sendable {
         /// The tally; an unknown name is an error that lists the tallies there are.
         func existing(_ name: String) throws(ToolError) -> Tally {
             guard let tally = try load(name) else {
-                throw TallyErrors.unknown(name, existing: try names())
+                throw try unknown(name)
             }
             return tally
+        }
+
+        /// The error for a name without a tally: the tallies there are, and the state of those that may be the
+        /// name plus a suffix. One that cannot be read is left out of the latter; it is still among the names.
+        func unknown(_ name: String) throws(ToolError) -> ToolError {
+            let names = try names()
+            let candidates = names.filter { $0.hasPrefix("\(name)-") }.prefix(TallyErrors.listedNames)
+            let matching = candidates.compactMap { candidate -> Tally? in
+                guard case .tally(let tally)? = try? inspect(candidate) else { return nil }
+                return tally
+            }
+            return TallyErrors.unknown(name, existing: names, matching: matching)
         }
 
         func contains(_ name: String) -> Bool {

@@ -39,7 +39,7 @@ responses=$(printf '%s\n' \
 expect "mcp legacy: four responses, none for the notification" '. == null' \
   "$(print -r -- "$responses" | jq -s 'if length == 4 then null else length end')"
 expect "mcp legacy: initialize negotiates 2025-11-25 and sends instructions" \
-  '.result.protocolVersion == "2025-11-25" and (.result.instructions | contains("unique: true"))' \
+  '.result.protocolVersion == "2025-11-25" and (.result.instructions | contains("shared: true") and (contains("unique") | not))' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 1)')"
 expect "mcp legacy: tools/list has all seven tools" \
   '[.result.tools[].name] | sort == ["date_diff","sum","tally_add","tally_create","tally_drop","tally_list","tally_set"]' \
@@ -65,9 +65,11 @@ expect "mcp modern: date_diff without a handshake" \
   "$(print -r -- "$responses" | jq -c 'select(.id == 2)')"
 
 # CLI: a tally with a checkpoint every 2 additions and a limit of 5 on the value
-created=$($abakus tally create items --unique --every-count 2 --limit 5)
+created=$($abakus tally create items --every-count 2 --limit 5)
 name=$(print -r -- "$created" | jq -r .name)
-expect "cli: tally create --unique appends a suffix" '.name | test("^items-[a-z0-9]{4}$")' "$created"
+expect "cli: tally create appends a suffix" '.name | test("^items-[a-z0-9]{4}$")' "$created"
+expect "cli: tally create with an existing name makes a new tally and notes it" \
+  ".name != \"$name\" and (.note | test(\"already exists\"))" "$($abakus tally create "$name")"
 $abakus tally add "$name" >/dev/null
 added=$($abakus tally add "$name" 4)
 expect "cli: tally add reports the checkpoint and the limit" \
@@ -78,6 +80,14 @@ expect "cli: tally drop returns the final state" '.dropped == true and .value ==
 message=$($abakus tally add "$name" 2>&1)
 expect "cli: adding to a dropped tally fails with exit 1 and says why" \
   '.status == 1 and (.message | test("no tally named"))' \
+  "$(jq -n --argjson status $? --arg message "$message" '{status: $status, message: $message}')"
+
+# CLI: a shared tally keeps its name, and creating it twice is refused
+expect "cli: tally create --shared uses the name exactly" '.name == "build-errors"' \
+  "$($abakus tally create build-errors --shared)"
+message=$($abakus tally create build-errors --shared 2>&1)
+expect "cli: creating an existing shared tally fails with exit 1 and shows it" \
+  '.status == 1 and (.message | test("already exists")) and (.message | test("coordinating"))' \
   "$(jq -n --argjson status $? --arg message "$message" '{status: $status, message: $message}')"
 
 # CLI: sum from arguments (number strings, a negative number) and from stdin

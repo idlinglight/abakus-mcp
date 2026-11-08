@@ -7,7 +7,7 @@ import Testing
     /// descriptions, as calls from separate MCP server processes would.
     @Test func concurrentAddsLoseNothing() async throws {
         let state = TallyTestState()
-        try state.call("tally_create", ["name": "items"])
+        try state.call("tally_create", ["name": "items", "shared": true])
         let context = state.context
         let failures = await withTaskGroup(of: [String].self) { group in
             for _ in 0..<8 {
@@ -33,7 +33,7 @@ import Testing
 
     @Test func listsNeverSeeHalfWrittenFiles() async throws {
         let state = TallyTestState()
-        try state.call("tally_create", ["name": "items"])
+        try state.call("tally_create", ["name": "items", "shared": true])
         let context = state.context
         let failures = await withTaskGroup(of: [String].self) { group in
             for task in 0..<8 {

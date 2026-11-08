@@ -38,13 +38,21 @@ public enum DecimalMark: String, Sendable, CaseIterable {
 /// a `Decimal` cannot hold exactly (more than 38 significant digits, 10^165 or more, digits below 10^-128) is an
 /// error too, never silently rounded.
 public enum NumberReader {
-    /// The rules in two sentences, for tool descriptions.
+    /// The rules in two sentences, for the description of `sum`, whose input is numbers.
     public static let rulesSummary = """
         Numbers can be JSON numbers or strings. In strings the decimal mark is "." (or "," when decimal is ","), \
         and the other mark may only group thousands in threes (1,234,567.5); a sign, an exponent (2.5e3) or one \
         suffix k/K, M, G, T (thousand, million, billion, trillion: 410k, 1.5M) are allowed, a lowercase m is \
         refused, and anything else (units, currency signs, %, spaces inside, more than 38 significant digits) is \
         an error.
+        """
+
+    /// The rules in one sentence, for tools that take a number or two besides other things (the tallies). The
+    /// full rules are in `sum`'s description once. Every error says why a number cannot be used; those about a
+    /// string also say what is accepted (JSON literals and wrong types have nothing to gain from the string rules).
+    public static let rulesInBrief = """
+        Numbers may be JSON numbers or strings like "410k" or "1,234.5" (decimal: "," for 1.234,5); an unreadable \
+        one is an error that says why; sum's description has the full rules.
         """
 
     public static func read(_ value: JSONValue, decimal: DecimalMark = .point) throws(ToolError) -> Decimal {
@@ -66,16 +74,15 @@ public enum NumberReader {
 
     // MARK: Strings
 
+    /// Every error about a string says why it cannot be read and what is accepted, the range errors included.
     private static func readString(_ original: String, decimal: DecimalMark) throws(ToolError) -> Decimal {
         do {
             return try build(try scan(original, decimal: decimal))
-        } catch .format(let problem) {
+        } catch {
             throw ToolError(
-                "Cannot read \(original.quotedForMessage) as a number: \(problem) \(accepted(decimal))",
+                "Cannot read \(original.quotedForMessage) as a number: \(error.text) \(accepted(decimal))",
                 details: ["input": .string(original)]
             )
-        } catch {
-            throw ToolError("Cannot read \(original.quotedForMessage) as a number: \(error.text)", details: ["input": .string(original)])
         }
     }
 

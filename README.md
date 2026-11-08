@@ -12,7 +12,7 @@ Some small tasks are done better by a small program than by a language model, ye
 ad-hoc tooling for. abakus is the pocket calculator for those. Its arithmetic is exact decimal arithmetic:
 `0.1 + 0.2` is `0.3`, and a result that had to be rounded says so.
 
-macOS only. Status: first version (0.1.0).
+macOS only. Status: early, version 0.2.0.
 
 ## Install
 
@@ -34,7 +34,7 @@ Other MCP clients: the command is `abakus mcp` (stdio).
 
 | Tool | What it does |
 |---|---|
-| `tally_create` | Create a named tally, optionally with a unique suffix and thresholds |
+| `tally_create` | Create a tally under a name with a random suffix (or exactly, with `shared`), optionally with thresholds |
 | `tally_add` | Add an amount (default 1); says when a threshold is crossed |
 | `tally_set` | Correct a tally's value, count or thresholds |
 | `tally_list` | List tallies with their state |
@@ -47,10 +47,16 @@ Every tool returns a JSON object. Errors say what happened and what to do next.
 ## Tallies
 
 A tally is a named, exact `value` plus a `count` of additions, kept in a file so it survives long work and
-context compaction. Names are shared by all sessions of the user: lowercase letters, digits, `.`, `_`, `-`,
-starting with a letter or digit, at most 64 characters. When counting your own work, create with
-`unique: true` and use the returned name. Tallies untouched for about three days expire
-([ADR-0003](docs/adr/0003-state-in-user-temp-folder.md)).
+context compaction. `tally_create` appends a random suffix to the name (`review` becomes `review-k3f9`), so
+each session counts its own; the response has the name to use from then on. With `shared: true` the name is
+used exactly, for a tally several sessions are meant to add to; that is refused if the name exists. All
+sessions of the user see the same tallies (`tally_list` shows them all), so the tool descriptions tell agents
+to leave other sessions' tallies alone unless they coordinate with them
+([ADR-0004](docs/adr/0004-tallies.md)).
+
+Names: lowercase letters, digits, `.`, `_`, `-`, starting with a letter or digit, at most 64 characters
+including the suffix (so 59 as given, 64 with `shared: true`); a longer name is refused with a suggestion cut
+to 59. Tallies untouched for about three days expire ([ADR-0003](docs/adr/0003-state-in-user-temp-folder.md)).
 
 Every response is the tally's full state; numbers that came as strings are listed under `read`.
 
@@ -60,14 +66,25 @@ takes the tally from below the mark to the mark or past it; a tally that goes ba
 the mark again. Thresholds never block. Each threshold's status is in every response: a limit says
 `reached` and `remaining` or `over`; `at` and `every` say the `next` mark.
 
-`tally_create` `{name, unique?, thresholds?, decimal?}`
+`tally_create` `{name, shared?, thresholds?, decimal?}`
 
 ```json
-{"name": "review", "unique": true, "thresholds": [{"limit": 20}, {"every": 5, "of": "count"}]}
+{"name": "review", "thresholds": [{"limit": 20}, {"every": 5, "of": "count"}]}
 → {"name": "review-k3f9", "value": 0, "count": 0,
    "thresholds": [{"limit": 20, "of": "value", "reached": false, "remaining": 20},
                   {"every": 5, "of": "count", "next": 5}],
    "created": "2026-11-08T09:30:00Z", "updated": "2026-11-08T09:30:00Z"}
+```
+
+`tally_create` always makes a new tally. Given a name that exists exactly, typically one it returned earlier,
+the new tally still gets a suffix, and the response adds a `note`: to continue the existing tally, add to it
+with `tally_add` and drop the new one with `tally_drop`.
+
+```json
+{"name": "review-k3f9"}
+→ {"name": "review-k3f9-p2x7", "value": 0, "count": 0, "thresholds": [],
+   "created": "2026-11-08T09:31:00Z", "updated": "2026-11-08T09:31:00Z",
+   "note": "A tally named \"review-k3f9\" already exists, and tally_create always makes a new tally: …"}
 ```
 
 `tally_add` `{name, amount? (default 1), decimal?}` adds `added`, `crossed` (`[]` if nothing) and `read`:
@@ -101,9 +118,26 @@ or `{"every": 5, "of": "count", "at": [5]}`; past 10 multiples,
 
 `tally_drop` `{name}` deletes the tally and returns its final state with `"dropped": true`.
 
-An unknown name may have expired; the error lists the names that exist (a suffixed match first). Creating
-an existing name shows that tally and suggests `unique: true`. An invalid name comes with a suggestion
-(`"Review Items"` → `"review-items"`).
+An unknown name is an error, never a new tally: the name may be misspelled, have expired, or lack its
+suffix. `details.existing` lists the tallies that exist (at most 20), those whose names start with the name
+and `-` first. Every tally but a shared one has a suffix, so those may belong to other sessions: they come
+with their state under `details.matching` (the first three in the message too), and the error says to use one
+only if you know you created it, and otherwise to create a new tally:
+
+```text
+tally_add {"name": "review"}
+There is no tally named "review". It may never have been created (check the spelling), or it may have
+expired: … a tally whose name starts with "review-" exists: "review-k3f9" (created 2026-11-08T09:30:00Z,
+value 21, count 6). It may belong to another session: use it only if you know you created it (compare its
+created time with when you created yours). If unsure, create a new tally with tally_create. …
+Details: {"name": "review",
+          "matching": [{"name": "review-k3f9", "value": 21, "count": 6, "created": "2026-11-08T09:30:00Z"}],
+          "existing": ["review-k3f9", "bytes"]}
+```
+
+Creating a shared tally under an existing name shows that tally and says to add to it only in coordination
+with whoever created it, or to leave `shared` out to count one's own work. An invalid name comes with a
+suggestion (`"Review Items"` → `"review-items"`).
 
 ## Numbers
 
@@ -146,7 +180,8 @@ Years 1583 to 9999 ([ADR-0006](docs/adr/0006-date-differences.md)).
 
 The response has `from` and `to` in UTC, `from_is_now` / `to_is_now` when the current time was used,
 `to_before_from`, a `calendar` breakdown (`years`, `months`, `days`, `hours`, `minutes`, `seconds`; Gregorian,
-UTC, counted forward from the earlier instant, so Jan 31 + 1 month = Feb 28/29), a short `text`, `totals`
+UTC, counted forward from the earlier instant, so Jan 31 + 1 month = Feb 28/29), a short `text` (whole
+seconds only, `less than 1 second` when a fraction is all there is), `totals`
 (`days`, `hours`, `minutes`, `seconds`) and `notes` when something was assumed. When `to` is before `from`,
 every number is negative.
 
@@ -164,8 +199,9 @@ Each command runs one tool and prints the JSON an agent would get. A tool's erro
 status 1 (the same text an agent reads); a usage mistake shows the usage with exit status 64.
 
 ```sh
-abakus tally create review --unique --limit 20 --every-count 5
-abakus tally add review-k3f9 6
+abakus tally create review --limit 20 --every-count 5
+abakus tally add review-k3f9 6                   # the name it printed, suffix included
+abakus tally create build-errors --shared        # exactly this name, for several sessions
 abakus tally list
 abakus sum 410k 1,234.5 -3
 grep -oE '[0-9][0-9.]*k' build.log | abakus sum  # numbers from stdin
@@ -215,9 +251,9 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/):
 - [ADR-0001](docs/adr/0001-one-package-one-binary.md): One Swift package, one binary, MCP first
 - [ADR-0002](docs/adr/0002-own-mcp-server.md): Own MCP server instead of the Swift SDK (amended: supported revisions, error mapping)
 - [ADR-0003](docs/adr/0003-state-in-user-temp-folder.md): State: one file per tally in the per-user temporary folder (amended: locking)
-- [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings)
-- [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail)
-- [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC
+- [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names)
+- [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only)
+- [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC (amended: whole seconds in `text`)
 
 ## License
 

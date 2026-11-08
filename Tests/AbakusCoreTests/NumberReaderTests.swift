@@ -59,15 +59,24 @@ private func d(_ text: String) -> Decimal {
         // Out of range or more digits than Decimal holds: errors, never rounded
         "1e400", "1e-400", "1e165", "1.5e-128", "123456789012345678901234567890123456789",
     ])
-    func refusesWithDecimalPoint(input: String) {
-        #expect(throws: ToolError.self, "\(input)") { try NumberReader.read(.string(input), decimal: .point) }
+    func refusesWithDecimalPoint(input: String) throws {
+        let error = try #require(throws: ToolError.self, "\(input)") { try NumberReader.read(.string(input), decimal: .point) }
+        // Every error about a string, the range errors included, says what is accepted (rulesInBrief relies on it).
+        #expect(error.message.contains("Accepted: digits with \".\" as the decimal mark"), "\(input)")
     }
 
     @Test(arguments: [
-        "1,234,567", "1.23", "1.5M", "0.5", "1,234.5", "5,", "12%", "1.2345", "1 234,5",
+        "1,234,567", "1.23", "1.5M", "0.5", "1,234.5", "5,", "12%", "1.2345", "1 234,5", "1e400",
     ])
-    func refusesWithDecimalComma(input: String) {
-        #expect(throws: ToolError.self, "\(input)") { try NumberReader.read(.string(input), decimal: .comma) }
+    func refusesWithDecimalComma(input: String) throws {
+        let error = try #require(throws: ToolError.self, "\(input)") { try NumberReader.read(.string(input), decimal: .comma) }
+        #expect(error.message.contains("Accepted: digits with \",\" as the decimal mark"), "\(input)")
+    }
+
+    @Test func rulesInBriefPromisesOnlyWhatErrorsDo() {
+        #expect(NumberReader.rulesInBrief.contains("an unreadable one is an error that says why"))
+        #expect(NumberReader.rulesInBrief.contains("sum's description has the full rules"))
+        #expect(!NumberReader.rulesInBrief.contains("what is accepted"))
     }
 
     @Test func errorsNameTheInputAndSayWhatIsAccepted() throws {

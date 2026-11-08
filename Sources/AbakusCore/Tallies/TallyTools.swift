@@ -11,23 +11,25 @@ struct TallyCreate: Tool {
     let name = "tally_create"
 
     let description = """
-        Create a named tally: an exact value plus a count of additions, kept outside your context so it survives \
-        long work and compaction. Use it to count work against a budget, to get a checkpoint every N items, or to \
-        sum numbers that arrive one at a time. Names are shared by all sessions of this user: when counting your \
-        own work, pass unique: true, which appends a random suffix (items becomes items-k3f9), and use the \
-        returned name from then on. Optional thresholds watch the value (default) or the count: limit (a ceiling), \
-        at (marks), every (a period); they inform and never block. Fails if the name exists. Returns the new \
-        tally's state. \(NumberReader.rulesSummary)
+        Create a tally: an exact value plus a count of additions, kept outside your context so it survives long \
+        work and compaction. For counting work against a budget, a checkpoint every N items, or summing numbers \
+        that arrive one at a time. Every tally gets a random suffix (items becomes items-k3f9), so each session \
+        counts its own; use the name in the response from then on, and tally_add to continue it: tally_create \
+        always makes a new tally (with a note when the name given exists). Pass shared: true only for a tally \
+        several sessions are meant to add to: the name is then used exactly, and creating fails if it exists. \
+        Leave other sessions' tallies alone unless you coordinate with them. Optional thresholds watch the value \
+        (default) or the count: limit (a ceiling), at (marks), every (a period); they inform and never block. \
+        Returns the new tally's state. \(NumberReader.rulesInBrief)
         """
 
     let inputSchema: JSONValue = [
         "type": "object",
         "properties": [
             "name": TallySchema.name,
-            "unique": [
+            "shared": [
                 "type": "boolean",
                 "default": false,
-                "description": "Append a random suffix (items becomes items-k3f9) and return the name to use. Use it when counting your own work.",
+                "description": "Use the name exactly, without a suffix, for a tally several sessions are meant to add to. Refused if the name exists. Leave it out to count your own work.",
             ],
             "thresholds": TallySchema.thresholds,
             "decimal": DecimalMark.schema,
@@ -38,26 +40,42 @@ struct TallyCreate: Tool {
 
     let annotations = ToolAnnotations(title: "Create tally", readOnly: false, destructive: false, idempotent: false)
 
+    /// `unique` was the opt-in for the suffix in 0.1.0; agents may still have it in their prompts. What to do
+    /// instead depends on what it asked for.
+    static let uniqueHint: UnknownArguments.Hint = { value in
+        switch value.boolValue {
+        case true?: "Leave unique out: tally_create appends a random suffix by default now."
+        case false?: "To use the name exactly, without a suffix, pass shared: true instead; the name must not exist yet."
+        case nil: nil
+        }
+    }
+
     func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
-        var args = try TallyArguments(arguments, allowed: ["name", "unique", "thresholds", "decimal"])
+        var args = try TallyArguments(arguments, for: self, hints: ["unique": Self.uniqueHint])
         let requested = try args.name()
-        let unique = try args.bool("unique") ?? false
-        try TallyName.validate(requested, unique: unique)
+        let shared = try args.bool("shared") ?? false
+        try TallyName.validate(requested, suffixed: !shared)
         let thresholds = try args.thresholds() ?? []
         let now = Tally.timestamp(context.now())
         let reads = args.reads
 
         return try TallyStore(context).change(creatingFolder: true) { files throws(ToolError) in
             let name: String
-            if unique {
-                name = try TallyName.unique(base: requested) { candidate throws(ToolError) in files.contains(candidate) }
-            } else {
+            var note: String?
+            if shared {
                 if let existing = try files.load(requested) { throw TallyErrors.exists(existing) }
                 name = requested
+            } else {
+                name = try TallyName.suffixed(requested) { candidate throws(ToolError) in files.contains(candidate) }
+                // Typically a name tally_create returned earlier, given again after compaction. Creating never
+                // blocks on a name that may be someone else's (ADR-0004); the note says how to continue instead.
+                if files.contains(requested) { note = TallyResponse.recreatedNote(requested, as: name) }
             }
             let tally = Tally(name: name, thresholds: thresholds, created: now, updated: now)
             try files.save(tally)
-            return TallyResponse.state(tally, reads: reads)
+            var response = TallyResponse.state(tally, reads: reads)
+            if let note { response["note"] = .string(note) }
+            return response
         }
     }
 }
@@ -72,9 +90,9 @@ struct TallyAdd: Tool {
         count, added, crossed (what this addition reached or passed: marks of at and every, a limit reached for \
         the first time; [] if nothing) and thresholds with their status (a limit says reached plus remaining or \
         over, in every response). Thresholds never block. Negative amounts subtract. \
-        \(NumberReader.rulesSummary) A string's reading is shown under read. An unknown name is an error, never \
-        a new tally: the name may be misspelled or expired (unchanged for about three days); tally_list shows \
-        what exists.
+        \(NumberReader.rulesInBrief) A string's reading is shown under read. An unknown name is an error, never a \
+        new tally: the name may be misspelled, lack the suffix tally_create gave it, or have expired (unchanged \
+        for about three days); tally_list shows what exists.
         """
 
     let inputSchema: JSONValue = [
@@ -94,7 +112,7 @@ struct TallyAdd: Tool {
     let annotations = ToolAnnotations(title: "Add to tally", readOnly: false, destructive: false, idempotent: false)
 
     func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
-        var args = try TallyArguments(arguments, allowed: ["name", "amount", "decimal"])
+        var args = try TallyArguments(arguments, for: self)
         let name = try args.name()
         try TallyName.validate(name)
         let amount = try args.number("amount") ?? 1
@@ -137,7 +155,7 @@ struct TallySet: Tool {
     let description = """
         Correct a tally: set its value and/or count, or replace its thresholds (an empty list removes them). For \
         fixing a miscount or changing a budget; normal counting is tally_add. Reports no crossings; returns the \
-        full state. \(NumberReader.rulesSummary) An unknown name is an error.
+        full state. \(NumberReader.rulesInBrief) An unknown name is an error.
         """
 
     let inputSchema: JSONValue = [
@@ -160,7 +178,7 @@ struct TallySet: Tool {
     let annotations = ToolAnnotations(title: "Set tally", readOnly: false, destructive: true, idempotent: true)
 
     func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
-        var args = try TallyArguments(arguments, allowed: ["name", "value", "count", "thresholds", "decimal"])
+        var args = try TallyArguments(arguments, for: self)
         let name = try args.name()
         try TallyName.validate(name)
         let value = try args.number("value")
@@ -195,7 +213,7 @@ struct TallyList: Tool {
     let description = """
         List tallies sorted by name, each with its full state; with prefix, only names starting with it. Also \
         returns the folder they are kept in. Use it to see what exists or to find a name you lost, such as the \
-        suffix of a unique name.
+        suffix tally_create gave it.
         """
 
     let inputSchema: JSONValue = [
@@ -212,7 +230,7 @@ struct TallyList: Tool {
     let annotations = ToolAnnotations(title: "List tallies", readOnly: true, destructive: false, idempotent: true)
 
     func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
-        let args = try TallyArguments(arguments, allowed: ["prefix"])
+        let args = try TallyArguments(arguments, for: self)
         let prefix = try args.string("prefix") ?? ""
         let store = TallyStore(context)
 
@@ -268,14 +286,14 @@ struct TallyDrop: Tool {
     let annotations = ToolAnnotations(title: "Drop tally", readOnly: false, destructive: true, idempotent: true)
 
     func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
-        let args = try TallyArguments(arguments, allowed: ["name"])
+        let args = try TallyArguments(arguments, for: self)
         let name = try args.name()
         try TallyName.validate(name)
 
         return try TallyStore(context).change { files throws(ToolError) in
             switch try files.inspect(name) {
             case .missing:
-                throw TallyErrors.unknown(name, existing: try files.names())
+                throw try files.unknown(name)
             case .tally(let tally):
                 try files.delete(name)
                 return TallyResponse.state(tally, dropped: true)
@@ -290,7 +308,7 @@ struct TallyDrop: Tool {
 
 // MARK: - Schema parts
 
-/// Schema parts of the tally tools. Number strings and `decimal` use `NumberReader.rulesSummary` and
+/// Schema parts of the tally tools. Number strings and `decimal` use `NumberReader.rulesInBrief` and
 /// `DecimalMark.schema`, so every tool describes and reads them the same way.
 enum TallySchema {
     static let namePattern = "^[a-z0-9][a-z0-9._-]{0,63}$"
@@ -298,7 +316,7 @@ enum TallySchema {
     static let name: JSONValue = [
         "type": "string",
         "pattern": .string(namePattern),
-        "description": "Lowercase letters, digits, '.', '_' and '-', starting with a letter or digit, at most 64 characters (59 with unique). E.g. \"review-items\".",
+        "description": "Lowercase letters, digits, '.', '_' and '-', starting with a letter or digit, at most 59 characters, since a suffix like -k3f9 is appended (64 with shared: true). E.g. \"review-items\".",
     ]
 
     static let existingName: JSONValue = [

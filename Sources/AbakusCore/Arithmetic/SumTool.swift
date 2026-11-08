@@ -42,9 +42,7 @@ public struct SumTool: Tool {
     public let annotations = ToolAnnotations(title: "Exact sum", readOnly: true, destructive: false, idempotent: true)
 
     public func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
-        if let unknown = arguments.keys.first(where: { !["numbers", "decimal"].contains($0) }) {
-            throw ToolError("Unknown argument \"\(unknown)\". sum takes numbers (required) and decimal.")
-        }
+        try UnknownArguments.refuse(arguments, for: self)
         let decimal = try DecimalMark.argument(arguments["decimal"])
         guard let numbers = arguments["numbers"], !numbers.isNull else {
             throw ToolError("numbers is missing: pass the numbers to add as a list, e.g. {\"numbers\": [12.5, \"410k\"]}.")

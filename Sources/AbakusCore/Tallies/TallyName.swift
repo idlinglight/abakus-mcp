@@ -4,7 +4,7 @@ enum TallyName {
     static let maxLength = 64
     static let suffixLength = 4
     static let suffixAlphabet = Array("abcdefghijklmnopqrstuvwxyz0123456789")
-    /// How often `unique` draws a new suffix when the drawn one is taken.
+    /// How often `suffixed` draws a new suffix when the drawn one is taken.
     static let suffixAttempts = 32
 
     static let rule = "a tally name uses lowercase letters, digits, '.', '_' and '-', starts with a letter or digit, and has at most 64 characters"
@@ -16,8 +16,8 @@ enum TallyName {
     }
 
     /// Throws an error that states the rule and, where one exists, a valid name close to the given one.
-    /// With `unique`, the name must leave room for the suffix (`-` and four characters).
-    static func validate(_ name: String, unique: Bool = false) throws(ToolError) {
+    /// With `suffixed`, the name must leave room for the suffix (`-` and four characters).
+    static func validate(_ name: String, suffixed: Bool = false) throws(ToolError) {
         guard isValid(name) else {
             var message = "\"\(name)\" is not a valid tally name: \(rule)."
             var details: JSONObject = ["name": .string(name)]
@@ -27,13 +27,26 @@ enum TallyName {
             }
             throw ToolError(message, details: details)
         }
-        let room = maxLength - suffixLength - 1
-        if unique, name.utf8.count > room {
+        if suffixed, name.utf8.count > roomForSuffix {
+            let shortened = shortened(name)
             throw ToolError(
-                "\"\(name)\" is too long for unique: true, which appends a suffix like \"-k3f9\": use at most \(room) characters.",
-                details: ["name": .string(name)]
+                "\"\(name)\" has \(name.utf8.count) characters, too many for tally_create: it appends a dash and a random suffix, \(suffixLength + 1) characters like \"-k3f9\", and a tally name has at most \(maxLength), so the name given may have at most \(roomForSuffix). Try \"\(shortened)\".",
+                details: ["name": .string(name), "suggestion": .string(shortened)]
             )
         }
+    }
+
+    /// The longest name tally_create can take, leaving room for `-` and the suffix.
+    static let roomForSuffix = maxLength - suffixLength - 1
+
+    /// A valid name cut to `roomForSuffix` characters, without a trailing `-`, `.` or `_` (which would look like a
+    /// separator before the suffix). Valid names are ASCII and start with a letter or digit, so this is never empty.
+    static func shortened(_ name: String) -> String {
+        var cut = name.prefix(roomForSuffix)
+        while let last = cut.last, last == "-" || last == "." || last == "_" {
+            cut.removeLast()
+        }
+        return String(cut)
     }
 
     /// A valid name close to an invalid one (`My Items` becomes `my-items`), or nil if there is none.
@@ -50,8 +63,8 @@ enum TallyName {
     }
 
     /// `base` plus `-` and a random suffix that `isTaken` does not report as taken.
-    static func unique(
-        base: String,
+    static func suffixed(
+        _ base: String,
         isTaken: (String) throws(ToolError) -> Bool,
         suffix: () -> String = randomSuffix
     ) throws(ToolError) -> String {
