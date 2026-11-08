@@ -1,4 +1,4 @@
-/// Stateless arithmetic tools (ADR-0005): sum.
+/// Stateless arithmetic tools: sum (ADR-0005) and calc (ADR-0007).
 public enum ArithmeticTools {
-    public static let all: [any Tool] = [SumTool()]
+    public static let all: [any Tool] = [SumTool(), CalcTool()]
 }

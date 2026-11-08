@@ -8,6 +8,12 @@ import Testing
     static let readCases: [(String, String)] = [
         // Operators, and parentheses around every binary operation except the outermost one
         ("1 + 2", "1 + 2"), ("1+2*3", "1 + (2 * 3)"), ("(1+2)*3", "(1 + 2) * 3"), ("1 - 2 - 3", "(1 - 2) - 3"),
+        // ... and except along a chain of + or of *, where the left operand has the same operator
+        ("{a} + {b} + {c}", "{a} + {b} + {c}"), ("2 * 3 * {x}", "2 * 3 * {x}"), ("1 + (2 + 3)", "1 + (2 + 3)"),
+        ("2 * (3 * 4)", "2 * (3 * 4)"), ("(1 - 2) + 3", "(1 - 2) + 3"), ("(1 + 2) - 3", "(1 + 2) - 3"),
+        ("8 / 4 * 2", "(8 / 4) * 2"), ("2 * 3 / 4", "(2 * 3) / 4"), ("1 + 2 * 3 * 4 + 5", "1 + (2 * 3 * 4) + 5"),
+        ("(1 + 2) * 3 * 4", "(1 + 2) * 3 * 4"), ("1 + 2 + 3 - 4 - 5", "((1 + 2 + 3) - 4) - 5"),
+        ("2 ^ 3 * 4 * 5", "(2 ^ 3) * 4 * 5"), ("max(1 + 2 + 3, 4)", "max(1 + 2 + 3, 4)"),
         ("8 / 4 / 2", "(8 / 4) / 2"), ("1 - (2 - 3)", "1 - (2 - 3)"), ("((5))", "5"), ("  1  +  2  ", "1 + 2"),
         ("1000 * 1.045^10", "1000 * (1.045 ^ 10)"),
         // Signs and powers
@@ -145,9 +151,10 @@ import Testing
         ("2 abs(3)", ["character 3", "2 * abs(3)"]), ("2^3 4", ["character 5", "2^3 * 4"]),
         // Thousands separators and decimal commas
         ("1,234", ["comma between two digits at character 2", "thousands separators", "write 1234", "1.234"]),
-        ("max(1,234)", ["character 6", "1234", "space after it: 1, 234"]),
+        ("max(1,234)", ["character 6", "If 1,234 is one number, write 1234,", "If 1 and 234 are separate arguments, write 1, 234."]),
         ("round(1.5,2)", ["character 10", "without separators and with \".\" as the decimal mark", "1.5, 2"]),
-        ("1,234,567", ["write 1234567;"]), ("1,234.5", ["write 1234.5;"]), ("1.234,5", ["without separators"]),
+        ("1,234,567", ["write 1234567.", "If 1, 234 and 567 are separate arguments, write 1, 234, 567."]),
+        ("1,234.5", ["If 1,234.5 is one number, write 1234.5. If 1 and 234.5 are separate arguments, write 1, 234.5."]), ("1.234,5", ["without separators"]),
         // Numbers
         ("1_000", ["\"_\" at character 2", "Write 1000."]), ("10ms", ["\"ms\" after the number 10 at character 3", "no units"]),
         ("5x", ["\"x\" after the number 5", "write * (5 * 3)"]), ("5kg", ["\"kg\"", "one suffix"]),
@@ -226,12 +233,12 @@ import Testing
     /// where no rewrite keeps the value, there is none.
     static let rewriteCases: [(String, [String], [String])] = [
         // Commas between digits
-        ("1,5k * 2", ["1,5k is one number with a decimal comma, write 1.5k;", "space after it: 1, 5k."], ["write 15", "1.5;"]),
-        ("1,234.5e3", ["write 1234.5e3;", "1, 234.5e3."], ["1234.5;", "1234.5 "]),
+        ("1,5k * 2", ["1,5k is one number with a decimal comma, write 1.5k.", "If 1 and 5k are separate arguments, write 1, 5k."], ["write 15", "1.5."]),
+        ("1,234.5e3", ["write 1234.5e3.", "1, 234.5e3."], ["1234.5.", "1234.5 "]),
         ("1e3,5", ["write it without separators", "1e3, 5."], ["1e35", "1e3.5"]),
         ("12,345k", ["write 12345k, or 12.345k if the comma is a decimal mark"], []),
-        ("0,5", ["0,5 is one number with a decimal comma, write 0.5;"], ["write 05"]),
-        ("1,5", ["1,5 is one number with a decimal comma, write 1.5;"], ["write 15"]),
+        ("0,5", ["0,5 is one number with a decimal comma, write 0.5.", "If 0 and 5 are separate arguments, write 0, 5."], ["write 05"]),
+        ("1,5", ["1,5 is one number with a decimal comma, write 1.5."], ["write 15"]),
         ("1,234", ["write 1234, or 1.234 if the comma is a decimal mark"], []),
         // Two numbers with only a space between them
         ("1 234", ["1 * 234", "write it without spaces: 1234."], []),
@@ -269,14 +276,20 @@ import Testing
     @Test func flatChainsDoNotCountAsNestingAndRenderWithoutRecursion() throws {
         let chain = String(repeating: "1+", count: 499) + "1"
         let tree = try CalcParser.parse(chain)
-        let expected = String(repeating: "(", count: 498) + "1 + 1)" + String(repeating: " + 1)", count: 497) + " + 1"
+        // A chain of + reads flat.
+        let expected = Array(repeating: "1", count: 500).joined(separator: " + ")
         #expect(tree.rendered == expected)
-        // Its read nests 498 parentheses deep and is too long to parse again: read is for showing, not for input.
-        #expect(message(expected).contains("2993 characters"))
+        // The spaces make it too long to parse again: read is for showing, not for input.
+        #expect(message(expected).contains("1997 characters"))
         // Counting the nodes bottom-up visits each one once.
         #expect(tree.fold { (_, counts: [Int]) in counts.reduce(1, +) } == 999)
         let products = try CalcParser.parse(String(repeating: "2*", count: 499) + "2")
-        #expect(products.rendered.hasSuffix(") * 2"))
+        #expect(products.rendered == Array(repeating: "2", count: 500).joined(separator: " * "))
+        // A chain of - or / keeps its parentheses, 498 deep: too deep to parse again.
+        let differences = try CalcParser.parse(String(repeating: "1-", count: 499) + "1")
+        let nested = String(repeating: "(", count: 498) + "1 - 1)" + String(repeating: " - 1)", count: 497) + " - 1"
+        #expect(differences.rendered == nested)
+        #expect(message(nested).contains("2993 characters"))
     }
 
     @Test func foldGivesChildResultsInOrder() throws {

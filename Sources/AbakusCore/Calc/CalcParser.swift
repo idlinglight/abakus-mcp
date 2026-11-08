@@ -671,19 +671,21 @@ struct CalcParser {
         // A decimal comma: plain digits, the comma, then digits that may carry an exponent or a suffix.
         let decimal = pieces.count == 2 && isPlain(first) && !pieces[1].contains(".")
 
+        // Both readings by name, each with its own rewrite: an agent took "put a space after it: 1, 234.5" for the
+        // way to write the number.
         let asOneNumber = switch (grouped, decimal) {
         case (true, true):
-            "If \(written) is one number, write \(pieces.joined()), or \(first).\(pieces[1]) if the comma is a decimal mark"
+            "If \(written) is one number, write \(pieces.joined()), or \(first).\(pieces[1]) if the comma is a decimal mark."
         case (true, false):
-            "If \(written) is one number, write \(pieces.joined())"
+            "If \(written) is one number, write \(pieces.joined())."
         case (false, true):
-            "If \(written) is one number with a decimal comma, write \(first).\(pieces[1])"
+            "If \(written) is one number with a decimal comma, write \(first).\(pieces[1])."
         case (false, false):
-            "If \(written) is one number, write it without separators and with \".\" as the decimal mark"
+            "If \(written) is one number, write it without separators and with \".\" as the decimal mark."
         }
         return ToolError(
             "A comma between two digits \(at(comma + 1)): calc takes no thousands separators, and its decimal mark is "
-                + "always \".\". \(asOneNumber); if the comma separates function arguments, put a space after it: "
+                + "always \".\". \(asOneNumber) If \(pieces.listedInProse) are separate arguments, write "
                 + "\(pieces.joined(separator: ", "))."
         )
     }
@@ -864,18 +866,27 @@ struct CalcParser {
         text(token.start, token.end).quotedForMessage
     }
 
-    /// `at character N of "<expression>"`; a long expression is cut to an excerpt around the position.
     private func at(_ position: Int) -> String {
-        "at character \(position) of \(excerpt(around: position))"
+        Self.at(position, of: expression, source: source)
     }
 
-    private func excerpt(around position: Int) -> String {
+    /// `at character N of "<expression>"`; a long expression is cut to an excerpt around the position. The calc
+    /// tool uses it too, for errors found while evaluating, so that both read alike.
+    static func at(_ position: Int, of expression: String) -> String {
+        at(position, of: expression, source: Array(expression))
+    }
+
+    private static func at(_ position: Int, of expression: String, source: [Character]) -> String {
+        "at character \(position) of \(excerpt(around: position, of: expression, source: source))"
+    }
+
+    private static func excerpt(around position: Int, of expression: String, source: [Character]) -> String {
         guard source.count > 60 else { return expression.quotedForMessage }
         let width = 50
         let index = min(max(position - 1, 0), source.count)
         let end = min(source.count, max(index - width / 2, 0) + width)
         let start = max(0, end - width)
-        let excerpt = (start > 0 ? "…" : "") + text(start, end) + (end < source.count ? "…" : "")
+        let excerpt = (start > 0 ? "…" : "") + String(source[start..<end]) + (end < source.count ? "…" : "")
         return excerpt.quotedForMessage
     }
 }

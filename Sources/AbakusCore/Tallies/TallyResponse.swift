@@ -86,12 +86,16 @@ enum TallyErrors {
         /// tally_drop: nothing to create; a repeated drop ends here too, and a tally that may be another
         /// session's is better left to expire.
         case drop
+        /// calc: a reference in an expression. Creating a tally would not give the value the formula needs, so
+        /// the error never suggests it; it says that nothing was computed.
+        case read
 
         /// Why the name may have no tally, before the expiry that applies to every use.
         var causes: String {
             switch self {
             case .change: "It may never have been created (check the spelling), or it may have expired"
             case .drop: "It may already have been dropped (a repeated tally_drop ends here), it may never have been created (check the spelling), or it may have expired"
+            case .read: "It may never have been created (check the spelling), it may have been dropped, or it may have expired"
             }
         }
 
@@ -102,14 +106,22 @@ enum TallyErrors {
             case (.change, false): "details.existing lists the tallies that exist. To start over, create it with tally_create."
             case (.drop, true): "No tallies exist right now, so there is nothing to drop."
             case (.drop, false): "details.existing lists the tallies that exist. Nothing was dropped."
+            case (.read, true): "No tallies exist right now. Nothing was computed."
+            case (.read, false): "details.existing lists the tallies that exist. Nothing was computed."
             }
         }
 
-        /// What to do with tallies that have the name plus a suffix and may be another session's.
-        func withMatches(one: Bool) -> (verb: String, ifUnsure: String) {
-            switch self {
-            case .change: ("use", "If unsure, create a new tally with tally_create.")
-            case .drop: ("drop", "If unsure, leave \(one ? "it" : "them") to expire.")
+        /// What to do with tallies that have the name plus a suffix and may be another session's: the advice after
+        /// "It may belong to another session:" (or "They may belong to other sessions:"), with what to do if unsure.
+        func withMatches(one: Bool) -> String {
+            let compare = "(compare its created time with when you created yours)"
+            return switch self {
+            case .change: "use \(one ? "it" : "one") only if you know you created it \(compare). If unsure, create a new tally with tally_create."
+            case .drop: "drop \(one ? "it" : "one") only if you know you created it \(compare). If unsure, leave \(one ? "it" : "them") to expire."
+            case .read:
+                one
+                    ? "write its full name, suffix included, only if you know it is the one you mean \(compare). Nothing was computed."
+                    : "write the full name, suffix included, only for the one you know you mean \(compare). Nothing was computed."
             }
         }
     }
@@ -133,11 +145,11 @@ enum TallyErrors {
             let more = suffixed.count - described.count
             let list = more > 0 ? described.joined(separator: ", ") + " and \(more) more" : described.listedInProse
             let one = suffixed.count == 1
-            let (verb, ifUnsure) = use.withMatches(one: one)
+            let advice = use.withMatches(one: one)
             message += " tally_create adds a random suffix to every name unless shared: true is passed, and "
             message += one
-                ? "a tally whose name starts with \"\(name)-\" exists: \(list). It may belong to another session: \(verb) it only if you know you created it (compare its created time with when you created yours). \(ifUnsure) details.matching shows it; details.existing lists the tallies that exist."
-                : "tallies whose names start with \"\(name)-\" exist: \(list). They may belong to other sessions: \(verb) one only if you know you created it (compare its created time with when you created yours). \(ifUnsure) details.matching shows them; details.existing lists the tallies that exist."
+                ? "a tally whose name starts with \"\(name)-\" exists: \(list). It may belong to another session: \(advice) details.matching shows it; details.existing lists the tallies that exist."
+                : "tallies whose names start with \"\(name)-\" exist: \(list). They may belong to other sessions: \(advice) details.matching shows them; details.existing lists the tallies that exist."
         }
         var details: JSONObject = ["name": .string(name)]
         if !matching.isEmpty {

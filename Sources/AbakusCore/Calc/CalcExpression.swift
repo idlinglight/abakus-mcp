@@ -107,9 +107,12 @@ extension CalcExpression {
 
     /// The expression as it was understood, the response's `read`: numbers in plain notation (`410k` as 410000),
     /// operators in ASCII with a space on either side, parentheses around every binary operation except the
-    /// outermost one (and the outermost one of each function argument), `-x` or `-(…)` for a negation. Parsing
-    /// it again gives the same tree, positions and literals aside, as long as it stays within the parser's limits:
-    /// the parentheses of a long chain of one operator can nest deeper than 64 and make it longer than 1000.
+    /// outermost one (and the outermost one of each function argument) and except along a chain of `+` or of `*`,
+    /// `-x` or `-(…)` for a negation. A chain stays flat only where the reading cannot differ: `1 + 2 + 3` and
+    /// `2 * 3 * 4`, whose left operand has the same operator, but `1 + (2 + 3)`, `(1 - 2) + 3` and `(8 / 4) * 2`.
+    /// Parsing it again gives the same tree, positions and literals aside, as long as it stays within the parser's
+    /// limits: the parentheses of a long chain of `-` or `/` can nest deeper than 64, and the spaces around the
+    /// operators can make it longer than 1000 characters.
     var rendered: String {
         fold { (expression, parts: [String]) -> String in
             switch expression.node {
@@ -122,6 +125,12 @@ extension CalcExpression {
                 return "-" + Self.asOperand(parts[0], operand)
             case .binary(let op, let left, let right):
                 var lhs = Self.asOperand(parts[0], left)
+                // `a + b + c` parses as `(a + b) + c`, and either grouping has the same value, so a left operand with
+                // the same operator needs no parentheses in a chain of + or *; a right one keeps them, to show the
+                // reading, and `-` and `/` keep them on both sides.
+                if op == .add || op == .multiply, case .binary(op, _, _) = left.node {
+                    lhs = parts[0]
+                }
                 // `-2 ^ 2` reads as -(2 ^ 2), so a negated base of a power keeps its parentheses.
                 if op == .power, case .negation = left.node {
                     lhs = "(" + lhs + ")"

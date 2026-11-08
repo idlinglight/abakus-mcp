@@ -28,21 +28,25 @@ expect() {
   fi
 }
 
-# MCP, legacy era: initialize, then the tools, as a client that negotiated 2025-11-25 sees them
+# MCP, legacy era: initialize, then the tools, as a client that negotiated 2025-11-25 sees them; a shared tally
+# "requests" for calc to read, here and in the modern era
 responses=$(printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"check","version":"0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
   '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"sum","arguments":{"numbers":[0.1,0.2]}}}' \
   '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"tally_add","arguments":{"name":"missing"}}}' \
+  '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"tally_create","arguments":{"name":"requests","shared":true}}}' \
+  '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"tally_add","arguments":{"name":"requests","amount":1250}}}' \
+  '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"calc","arguments":{"expression":"37 / {requests} * 100"}}}' \
   | $abakus mcp 2>>$stderr_log)
-expect "mcp legacy: four responses, none for the notification" '. == null' \
-  "$(print -r -- "$responses" | jq -s 'if length == 4 then null else length end')"
+expect "mcp legacy: seven responses, none for the notification" '. == null' \
+  "$(print -r -- "$responses" | jq -s 'if length == 7 then null else length end')"
 expect "mcp legacy: initialize negotiates 2025-11-25 and sends instructions" \
-  '.result.protocolVersion == "2025-11-25" and (.result.instructions | contains("shared: true") and (contains("unique") | not))' \
+  '.result.protocolVersion == "2025-11-25" and (.result.instructions | contains("shared: true") and contains("calc") and (contains("unique") | not))' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 1)')"
-expect "mcp legacy: tools/list has all seven tools" \
-  '[.result.tools[].name] | sort == ["date_diff","sum","tally_add","tally_create","tally_drop","tally_list","tally_set"]' \
+expect "mcp legacy: tools/list has all eight tools" \
+  '[.result.tools[].name] | sort == ["calc","date_diff","sum","tally_add","tally_create","tally_drop","tally_list","tally_set"]' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 2)')"
 expect "mcp legacy: sum of 0.1 and 0.2 is exactly 0.3" \
   '.result.structuredContent.total == 0.3 and (.result.content[0].text | contains("\"total\":0.3"))' \
@@ -50,12 +54,19 @@ expect "mcp legacy: sum of 0.1 and 0.2 is exactly 0.3" \
 expect "mcp legacy: a tool error is a result with isError" \
   '.result.isError == true and (.result.content[0].text | test("missing"))' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 4)')"
+expect "mcp legacy: calc reads a tally by name" \
+  '.result.structuredContent == {"result": 2.96, "read": "(37 / {requests}) * 100",
+     "tallies": [{"name": "requests", "of": "value", "value": 1250}]}' \
+  "$(print -r -- "$responses" | jq -c 'select(.id == 7)')"
 
 # MCP, modern era: stateless, version and capabilities in every request's _meta
 meta='"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}'
 responses=$(printf '%s\n' \
   "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\",\"params\":{$meta}}" \
   "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"date_diff\",\"arguments\":{\"from\":\"2026-01-31\",\"to\":\"2026-03-01\"},$meta}}" \
+  "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\",\"params\":{$meta}}" \
+  "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"calc\",\"arguments\":{\"expression\":\"{requests:count} / 3\"},$meta}}" \
+  "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"calc\",\"arguments\":{\"expression\":\"10 / ({requests} - 1250)\"},$meta}}" \
   | $abakus mcp 2>>$stderr_log)
 expect "mcp modern: server/discover lists 2026-07-28 first" \
   '.result.supportedVersions[0] == "2026-07-28" and .result.resultType == "complete"' \
@@ -63,6 +74,16 @@ expect "mcp modern: server/discover lists 2026-07-28 first" \
 expect "mcp modern: date_diff without a handshake" \
   '.result.structuredContent.calendar.months == 1 and .result.structuredContent.calendar.days == 1' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 2)')"
+expect "mcp modern: tools/list has calc, read-only" \
+  '.result.tools | map(select(.name == "calc")) | length == 1 and .[0].annotations.readOnlyHint == true' \
+  "$(print -r -- "$responses" | jq -c 'select(.id == 3)')"
+expect "mcp modern: calc rounds 1/3 once and keeps the fraction" \
+  '.result.structuredContent | .result == 0.333333333333333 and .exact == false and .fraction == "1/3"
+     and .tallies == [{"name": "requests", "of": "count", "value": 1}]' \
+  "$(print -r -- "$responses" | jq -c 'select(.id == 4)')"
+expect "mcp modern: a division by zero in calc says where" \
+  '.result.isError == true and (.result.content[0].text | test("^Division by zero at character 4 of"))' \
+  "$(print -r -- "$responses" | jq -c 'select(.id == 5)')"
 
 # CLI: a tally with a checkpoint every 2 additions and a limit of 5 on the value
 created=$($abakus tally create items --every-count 2 --limit 5)
@@ -88,6 +109,23 @@ expect "cli: tally create --shared uses the name exactly" '.name == "build-error
 message=$($abakus tally create build-errors --shared 2>&1)
 expect "cli: creating an existing shared tally fails with exit 1 and shows it" \
   '.status == 1 and (.message | test("already exists")) and (.message | test("coordinating"))' \
+  "$(jq -n --argjson status $? --arg message "$message" '{status: $status, message: $message}')"
+
+# CLI: calc, over this tally and the one from the MCP checks
+$abakus tally add build-errors 18 >/dev/null
+expect "cli: calc works out 1/3*3 exactly" '.result == 1 and (has("exact") | not)' "$($abakus calc '1/3*3')"
+expect "cli: calc reads tallies in a quoted expression" \
+  '.result == 1.44 and (.tallies | map(.name)) == ["build-errors", "requests"]' \
+  "$($abakus calc '{build-errors} / {requests} * 100')"
+expect "cli: calc takes a leading minus as part of the expression" '.result == -4 and .read == "-(2 ^ 2)"' \
+  "$($abakus calc -2^2)"
+message=$($abakus calc '{nope} + 1' 2>&1)
+expect "cli: calc with an unknown tally fails with exit 1 and computes nothing" \
+  '.status == 1 and (.message | test("no tally named \"nope\"")) and (.message | test("Nothing was computed"))' \
+  "$(jq -n --argjson status $? --arg message "$message" '{status: $status, message: $message}')"
+message=$($abakus calc 2>&1)
+expect "cli: calc without an expression is a usage error" \
+  '.status == 64 and (.message | test("quoted"))' \
   "$(jq -n --argjson status $? --arg message "$message" '{status: $status, message: $message}')"
 
 # CLI: sum from arguments (number strings, a negative number) and from stdin
