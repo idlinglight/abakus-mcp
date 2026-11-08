@@ -24,14 +24,65 @@ public enum JSONReader {
     }
 
     /// Whether `text` is a JSON number literal, e.g. `-0.5` or `2.5e3`, but not `01`, `.5`, `1.` or `+1`.
+    /// Works on the string's UTF-8 view directly and allocates nothing.
     public static func isNumberLiteral(_ text: String) -> Bool {
-        var parser = Parser(bytes: Array(text.utf8), maxDepth: 0)
-        do {
-            _ = try parser.number()
-        } catch {
-            return false
+        let utf8 = text.utf8
+        guard case .end(let end) = scanNumber(utf8, from: utf8.startIndex) else { return false }
+        return end == utf8.endIndex
+    }
+
+    /// The whitespace JSON allows between tokens: space, tab, line feed, carriage return.
+    package static func isWhitespace(_ byte: UInt8) -> Bool {
+        byte == 0x20 || byte == 0x09 || byte == 0x0A || byte == 0x0D
+    }
+
+    enum NumberScan<Index> {
+        /// A complete literal ends before this index.
+        case end(Index)
+        /// The byte at this index (or the end of input) breaks the grammar.
+        case failure(NumberGrammarError, Index)
+    }
+
+    enum NumberGrammarError {
+        case missingDigit(where: String)
+        case leadingZero
+
+        func reason(found: String) -> String {
+            switch self {
+            case .missingDigit(let place): "expected a digit \(place), found \(found)"
+            case .leadingZero: "a number must not start with 0 followed by more digits"
+            }
         }
-        return parser.atEnd
+    }
+
+    /// Scans the JSON number grammar, `-? (0 | [1-9][0-9]*) (.[0-9]+)? ([eE][+-]?[0-9]+)?`, starting at `start`.
+    /// The one implementation of the grammar, for the reader and for `isNumberLiteral`.
+    static func scanNumber<Bytes: Collection<UInt8>>(_ bytes: Bytes, from start: Bytes.Index) -> NumberScan<Bytes.Index> {
+        var index = start
+        func current() -> UInt8? { index < bytes.endIndex ? bytes[index] : nil }
+        func isDigit(_ byte: UInt8?) -> Bool { byte.map { $0 >= UInt8(ascii: "0") && $0 <= UInt8(ascii: "9") } ?? false }
+        func skipDigits() { while isDigit(current()) { bytes.formIndex(after: &index) } }
+
+        if current() == UInt8(ascii: "-") { bytes.formIndex(after: &index) }
+        guard let first = current(), isDigit(first) else { return .failure(.missingDigit(where: "in a number"), index) }
+        bytes.formIndex(after: &index)
+        if first == UInt8(ascii: "0") {
+            if isDigit(current()) { return .failure(.leadingZero, index) }
+        } else {
+            skipDigits()
+        }
+        if current() == UInt8(ascii: ".") {
+            bytes.formIndex(after: &index)
+            guard isDigit(current()) else { return .failure(.missingDigit(where: "after the decimal point"), index) }
+            skipDigits()
+        }
+        if current() == UInt8(ascii: "e") || current() == UInt8(ascii: "E") {
+            bytes.formIndex(after: &index)
+            if current() == UInt8(ascii: "+") || current() == UInt8(ascii: "-") { bytes.formIndex(after: &index) }
+            guard isDigit(current()) else { return .failure(.missingDigit(where: "in the exponent"), index) }
+            skipDigits()
+        }
+        return .end(index)
     }
 }
 
@@ -86,7 +137,7 @@ private struct Parser {
     }
 
     mutating func skipWhitespace() {
-        while let byte = current, byte == 0x20 || byte == 0x09 || byte == 0x0A || byte == 0x0D {
+        while let byte = current, JSONReader.isWhitespace(byte) {
             index += 1
         }
     }
@@ -127,7 +178,7 @@ private struct Parser {
             depth -= 1
             return .object(JSONObject())
         }
-        var pairs: [(String, JSONValue)] = []
+        var entries: [(key: String, value: JSONValue)] = []
         var seen = Set<String>()
         while true {
             skipWhitespace()
@@ -139,7 +190,7 @@ private struct Parser {
             guard current == UInt8(ascii: ":") else { throw failure("expected \":\" after an object key, found \(found)") }
             index += 1
             skipWhitespace()
-            pairs.append((key, try value()))
+            entries.append((key, try value()))
             skipWhitespace()
             switch current {
             case UInt8(ascii: ","):
@@ -147,7 +198,7 @@ private struct Parser {
             case UInt8(ascii: "}"):
                 index += 1
                 depth -= 1
-                return .object(JSONObject(pairs))
+                return .object(JSONObject(uniqueEntries: entries))
             default:
                 throw failure("expected \",\" or \"}\" in an object, found \(found)")
             }
@@ -270,35 +321,13 @@ private struct Parser {
     /// Scans a number literal at the current position and returns its text unchanged.
     mutating func number() throws(JSONReadError) -> String {
         let start = index
-        if current == UInt8(ascii: "-") { index += 1 }
-        switch current {
-        case UInt8(ascii: "0"):
-            index += 1
-            if let byte = current, isDigit(byte) { throw failure("a number must not start with 0 followed by more digits") }
-        case let byte? where isDigit(byte):
-            skipDigits()
-        default:
-            throw failure("expected a digit in a number, found \(found)")
+        switch JSONReader.scanNumber(bytes, from: start) {
+        case .end(let end):
+            index = end
+            return String(decoding: bytes[start..<end], as: UTF8.self)
+        case .failure(let error, let position):
+            index = position
+            throw failure(error.reason(found: found))
         }
-        if current == UInt8(ascii: ".") {
-            index += 1
-            guard let byte = current, isDigit(byte) else { throw failure("expected a digit after the decimal point, found \(found)") }
-            skipDigits()
-        }
-        if current == UInt8(ascii: "e") || current == UInt8(ascii: "E") {
-            index += 1
-            if current == UInt8(ascii: "+") || current == UInt8(ascii: "-") { index += 1 }
-            guard let byte = current, isDigit(byte) else { throw failure("expected a digit in the exponent, found \(found)") }
-            skipDigits()
-        }
-        return String(decoding: bytes[start..<index], as: UTF8.self)
-    }
-
-    func isDigit(_ byte: UInt8) -> Bool {
-        byte >= UInt8(ascii: "0") && byte <= UInt8(ascii: "9")
-    }
-
-    mutating func skipDigits() {
-        while let byte = current, isDigit(byte) { index += 1 }
     }
 }

@@ -112,6 +112,25 @@ import Testing
         #expect(throws: JSONReadError.self) { try JSONReader.read(text) }
     }
 
+    @Test func largeObjectsReadInLinearTime() throws {
+        let count = 100_000
+        let text = "{" + (0..<count).map { "\"k\($0)\":\($0)" }.joined(separator: ",") + "}"
+        var value: JSONValue = nil
+        let elapsed = try ContinuousClock().measure { value = try JSONReader.read(text) }
+        let object = try #require(value.objectValue)
+        #expect(object.count == count)
+        #expect(object.keys.first == "k0")
+        #expect(object.keys.last == "k99999")
+        #expect(object["k99999"] == 99999)
+        // Quadratic object building took minutes for this input.
+        #expect(elapsed < .seconds(5), "reading took \(elapsed)")
+    }
+
+    @Test func whitespaceIsTheFourJSONCharacters() {
+        let whitespace = (UInt8.min...UInt8.max).filter(JSONReader.isWhitespace)
+        #expect(whitespace == [0x09, 0x0A, 0x0D, 0x20])
+    }
+
     @Test func nestingUpToTheLimitIsAccepted() throws {
         let depth = JSONReader.defaultMaxDepth
         let text = String(repeating: "[", count: depth) + String(repeating: "]", count: depth)
