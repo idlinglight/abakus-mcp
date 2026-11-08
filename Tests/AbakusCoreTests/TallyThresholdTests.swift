@@ -99,6 +99,17 @@ extension String {
         #expect(try period.status(of: tally(value: low))["exact"] == false)
     }
 
+    /// Rounding the quotient to 38 digits first would give 2e37, one above the true floor.
+    @Test func multiplesAreTheFloorOfTheExactQuotient() throws {
+        let x = TallyTest.decimal("39999999999999999999999999999999999999")
+        #expect(try Threshold.multiples(upTo: x, of: 2) == TallyTest.decimal("19999999999999999999999999999999999999"))
+        let period = Threshold(.every(2))
+        let below = TallyTest.decimal("39999999999999999999999999999999999998")
+        let crossing = try period.crossing(from: tally(value: below.description), to: tally(value: x.description))
+        #expect(crossing == nil)  // 4e37 is the next mark, not reached
+        #expect(try period.status(of: tally(value: x.description))["next"] == .number("40000000000000000000000000000000000000"))
+    }
+
     @Test func everyMarksArePositiveMultiples() throws {
         let period = Threshold(.every(5))
         #expect(try crossing(period, "-12", "-1") == nil)

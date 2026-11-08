@@ -17,7 +17,7 @@ struct TallyCreate: Tool {
         own work, pass unique: true, which appends a random suffix (items becomes items-k3f9), and use the \
         returned name from then on. Optional thresholds watch the value (default) or the count: limit (a ceiling), \
         at (marks), every (a period); they inform and never block. Fails if the name exists. Returns the new \
-        tally's state. \(TallySchema.numbersSentence)
+        tally's state. \(NumberReader.rulesSummary)
         """
 
     let inputSchema: JSONValue = [
@@ -30,7 +30,7 @@ struct TallyCreate: Tool {
                 "description": "Append a random suffix (items becomes items-k3f9) and return the name to use. Use it when counting your own work.",
             ],
             "thresholds": TallySchema.thresholds,
-            "decimal": TallySchema.decimal,
+            "decimal": DecimalMark.schema,
         ],
         "required": ["name"],
         "additionalProperties": false,
@@ -72,7 +72,7 @@ struct TallyAdd: Tool {
         count, added, crossed (what this addition reached or passed: marks of at and every, a limit reached for \
         the first time; [] if nothing) and thresholds with their status (a limit says reached plus remaining or \
         over, in every response). Thresholds never block. Negative amounts subtract. \
-        \(TallySchema.numbersSentence) A string's reading is shown under read. An unknown name is an error, never \
+        \(NumberReader.rulesSummary) A string's reading is shown under read. An unknown name is an error, never \
         a new tally: the name may be misspelled or expired (unchanged for about three days); tally_list shows \
         what exists.
         """
@@ -85,7 +85,7 @@ struct TallyAdd: Tool {
                 "What to add, default 1. Negative subtracts. A JSON number or a string like \"410k\" or \"1,234.5\".",
                 default: 1
             ),
-            "decimal": TallySchema.decimal,
+            "decimal": DecimalMark.schema,
         ],
         "required": ["name"],
         "additionalProperties": false,
@@ -137,7 +137,7 @@ struct TallySet: Tool {
     let description = """
         Correct a tally: set its value and/or count, or replace its thresholds (an empty list removes them). For \
         fixing a miscount or changing a budget; normal counting is tally_add. Reports no crossings; returns the \
-        full state. \(TallySchema.numbersSentence) An unknown name is an error.
+        full state. \(NumberReader.rulesSummary) An unknown name is an error.
         """
 
     let inputSchema: JSONValue = [
@@ -151,7 +151,7 @@ struct TallySet: Tool {
                 "description": "The new count of additions, a whole number, 0 or more.",
             ],
             "thresholds": TallySchema.thresholds,
-            "decimal": TallySchema.decimal,
+            "decimal": DecimalMark.schema,
         ],
         "required": ["name"],
         "additionalProperties": false,
@@ -290,11 +290,9 @@ struct TallyDrop: Tool {
 
 // MARK: - Schema parts
 
+/// Schema parts of the tally tools. Number strings and `decimal` use `NumberReader.rulesSummary` and
+/// `DecimalMark.schema`, so every tool describes and reads them the same way.
 enum TallySchema {
-    static let numbersSentence = """
-        Numbers are JSON numbers or strings like "410k" or "1,234.5" (with decimal: "," for a decimal comma).
-        """
-
     static let namePattern = "^[a-z0-9][a-z0-9._-]{0,63}$"
 
     static let name: JSONValue = [
@@ -307,13 +305,6 @@ enum TallySchema {
         "type": "string",
         "pattern": .string(namePattern),
         "description": "The tally's name as tally_create returned it, including any suffix.",
-    ]
-
-    static let decimal: JSONValue = [
-        "type": "string",
-        "enum": [".", ","],
-        "default": ".",
-        "description": "The decimal mark in number strings. With \",\", \"1.234,5\" is 1234.5.",
     ]
 
     static func number(_ description: String, default value: JSONValue? = nil) -> JSONValue {

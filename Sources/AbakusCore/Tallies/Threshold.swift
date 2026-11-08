@@ -121,7 +121,7 @@ extension Threshold {
             }
         }
         let threshold = Threshold(rule, of: of)
-        if of == .count, !threshold.numbers.allSatisfy(\.isWhole) {
+        if of == .count, !threshold.numbers.allSatisfy(DecimalMath.isInteger) {
             throw ToolError("\(label) watches the count, which is a whole number of additions, so its numbers must be whole numbers too.")
         }
         return threshold
@@ -242,34 +242,10 @@ extension Threshold {
     }
 
     /// How many of the marks `period`, 2·`period`, ... are at most `x`: floor(x / period), and 0 below `period`.
+    /// The floor of the exact quotient: rounding the quotient to 38 digits first could put it one too high
+    /// (39999999999999999999999999999999999999 / 2 would round to 2e37).
     static func multiples(upTo x: Decimal, of period: Decimal) throws(ToolError) -> Decimal {
         guard x >= period else { return 0 }
-        let quotient = try DecimalMath.divide(x, period).value.roundedDown
-        // The quotient is rounded to 38 digits, which can put its floor one off either way. One correction
-        // suffices, and there is no loop: near 10^38, adding 1 may not change the number at all.
-        if try DecimalMath.multiply(quotient, period).value > x {
-            return try DecimalMath.subtract(quotient, 1).value
-        }
-        let above = try DecimalMath.add(quotient, 1).value
-        if try DecimalMath.multiply(above, period).value <= x {
-            return above
-        }
-        return quotient
-    }
-}
-
-// fileprivate, so these never clash with helpers other areas add to Decimal.
-extension Decimal {
-    /// Rounded toward negative infinity to a whole number.
-    fileprivate var roundedDown: Decimal {
-        var source = self, result = Decimal()
-        NSDecimalRound(&result, &source, 0, .down)
-        return result
-    }
-
-    fileprivate var isWhole: Bool {
-        var source = self, result = Decimal()
-        NSDecimalRound(&result, &source, 0, .plain)
-        return result == self
+        return try DecimalMath.divide(x, period, toPlaces: 0, .down).value
     }
 }

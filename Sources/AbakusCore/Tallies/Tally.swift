@@ -158,13 +158,14 @@ extension Tally {
         sentence.hasSuffix(".") ? String(sentence.dropLast()) : sentence
     }
 
-    /// Decimals in files are written by `Decimal.description`: plain notation, `.` as the decimal mark.
+    /// Decimals in files are written by `Decimal.description`: plain notation, `.` as the decimal mark, which is
+    /// a JSON number literal. They are read back exactly, by the rules arguments follow; a stored value that
+    /// does not read (malformed, more than 38 significant digits, out of range) makes the file unreadable.
     private static func decimal(_ text: String) throws(ToolError) -> Decimal {
-        guard text.wholeMatch(of: /-?[0-9]+(\.[0-9]+)?/) != nil,
-              let value = Decimal(string: text, locale: Locale(identifier: "en_US_POSIX"))
-        else {
-            throw ToolError("it holds \"\(text)\" where a number belongs")
+        do throws(ToolError) {
+            return try NumberReader.read(.number(text))
+        } catch {
+            throw ToolError("it holds \"\(text)\" where a number belongs (\(clause(error.message)))")
         }
-        return value
     }
 }

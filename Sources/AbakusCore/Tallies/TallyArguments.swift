@@ -47,14 +47,7 @@ struct TallyArguments {
             )
         }
         self.raw = raw
-        var mark = DecimalMark.point
-        if let value = raw["decimal"], !value.isNull {
-            guard let text = value.stringValue, let given = DecimalMark(rawValue: text) else {
-                throw ToolError("decimal must be \".\" or \",\": the mark between the integer part and the fraction in number strings. Leave it out for \".\".")
-            }
-            mark = given
-        }
-        numbers = NumberReading(decimal: mark)
+        numbers = NumberReading(decimal: try DecimalMark.argument(raw["decimal"]))  // read as every tool reads it
     }
 
     subscript(key: String) -> JSONValue? {

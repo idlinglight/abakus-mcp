@@ -74,7 +74,7 @@ enum TallyTest {
     }
 
     static func decimal(_ text: String) -> Decimal {
-        Decimal(string: text, locale: Locale(identifier: "en_US_POSIX"))!
+        try! NumberReader.read(.number(text))  // exact, unlike Decimal(string:), which truncates past 38 digits
     }
 
     /// The `name` of each object in the array under `key`.

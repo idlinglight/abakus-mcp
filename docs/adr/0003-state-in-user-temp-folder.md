@@ -31,7 +31,8 @@ folder whatever the environment says.
   collisions visible).
 - The file carries a `format` version (currently 1) and keeps every decimal as a JSON string
   (`"value": "2490123.5"`), so no binary floating point is involved on the way to disk and back
-  ([ADR-0005](0005-numbers.md)). A file in a newer format is refused and left alone, never overwritten.
+  ([ADR-0005](0005-numbers.md)); they are read back exactly by `NumberReader`, never truncated. A file in a
+  newer format is refused and left alone, never overwritten.
 - Every change is a read-modify-write under an exclusive lock: `flock` on the `tallies/` folder itself,
   through a read-only descriptor of the directory, one lock for all tallies. Reads take the same lock shared.
   There is no lock file: nothing would ever write to one, so `dirhelper` could delete it after three days

@@ -141,7 +141,12 @@ import Testing
         let mark = try #require(state.failure("tally_add", ["name": "items", "amount": "1", "decimal": ";"]))
         #expect(mark.message.contains("decimal must be"))
         let unreadable = try #require(state.failure("tally_add", ["name": "items", "amount": "lots"]))
-        #expect(unreadable.message.hasPrefix("amount:"))
+        // NumberReader's own wording and details, labelled with the argument.
+        #expect(unreadable.message.hasPrefix("amount: Cannot read \"lots\" as a number"))
+        #expect(unreadable.details?["input"] == "lots")
+        let tooPrecise = try #require(state.failure("tally_add", ["name": "items", "amount": "1234567890123456789012345678901234567891"]))
+        #expect(tooPrecise.message.hasPrefix("amount: Cannot read"))
+        #expect(tooPrecise.message.contains("significant digits"))
         #expect(try state.call("tally_list")["tallies"]?.arrayValue?.first?.objectValue?["count"] == 0)  // all refused
         #expect(try state.call("tally_add", ["name": "items", "amount": 1, "decimal": ","])["value"] == 1)
         #expect(try state.call("tally_add", ["name": "items", "amount": nil])["value"] == 2)  // null counts as absent
@@ -411,7 +416,10 @@ import Testing
         (file(format: "0"), "invalid file format version (0)"),
         (file(format: "-1"), "invalid file format version (-1)"),
         (file(value: "1"), "damaged"),
-        (file(value: #""1e3""#), "where a number belongs"),
+        (file(value: #""12abc""#), "where a number belongs"),
+        (file(value: #""1,5""#), "where a number belongs"),
+        (file(value: #""1234567890123456789012345678901234567891""#), "significant digits"),  // never truncated
+        (file(thresholds: #"[{"limit": "1e999", "of": "value"}]"#), "where a number belongs"),
         (file(count: "-1"), "invalid count (count must be a whole number, 0 or more"),
         (file(thresholds: #"[{"of": "value"}]"#), "without exactly one of limit, at and every"),
         (file(thresholds: #"[{"limit": "1", "every": "2", "of": "value"}]"#), "without exactly one of limit, at and every"),
@@ -473,7 +481,8 @@ import Testing
 
     @Test func toolsThatTakeNumbersSayHowTheyAreRead() {
         for tool in TallyTools.all where ["tally_create", "tally_add", "tally_set"].contains(tool.name) {
-            #expect(tool.description.contains(#""410k" or "1,234.5" (with decimal: "," for a decimal comma)"#), "\(tool.name)")
+            #expect(tool.description.contains(NumberReader.rulesSummary), "\(tool.name)")
+            #expect(tool.inputSchema.objectValue?["properties"]?.objectValue?["decimal"] == DecimalMark.schema, "\(tool.name)")
         }
     }
 }
