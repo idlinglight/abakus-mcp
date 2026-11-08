@@ -22,8 +22,8 @@ struct Fraction: Sendable, Equatable, Comparable, CustomStringConvertible {
     static let digitLimit = 2000
     /// The exponents `raised(to:)` accepts.
     static let exponentRange = -9999...9999
-    /// The places `rounded(toPlaces:)` accepts, as in `DecimalMath.rounded(_:toPlaces:_:)`.
-    static let placesRange = -165...128
+    /// The places `rounded(toPlaces:)` accepts, -165 to 128, the same as in `DecimalMath.rounded(_:toPlaces:_:)`.
+    static let placesRange = DecimalMath.placesRange
     /// `decimalResult()` gives the exact value as text only while numerator and denominator have at most this many
     /// digits each.
     static let fractionTextDigitLimit = 100
@@ -31,8 +31,6 @@ struct Fraction: Sendable, Equatable, Comparable, CustomStringConvertible {
     /// 10^digitLimit, the smallest number with too many digits.
     private static let smallestTooLong = BigUInt.powerOfTen(digitLimit)
     private static let fractionTextLimit = BigUInt.powerOfTen(fractionTextDigitLimit)
-    /// 10^165: a result this large or larger is an overflow (ADR-0005).
-    private static let overflowLimit = BigUInt.powerOfTen(165)
 
     static let zero = Fraction(reduced: false, .zero, .one)
     static let one = Fraction(1)
@@ -96,9 +94,10 @@ struct Fraction: Sendable, Equatable, Comparable, CustomStringConvertible {
         return range.contains(value) ? value : nil
     }
 
-    /// `numerator/denominator` with a leading `-` below zero: `-1/3`, `5/1`, `0/1`.
+    /// The exact value as text, with a leading `-` below zero: `numerator/denominator` (`-1/3`), or only the digits
+    /// of a whole number (`-5`, `0`).
     var description: String {
-        (negative ? "-" : "") + numerator.description + "/" + denominator.description
+        (negative ? "-" : "") + numerator.description + (isWholeNumber ? "" : "/" + denominator.description)
     }
 
     // MARK: Arithmetic
@@ -250,8 +249,9 @@ struct Fraction: Sendable, Equatable, Comparable, CustomStringConvertible {
         var value: Decimal
         /// False when `value` had to be rounded.
         var exact: Bool
-        /// The exact value as `numerator/denominator` (`"-1/3"`), when `value` was rounded and both parts have at
-        /// most `fractionTextDigitLimit` digits; nil otherwise.
+        /// The exact value, when `value` was rounded and numerator and denominator have at most
+        /// `fractionTextDigitLimit` digits each: `numerator/denominator` (`"-1/3"`), or only the digits of a whole
+        /// number, which is rounded when it has more than 38 digits (2^200 gives `"1606938…1376"`); nil otherwise.
         var fraction: String?
     }
 
@@ -262,16 +262,18 @@ struct Fraction: Sendable, Equatable, Comparable, CustomStringConvertible {
     func decimalResult() throws(FractionError) -> DecimalResult {
         if isZero { return DecimalResult(value: 0, exact: true, fraction: nil) }
         // Settled without dividing: the rounding below would come to the same, after a long division.
-        guard numerator < denominator * Self.overflowLimit else { throw .overflow }
-        let rounded: ExactDecimal.Rounded
+        guard numerator < denominator * ExactDecimal.overflowLimit else { throw .overflow }
+        let rounded: DecimalMath.Result
         do {
-            rounded = try ExactDecimal(negative: negative, magnitude: numerator, exponent: 0)
-                .rounded(dividingBy: denominator, .readable)
+            rounded = try DecimalMath.roundedResult(
+                ExactDecimal(negative: negative, magnitude: numerator, exponent: 0), dividingBy: denominator, .readable
+            )
         } catch {
-            // `.readable` keeps at most 38 digits, so overflow is the only range error left.
-            throw .overflow
+            switch error {
+            case .overflow: throw .overflow
+            case .underflow: throw .underflow
+            }
         }
-        if rounded.underflow { throw .underflow }
         let short = numerator < Self.fractionTextLimit && denominator < Self.fractionTextLimit
         return DecimalResult(
             value: rounded.value, exact: rounded.exact, fraction: rounded.exact || !short ? nil : description

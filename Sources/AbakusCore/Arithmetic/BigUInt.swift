@@ -72,16 +72,9 @@ struct BigUInt: Sendable, Equatable, Comparable, CustomStringConvertible {
     /// `lhs - rhs`; `lhs` must not be smaller than `rhs`.
     static func - (lhs: BigUInt, rhs: BigUInt) -> BigUInt {
         precondition(lhs >= rhs, "BigUInt subtraction below zero")
-        var result = lhs.limbs
-        var borrow: UInt64 = 0
-        for i in 0..<result.count {
-            let b = i < rhs.limbs.count ? rhs.limbs[i] : 0
-            let (partial, overflow1) = result[i].subtractingReportingOverflow(b)
-            let (difference, overflow2) = partial.subtractingReportingOverflow(borrow)
-            result[i] = difference
-            borrow = (overflow1 ? 1 : 0) + (overflow2 ? 1 : 0)
-        }
-        return BigUInt(limbs: result)
+        var result = lhs
+        result.subtract(rhs)
+        return result
     }
 
     func multiplied(by other: BigUInt) -> BigUInt {
@@ -221,9 +214,9 @@ struct BigUInt: Sendable, Equatable, Comparable, CustomStringConvertible {
         var (u, v) = a >= b ? (a, b) : (b, a)
         if v.isZero { return u }
         if v.limbs.count == 1 {
-            // The common case of a small denominator: one fast division, then 64-bit numbers.
+            // The common case of a small denominator: one pass for the remainder, then 64-bit numbers.
             var x = v.limbs[0]
-            var y = u.quotientAndRemainder(dividingBy: x).remainder
+            var y = u.remainder(dividingBy: x)
             while y != 0 { (x, y) = (y, x % y) }
             return BigUInt(x)
         }
@@ -251,6 +244,16 @@ struct BigUInt: Sendable, Equatable, Comparable, CustomStringConvertible {
 
     static func powerOfTwo(_ exponent: Int) -> BigUInt {
         BigUInt(limbs: [UInt64](repeating: 0, count: exponent / 64) + [1 << UInt64(exponent % 64)])
+    }
+
+    /// `self % divisor` for a single limb, without building the quotient.
+    private func remainder(dividingBy divisor: UInt64) -> UInt64 {
+        precondition(divisor != 0, "BigUInt division by zero")
+        var remainder: UInt64 = 0
+        for limb in limbs.reversed() {
+            remainder = divisor.dividingFullWidth((high: remainder, low: limb)).remainder
+        }
+        return remainder
     }
 
     /// `self -= other` in place; `self` must not be smaller.

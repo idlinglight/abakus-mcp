@@ -109,11 +109,15 @@ public enum NumberReader {
         var text: String {
             switch self {
             case .format(let problem): problem
-            case .tooLarge: "it is too large for exact decimal arithmetic, which holds magnitudes below 10^165."
+            case .tooLarge:
+                "it is too large for exact decimal arithmetic, which holds magnitudes below "
+                    + "10^\(ExactDecimal.overflowExponent)."
             case .tooManyDigits(let count):
-                "it has \(count) significant digits; exact decimal arithmetic holds 38, and abakus does not round input."
+                "it has \(count) significant digits; exact decimal arithmetic holds \(ExactDecimal.precision), and "
+                    + "abakus does not round input."
             case .tooSmall:
-                "it has digits below 10^-128, the smallest step exact decimal arithmetic holds; abakus does not round input."
+                "it has digits below 10^\(ExactDecimal.minimumExponent), the smallest step exact decimal arithmetic "
+                    + "holds; abakus does not round input."
             }
         }
     }
@@ -338,7 +342,7 @@ public enum NumberReader {
             exponent += 1
         }
         // The leading digit stands for 10^(count + exponent - 1).
-        if digits.count + exponent - 1 >= 165 { throw .tooLarge }
+        if digits.count + exponent - 1 >= ExactDecimal.overflowExponent { throw .tooLarge }
         if digits.count > ExactDecimal.precision { throw .tooManyDigits(digits.count) }
         if exponent < ExactDecimal.minimumExponent { throw .tooSmall }
         let value = ExactDecimal(negative: parts.negative, magnitude: BigUInt(digits: digits), exponent: exponent)

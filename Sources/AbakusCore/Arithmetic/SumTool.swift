@@ -83,8 +83,8 @@ public struct SumTool: Tool {
             } catch {
                 // Only an underflow is possible: the mean is never larger than the total.
                 throw ToolError(
-                    "The mean, \(total.value) / \(values.count), is below 10^-128, too close to zero for exact decimal "
-                        + "arithmetic. The total itself is \(total.exact ? "exact" : "rounded"): \(total.value)."
+                    "The mean, \(total.value) / \(values.count), is below 10^\(ExactDecimal.minimumExponent), too close "
+                        + "to zero for exact decimal arithmetic. The total itself is \(total.exact ? "exact" : "rounded"): \(total.value)."
                 )
             }
             result["mean"] = .decimal(mean.value)

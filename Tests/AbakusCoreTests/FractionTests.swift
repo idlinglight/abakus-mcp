@@ -54,15 +54,15 @@ private func big(_ digits: String) -> BigUInt {
 
     @Test func partsAreAlwaysReduced() throws {
         #expect(q("6/8").description == "3/4")
-        #expect(q("5.000").description == "5/1")
+        #expect(q("5.000").description == "5")
         #expect(q("0.250").description == "1/4")
-        #expect(q("2.5e3").description == "2500/1")
+        #expect(q("2.5e3").description == "2500")
         #expect(q("-1.2e-5").description == "-3/250000")
         // A Decimal whose significand carries trailing zeros: 5000 × 10^-3.
         let unnormalized = Decimal(
             _exponent: -3, _length: 1, _isNegative: 1, _isCompact: 0, _reserved: 0, _mantissa: (5000, 0, 0, 0, 0, 0, 0, 0)
         )
-        #expect(try Fraction(unnormalized).description == "-5/1")
+        #expect(try Fraction(unnormalized).description == "-5")
         #expect(try (q("1/6") + q("1/3")).description == "1/2")
         #expect(try (q("5/6") - q("1/3")).description == "1/2")
         #expect(try (q("4/9") * q("3/8")).description == "1/6")
@@ -82,7 +82,7 @@ private func big(_ digits: String) -> BigUInt {
         #expect(try q("-1/3") - q("1/2") == q("-5/6"))
         #expect(q("-2/3").magnitude == q("2/3"))
         #expect(q("2/3").magnitude == q("2/3"))
-        #expect(Fraction(Int.min).description == "-9223372036854775808/1")
+        #expect(Fraction(Int.min).description == "-9223372036854775808")
     }
 
     @Test func zeroHasOneRepresentation() throws {
@@ -137,10 +137,10 @@ private func big(_ digits: String) -> BigUInt {
     // MARK: Powers
 
     @Test(arguments: [
-        ("2", 10, "1024/1"), ("2/3", 3, "8/27"), ("2/3", -3, "27/8"), ("-2", 3, "-8/1"), ("-2", 2, "4/1"),
-        ("-1/2", -3, "-8/1"), ("-1/2", -2, "4/1"), ("0.1", 3, "1/1000"), ("0.1", -3, "1000/1"),
-        ("5", 0, "1/1"), ("-5/7", 0, "1/1"), ("0", 0, "1/1"), ("0", 1, "0/1"), ("0", 9999, "0/1"),
-        ("1", 9999, "1/1"), ("-1", 9999, "-1/1"), ("-1", -9998, "1/1"), ("1", -9999, "1/1"),
+        ("2", 10, "1024"), ("2/3", 3, "8/27"), ("2/3", -3, "27/8"), ("-2", 3, "-8"), ("-2", 2, "4"),
+        ("-1/2", -3, "-8"), ("-1/2", -2, "4"), ("0.1", 3, "1/1000"), ("0.1", -3, "1000"),
+        ("5", 0, "1"), ("-5/7", 0, "1"), ("0", 0, "1"), ("0", 1, "0"), ("0", 9999, "0"),
+        ("1", 9999, "1"), ("-1", 9999, "-1"), ("-1", -9998, "1"), ("1", -9999, "1"),
     ])
     func power(base: String, exponent: Int, expected: String) throws {
         #expect(try q(base).raised(to: exponent).description == expected, "\(base)^\(exponent)")
@@ -285,7 +285,7 @@ private func big(_ digits: String) -> BigUInt {
         ("100000000000000000000/3", "33333333333333333333", false, "100000000000000000000/3"),
         // 2^130: a whole number of 40 digits.
         ("1361129467683753853853498429727072845824/1", "13611294676837538538534984297270728458e2", false,
-         "1361129467683753853853498429727072845824/1"),
+         "1361129467683753853853498429727072845824"),
         // A terminating decimal with more than 38 digits is rounded too: 1 + 10^-38.
         ("100000000000000000000000000000000000001/100000000000000000000000000000000000000", "1", false,
          "100000000000000000000000000000000000001/100000000000000000000000000000000000000"),
@@ -308,6 +308,21 @@ private func big(_ digits: String) -> BigUInt {
         #expect(try shortDenominator.decimalResult().fraction == "1/3" + String(repeating: "0", count: 99))
         #expect(try longDenominator.decimalResult().fraction == nil)
         #expect(try longDenominator.decimalResult().value == n("3.33333333333333e-101"))
+    }
+
+    @Test func wholeNumbersAsTextHaveNoDenominator() throws {
+        let twoTo200 = "1606938044258990275541962092341162602522202993782792835301376"
+        let power = try Fraction(2).raised(to: 200)
+        #expect(try power.decimalResult()
+            == .init(value: n("16069380442589902755419620923411626025e23"), exact: false, fraction: twoTo200))
+        #expect(try (-power).decimalResult().fraction == "-" + twoTo200)
+        // The 100-digit rule holds for whole numbers too: 10^100 - 1 has 100 digits, 10^100 + 1 has 101.
+        let hundredNines = try Fraction(numerator: BigUInt.powerOfTen(100) - .one, denominator: .one)
+        let longer = try Fraction(numerator: BigUInt.powerOfTen(100) + .one, denominator: .one)
+        #expect(try hundredNines.decimalResult().fraction == String(repeating: "9", count: 100))
+        #expect(try longer.decimalResult() == .init(value: n("1e100"), exact: false, fraction: nil))
+        #expect(Fraction.zero.description == "0")
+        #expect(Fraction(-7).description == "-7")
     }
 
     @Test func overflowAndUnderflow() throws {

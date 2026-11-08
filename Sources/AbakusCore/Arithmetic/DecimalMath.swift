@@ -34,6 +34,10 @@ public enum DecimalMath {
     /// the totals of `date_diff`).
     public static let readableSignificantDigits = ExactDecimal.readableDigits
 
+    /// The decimal places `rounded(_:toPlaces:_:)` and `divide(_:_:toPlaces:_:)` accept, -165 to 128: from where a
+    /// `Decimal` ends (10^165) down to its smallest step (10^-128).
+    static let placesRange = -ExactDecimal.overflowExponent ... -ExactDecimal.minimumExponent
+
     public static func add(_ a: Decimal, _ b: Decimal) throws(ToolError) -> Result {
         try round(try exact(a) + exact(b))
     }
@@ -78,8 +82,11 @@ public enum DecimalMath {
     /// to 38 digits first. `divide(value, period, toPlaces: 0, .down)` is floor(value / period); `exact` says
     /// whether the quotient was a whole number. A result with more than 38 significant digits is an error.
     public static func divide(_ a: Decimal, _ b: Decimal, toPlaces places: Int, _ mode: RoundingMode) throws(ToolError) -> Result {
-        guard (-165...128).contains(places) else {
-            throw ToolError("Cannot round to \(places) decimal places: abakus rounds to between -165 and 128 places.")
+        guard placesRange.contains(places) else {
+            throw ToolError(
+                "Cannot round to \(places) decimal places: abakus rounds to between \(placesRange.lowerBound) and "
+                    + "\(placesRange.upperBound) places."
+            )
         }
         let (dividend, divisor) = try quotientParts(a, b)
         do {
@@ -128,18 +135,48 @@ public enum DecimalMath {
         return total
     }
 
-    /// Rounds an exact value (divided by `divisor`) into a `Decimal`: the one place where results are rounded, with
-    /// the errors the tools report. `.readable` is the policy for values shown to people (ADR-0005).
+    /// `roundedResult`, with the errors the tools report.
     static func round(
         _ value: ExactDecimal, dividingBy divisor: BigUInt = .one, _ precision: ExactDecimal.Precision = .full
     ) throws(ToolError) -> Result {
+        do {
+            return try roundedResult(value, dividingBy: divisor, precision)
+        } catch {
+            switch error {
+            case .overflow: throw overflow
+            case .underflow: throw underflow
+            }
+        }
+    }
+
+    /// Why an exact value does not fit a `Decimal` result.
+    enum ResultRangeError: Error, Equatable {
+        /// 10^165 or more.
+        case overflow
+        /// Not zero, but 0 when rounded at 10^-128, the smallest step a `Decimal` holds.
+        case underflow
+    }
+
+    /// Rounds an exact value (divided by `divisor`) into a `Decimal`: the one place where results are rounded, for
+    /// `round` above and for `calc`'s fractions, which each turn the range errors into their own. `.readable` is the
+    /// policy for values shown to people (ADR-0005).
+    static func roundedResult(
+        _ value: ExactDecimal, dividingBy divisor: BigUInt = .one, _ precision: ExactDecimal.Precision = .full
+    ) throws(ResultRangeError) -> Result {
         let rounded: ExactDecimal.Rounded
         do {
             rounded = try value.rounded(dividingBy: divisor, precision)
         } catch {
-            throw overflow
+            switch error {
+            case .overflow:
+                throw .overflow
+            case .tooManyDigits:
+                // Both precisions round to 38 significant digits or fewer; a carry to 10^38 leaves a single digit
+                // once its zeros move into the exponent. Only rounding to fixed places can have more.
+                preconditionFailure("Rounding to \(ExactDecimal.precision) significant digits left more digits.")
+            }
         }
-        if rounded.underflow { throw underflow }
+        if rounded.underflow { throw .underflow }
         return Result(value: rounded.value, exact: rounded.exact)
     }
 
@@ -156,6 +193,10 @@ public enum DecimalMath {
         return (scaled, divisor.magnitude)
     }
 
-    static let overflow = ToolError("The result is too large for exact decimal arithmetic (about 10^165 or more).")
-    static let underflow = ToolError("The result is too close to zero for exact decimal arithmetic (below 10^-128).")
+    static let overflow = ToolError(
+        "The result is too large for exact decimal arithmetic (about 10^\(ExactDecimal.overflowExponent) or more)."
+    )
+    static let underflow = ToolError(
+        "The result is too close to zero for exact decimal arithmetic (below 10^\(ExactDecimal.minimumExponent))."
+    )
 }

@@ -96,6 +96,9 @@ struct ExactDecimal: Sendable {
     /// Decimal's exponent range.
     static let minimumExponent = -128
     static let maximumExponent = 127
+    /// 165: 38 digits with the largest exponent stay below 10^165; a value from there on is an overflow.
+    static let overflowExponent = maximumExponent + precision
+    static let overflowLimit = BigUInt.powerOfTen(overflowExponent)
 
     /// Rounds `self / divisor` into a `Decimal`, half away from zero (what Foundation calls `.plain`), with the
     /// given precision. Digits below 10^-128 are rounded off; a non-zero value that rounds to zero comes back as
