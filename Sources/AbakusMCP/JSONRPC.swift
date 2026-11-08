@@ -15,7 +15,7 @@ struct RPCError: Error, Equatable {
     static let unsupportedProtocolVersionCode = -32022
 
     static func parseError(_ detail: String) -> RPCError {
-        RPCError(code: parseErrorCode, message: "Parse error: \(detail).")
+        RPCError(code: parseErrorCode, message: "Parse error: \(detail). Each line must hold one complete JSON-RPC message.")
     }
 
     static func invalidRequest(_ message: String) -> RPCError {
@@ -34,11 +34,8 @@ struct RPCError: Error, Equatable {
     static func unsupportedProtocolVersion(requested: String) -> RPCError {
         RPCError(
             code: unsupportedProtocolVersionCode,
-            message: "Unsupported protocol version",
-            data: [
-                "supported": .array(ProtocolRevision.supported.map { .string($0.rawValue) }),
-                "requested": .string(requested),
-            ]
+            message: "Unsupported protocol version. Retry with one of the versions in data.supported.",
+            data: ["supported": ProtocolRevision.supportedVersions, "requested": .string(requested)]
         )
     }
 

@@ -1,3 +1,5 @@
+import AbakusCore
+
 /// The MCP revisions this server speaks (ADR-0002).
 ///
 /// The specification calls 2026-07-28 and later *modern*: every request carries the protocol version and the
@@ -12,6 +14,12 @@ public enum ProtocolRevision: String, CaseIterable, Sendable, Comparable {
 
     /// Every supported revision, newest first, as `server/discover` and the unsupported-version error list them.
     public static let supported: [ProtocolRevision] = allCases.sorted(by: >)
+
+    /// `supported` as the JSON array of version strings that `server/discover` (`supportedVersions`) and the
+    /// unsupported-version error (`data.supported`) carry.
+    static var supportedVersions: JSONValue {
+        .array(supported.map { .string($0.rawValue) })
+    }
 
     /// What `initialize` answers when the client asks for a revision this server does not speak in the legacy
     /// way, and what requests without a version use before any `initialize`.

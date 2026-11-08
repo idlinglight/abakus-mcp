@@ -166,7 +166,7 @@ import Testing
         for method in ["server/discover", "tools/list", "tools/call", "no/such/method"] {
             let failure = try error(&server, modernRequest(1, method, ["name": "echo"], meta: meta))
             #expect(failure["code"] == -32022)
-            #expect(failure["message"] == "Unsupported protocol version")
+            #expect(failure["message"]?.stringValue?.hasPrefix("Unsupported protocol version.") == true)
             #expect(failure["data"] == [
                 "supported": ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"],
                 "requested": .string(version),
@@ -204,6 +204,18 @@ import Testing
         let failure = try error(&server, request(1, "server/discover"))
         #expect(failure["code"] == -32602)
         #expect(try error(&server, request(2, "server/discover", ["_meta": [:]]))["code"] == -32602)
+    }
+
+    @Test(arguments: ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"])
+    func discoverIsNotPartOfLegacyRevisions(version: String) throws {
+        var server = makeServer()
+        let meta: JSONValue = [
+            "io.modelcontextprotocol/protocolVersion": .string(version),
+            "io.modelcontextprotocol/clientCapabilities": [:],
+        ]
+        let failure = try error(&server, modernRequest(1, "server/discover", meta: meta))
+        #expect(failure["code"] == -32601)
+        #expect(failure["message"]?.stringValue?.contains("2026-07-28") == true)
     }
 
     @Test func pingIsNotPartOfTheModernRevision() throws {
@@ -356,15 +368,13 @@ import Testing
         // Params must be an object.
         #expect(try send(&server, #"{"jsonrpc":"2.0","id":6,"method":"ping","params":[]}"#)?[path: ["error", "code"]] == -32602)
         #expect(try send(&server, #"{"jsonrpc":"2.0","id":7,"method":"ping","params":"x"}"#)?[path: ["error", "code"]] == -32600)
-        // Not even a method, and no id.
-        #expect(try send(&server, #"{"foo":"bar"}"#)?[path: ["error", "code"]] == -32600)
     }
 
     @Test func unknownMethodsAreMethodNotFound() throws {
         var server = makeServer()
         let failure = try error(&server, request(1, "resources/list"))
         #expect(failure["code"] == -32601)
-        #expect(failure["message"] == "Method not found: resources/list.")
+        #expect(failure["message"]?.stringValue?.hasPrefix("Method not found: resources/list.") == true)
         #expect(try error(&server, modernRequest(2, "prompts/list"))["code"] == -32601)
         // A notification method sent as a request.
         #expect(try error(&server, request(3, "notifications/initialized"))["code"] == -32601)
@@ -383,6 +393,42 @@ import Testing
             #expect(server.handle(line: line) == nil, "\(line)")
         }
         #expect(server.negotiatedRevision == nil)
+    }
+
+    @Test func malformedNotificationsAreDroppedWithANote() {
+        var notes: [String] = []
+        var server = MCPServer(tools: [], context: testContext(), diagnostics: { notes.append($0) })
+        let lines = [
+            #"{"method":"tools/list"}"#,
+            #"{"jsonrpc":"1.0","method":"tools/list"}"#,
+            #"{"jsonrpc":"2.0","method":5}"#,
+            #"{"jsonrpc":"2.0"}"#,
+            #"{"foo":"bar"}"#,
+            #"{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"}}"#,
+        ]
+        for line in lines {
+            #expect(server.handle(line: line) == nil, "\(line)")
+        }
+        #expect(notes.count == lines.count)
+    }
+
+    @Test func clientSuppliedTextIsEscapedInDiagnostics() throws {
+        var notes: [String] = []
+        var server = MCPServer(tools: [], context: testContext(), diagnostics: { notes.append($0) })
+        let name = "evil\nabakus: forged line\u{1B}[31m" + String(repeating: "x", count: 500)
+        let initialize = request(1, "initialize", [
+            "protocolVersion": "2025-11-25\nforged", "clientInfo": ["name": .string(name), "version": "1"],
+        ])
+        _ = try respond(&server, initialize)
+        #expect(server.handle(line: #"{"jsonrpc":"2.0","method":"notifications/x\nforged"}"#) == nil)
+        #expect(notes.count == 2)
+        for note in notes {
+            #expect(note.unicodeScalars.allSatisfy { $0.value >= 0x20 && $0.value != 0x7F }, "\(note)")
+            #expect(note.count < 600, "\(note)")
+        }
+        #expect(notes[0].contains(#""evil\nabakus: forged line\u001b[31mxxx"#))
+        #expect(notes[0].contains(#""2025-11-25\nforged""#))
+        #expect(notes[1].contains(#""notifications/x\nforged""#))
     }
 
     @Test func responsesFromTheClientAreIgnored() {
