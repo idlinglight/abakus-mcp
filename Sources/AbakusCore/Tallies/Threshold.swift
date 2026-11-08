@@ -164,7 +164,11 @@ extension Threshold {
             }
         case .every(let period):
             let passed = try Self.multiples(upTo: current, of: period)
-            object["next"] = .decimal(try DecimalMath.multiply(passed + 1, period).value)
+            let following = try DecimalMath.add(passed, 1)
+            let next = try DecimalMath.multiply(following.value, period)
+            object["next"] = .decimal(next.value)
+            // Near 38 significant digits, the next mark may not be representable.
+            if !(following.exact && next.exact && next.value > current) { object["exact"] = false }
         }
         return object
     }
@@ -172,7 +176,8 @@ extension Threshold {
     /// What going from `before` to `after` crossed, or nil if nothing:
     /// `{"limit": 20, "of": "value"}`, `{"at": [10], "of": "value"}` (the marks crossed), or
     /// `{"every": 5, "of": "count", "at": [10]}`; for more than `listedMarks` multiples
-    /// `{"every": 1, "of": "value", "times": 250, "first": 1, "last": 250}`.
+    /// `{"every": 1, "of": "value", "times": 250, "first": 1, "last": 250}`, which also serves when
+    /// neighbouring marks cannot be told apart in 38 digits (then with `"exact": false`).
     func crossing(from before: Tally, to after: Tally) throws(ToolError) -> JSONObject? {
         let old = measure(before), new = measure(after)
         guard new > old else { return nil }
@@ -188,41 +193,55 @@ extension Threshold {
             let high = try Self.multiples(upTo: new, of: period)
             guard high > low else { return nil }
             var object: JSONObject = ["every": .decimal(period), "of": .string(of.rawValue)]
-            let times = high - low
-            if times <= Decimal(Self.listedMarks) {
-                var marks: [JSONValue] = []
-                var multiple = low + 1
-                while multiple <= high {
-                    marks.append(.decimal(try DecimalMath.multiply(multiple, period).value))
-                    multiple += 1
-                }
-                object["at"] = .array(marks)
+            let times = try DecimalMath.subtract(high, low)
+            if times.exact, let count = Int(times.value.description), (1...Self.listedMarks).contains(count),
+               let marks = try Self.marks(after: low, count: count, period: period, above: old, upTo: new) {
+                object["at"] = .array(marks.map(JSONValue.decimal))
             } else {
-                object["times"] = .decimal(times)
-                object["first"] = .decimal(try DecimalMath.multiply(low + 1, period).value)
-                object["last"] = .decimal(try DecimalMath.multiply(high, period).value)
+                let firstMultiple = try DecimalMath.add(low, 1)
+                let first = try DecimalMath.multiply(firstMultiple.value, period)
+                let last = try DecimalMath.multiply(high, period)
+                object["times"] = .decimal(times.value)
+                object["first"] = .decimal(first.value)
+                object["last"] = .decimal(last.value)
+                let exact = times.exact && firstMultiple.exact && first.exact && last.exact
+                    && old < first.value && first.value <= last.value && last.value <= new
+                if !exact { object["exact"] = false }
             }
             return object
         }
     }
 
+    /// The marks (low + 1)·period, …, (low + count)·period, each computed from its integer index, or nil if
+    /// rounding to 38 digits makes them anything but strictly increasing within (old, new]. The loop runs over
+    /// an `Int`: near 10^38, `low + 1` can equal `low`, so stepping a `Decimal` might never get anywhere.
+    private static func marks(
+        after low: Decimal, count: Int, period: Decimal, above old: Decimal, upTo new: Decimal
+    ) throws(ToolError) -> [Decimal]? {
+        var marks: [Decimal] = []
+        for index in 1...count {
+            let multiple = try DecimalMath.add(low, Decimal(index))
+            let mark = try DecimalMath.multiply(multiple.value, period)
+            guard multiple.exact, mark.exact, mark.value > (marks.last ?? old), mark.value <= new else { return nil }
+            marks.append(mark.value)
+        }
+        return marks
+    }
+
     /// How many of the marks `period`, 2·`period`, ... are at most `x`: floor(x / period), and 0 below `period`.
     static func multiples(upTo x: Decimal, of period: Decimal) throws(ToolError) -> Decimal {
         guard x >= period else { return 0 }
-        var count = try DecimalMath.divide(x, period).value.roundedDown
-        // The quotient is rounded to 38 digits, which can put the floor one off; check against the products.
-        // (Two steps at most each way: near 10^38, `count ± 1` may itself round.)
-        var steps = 0
-        while steps < 2, try DecimalMath.multiply(count, period).value > x {
-            count -= 1
-            steps += 1
+        let quotient = try DecimalMath.divide(x, period).value.roundedDown
+        // The quotient is rounded to 38 digits, which can put its floor one off either way. One correction
+        // suffices, and there is no loop: near 10^38, adding 1 may not change the number at all.
+        if try DecimalMath.multiply(quotient, period).value > x {
+            return try DecimalMath.subtract(quotient, 1).value
         }
-        steps = 0
-        while steps < 2, try DecimalMath.multiply(count + 1, period).value <= x {
-            count += 1
-            steps += 1
+        let above = try DecimalMath.add(quotient, 1).value
+        if try DecimalMath.multiply(above, period).value <= x {
+            return above
         }
-        return count
+        return quotient
     }
 }
 

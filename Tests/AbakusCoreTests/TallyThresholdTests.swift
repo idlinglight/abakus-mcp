@@ -46,6 +46,10 @@ import Testing
     }
 }
 
+extension String {
+    fileprivate var asNumber: JSONValue { .number(self) }
+}
+
 @Suite struct TallyThresholdCrossingTests {
     private func tally(value: String = "0", count: Int = 0) -> Tally {
         TallyTest.tally("t", value: value, count: count)
@@ -80,6 +84,19 @@ import Testing
         let period = Threshold(.every(1))
         #expect(try crossing(period, "0", "10") == ["every": 1, "of": "value", "at": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]])
         #expect(try crossing(period, "0", "250.5") == ["every": 1, "of": "value", "times": 250, "first": 1, "last": 250])
+    }
+
+    /// Near 10^38, `low + 1 == low` in 38 digits: listing the marks must not step a Decimal (it used to loop
+    /// forever, holding the lock). The marks 4e38 + 1 … 4e38 + 9 are not representable, so the crossing is a
+    /// count marked inexact.
+    @Test func marksBeyondThirtyEightDigitsEndAndSayTheyAreInexact() throws {
+        let period = Threshold(.every(1))
+        let low = "400000000000000000000000000000000000000"
+        let crossing = try #require(try crossing(period, low, "400000000000000000000000000000000000010"))
+        #expect(crossing["times"] == 10)
+        #expect(crossing["last"] == "400000000000000000000000000000000000010".asNumber)
+        #expect(crossing["exact"] == false)
+        #expect(try period.status(of: tally(value: low))["exact"] == false)
     }
 
     @Test func everyMarksArePositiveMultiples() throws {

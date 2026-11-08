@@ -198,6 +198,18 @@ import Testing
         #expect(response["updated"] == "2026-11-08T09:31:30Z")
     }
 
+    /// The reviewer's reproducer: this used to loop forever while holding the lock.
+    @Test func everyOneNearThirtyEightDigitsFinishes() throws {
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "big", "thresholds": [["every": 1]]])
+        try state.call("tally_set", ["name": "big", "value": "400000000000000000000000000000000000000"])
+        let response = try state.call("tally_add", ["name": "big", "amount": 10])
+        #expect(response["value"] == .number("400000000000000000000000000000000000010"))
+        let crossed = try #require(response["crossed"]?.arrayValue?.first?.objectValue)
+        #expect(crossed["times"] == 10)
+        #expect(crossed["exact"] == false)
+    }
+
     @Test func overflowIsAnErrorAndChangesNothing() throws {
         let state = TallyTestState()
         let largest = Decimal.greatestFiniteMagnitude.description
