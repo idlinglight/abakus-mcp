@@ -93,14 +93,16 @@ public enum NumberReader {
             + "k, M, G or T (410k)."
     }
 
-    private struct Parts {
+    /// A number taken apart, before the range checks. Internal for calc's parser, which reads the form of its
+    /// literals itself (no grouping, errors about expressions) and leaves the value and the range to `build`.
+    struct Parts {
         var negative: Bool
         /// Integer and fraction digits together, most significant first.
         var digits: [UInt8]
         var exponent: Int
     }
 
-    private enum Problem: Error {
+    enum Problem: Error {
         case format(String)
         case tooLarge
         case tooManyDigits(Int)
@@ -263,15 +265,20 @@ public enum NumberReader {
         return Parts(negative: negative, digits: integer + fraction, exponent: exponent - fraction.count)
     }
 
-    private static func isSign(_ c: Unicode.Scalar) -> Bool {
+    // The three helpers below are internal so that calc's parser accepts the same signs, digits and suffixes.
+
+    /// `+`, `-` or `−` (U+2212).
+    static func isSign(_ c: Unicode.Scalar) -> Bool {
         c == "+" || c == "-" || c == "\u{2212}"
     }
 
-    private static func digitValue(_ c: Unicode.Scalar) -> UInt8? {
+    /// The value of an ASCII digit; other digits (`١`, `²`) are not digits here.
+    static func digitValue(_ c: Unicode.Scalar) -> UInt8? {
         ("0"..."9").contains(c) ? UInt8(c.value - 48) : nil
     }
 
-    private static func suffixPower(_ c: Unicode.Scalar) -> Int? {
+    /// The power of ten of a suffix: `k`/`K` 3, `M` 6, `G` 9, `T` 12.
+    static func suffixPower(_ c: Unicode.Scalar) -> Int? {
         switch c {
         case "k", "K": 3
         case "M": 6
@@ -333,7 +340,8 @@ public enum NumberReader {
 
     // MARK: Building the value
 
-    private static func build(_ parts: Parts) throws(Problem) -> Decimal {
+    /// The value of `parts`, or `.tooLarge`, `.tooManyDigits` or `.tooSmall` when a `Decimal` cannot hold it exactly.
+    static func build(_ parts: Parts) throws(Problem) -> Decimal {
         var digits = Array(parts.digits.drop { $0 == 0 })
         if digits.isEmpty { return 0 }
         var exponent = parts.exponent
