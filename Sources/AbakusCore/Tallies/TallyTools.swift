@@ -92,7 +92,8 @@ struct TallyAdd: Tool {
         over, in every response). Thresholds never block. Negative amounts subtract. \
         \(NumberReader.rulesInBrief) A string's reading is shown under read. An unknown name is an error, never a \
         new tally: the name may be misspelled, lack the suffix tally_create gave it, or have expired (unchanged \
-        for about three days); tally_list shows what exists.
+        for about three days). The error lists the tallies whose names start with the name you gave, with when \
+        each was created.
         """
 
     let inputSchema: JSONValue = [
@@ -293,7 +294,7 @@ struct TallyDrop: Tool {
         return try TallyStore(context).change { files throws(ToolError) in
             switch try files.inspect(name) {
             case .missing:
-                throw try files.unknown(name)
+                throw try files.unknown(name, use: .drop)
             case .tally(let tally):
                 try files.delete(name)
                 return TallyResponse.state(tally, dropped: true)
