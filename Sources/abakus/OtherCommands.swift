@@ -5,7 +5,7 @@ import Foundation
 struct Sum: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Add numbers exactly (sum).",
-        discussion: "Without arguments, reads numbers separated by whitespace or line breaks from stdin: grep -o '[0-9.]*k' log | abakus sum"
+        discussion: "Without numbers, reads them from stdin, separated by whitespace or line breaks: grep -oE '[0-9][0-9.]*k' build.log | abakus sum"
     )
 
     // Captures negative numbers too, which would otherwise be taken for options.
@@ -14,7 +14,8 @@ struct Sum: ParsableCommand {
     @OptionGroup var decimal: DecimalOption
 
     func run() throws {
-        let words = numbers.isEmpty ? ToolRunner.wordsFromStandardInput() : numbers
+        let given = try ToolRunner.numberWords(numbers)
+        let words = given.isEmpty ? try ToolRunner.wordsFromStandardInput(command: "sum") : given
         var arguments: JSONObject = ["numbers": .array(words.map { .string($0) })]
         decimal.apply(to: &arguments)
         try ToolRunner.run("sum", arguments)
@@ -47,9 +48,7 @@ struct Tools: ParsableCommand {
 
     func run() throws {
         if let show {
-            guard let tool = Catalog.tool(named: show) else {
-                throw ToolRunner.Failure("abakus has no tool named \(show). `abakus tools` lists the tools.")
-            }
+            let tool = try ToolRunner.tool(named: show)
             print(tool.description)
             print()
             print(JSONWriter.write(tool.inputSchema))
@@ -81,10 +80,10 @@ struct Call: ParsableCommand {
         do {
             value = try JSONReader.read(text)
         } catch {
-            throw ValidationError("The arguments are not valid JSON (\(error.description)). Pass one JSON object.")
+            throw ToolRunner.Failure("The arguments are not valid JSON (\(error.description)). Pass one JSON object.")
         }
         guard case .object(let object) = value else {
-            throw ValidationError(#"The arguments must be a JSON object, e.g. '{"name": "items"}'."#)
+            throw ToolRunner.Failure(#"The arguments must be a JSON object, e.g. '{"name": "items"}'."#)
         }
         try ToolRunner.run(tool, object)
     }

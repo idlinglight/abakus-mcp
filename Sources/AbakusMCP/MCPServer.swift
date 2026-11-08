@@ -376,11 +376,7 @@ public struct MCPServer {
             }
             fields["isError"] = false
         } catch {
-            var text = error.message
-            if let details = error.details {
-                text += "\nDetails: " + JSONWriter.write(details)
-            }
-            fields = ["content": [["type": "text", "text": .string(text)]], "isError": true]
+            fields = ["content": [["type": "text", "text": .string(error.text)]], "isError": true]
         }
         return .success(result(fields, for: revision))
     }

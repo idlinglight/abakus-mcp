@@ -160,14 +160,15 @@ every number is negative.
 
 ## Command line
 
-Each command runs one tool and prints the JSON an agent would get; errors go to stderr with exit status 1.
+Each command runs one tool and prints the JSON an agent would get. A tool's error goes to stderr with exit
+status 1 (the same text an agent reads); a usage mistake shows the usage with exit status 64.
 
 ```sh
 abakus tally create review --unique --limit 20 --every-count 5
 abakus tally add review-k3f9 6
 abakus tally list
 abakus sum 410k 1,234.5 -3
-grep -o '[0-9.]*k' build.log | abakus sum        # numbers from stdin
+grep -oE '[0-9][0-9.]*k' build.log | abakus sum  # numbers from stdin
 abakus sum --decimal , 1.234,5
 abakus date-diff 2026-11-08 now
 abakus tools                                     # the tools and what they do

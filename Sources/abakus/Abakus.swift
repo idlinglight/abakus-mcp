@@ -9,7 +9,8 @@ struct Abakus: ParsableCommand {
         abstract: "Tallies, exact sums and date differences for agents: an MCP server and a command line tool.",
         discussion: """
             Every command runs one of the tools the MCP server offers and prints its result as JSON, the same \
-            JSON an agent gets. Errors go to stderr with exit status 1.
+            JSON an agent gets. A tool's error goes to stderr with exit status 1; a usage mistake shows the usage \
+            with exit status 64.
             """,
         version: AbakusInfo.version,
         subcommands: [Serve.self, TallyCommand.self, Sum.self, DateDiff.self, Tools.self, Call.self]

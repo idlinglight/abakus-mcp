@@ -43,14 +43,15 @@ struct TallyCommand: ParsableCommand {
         @OptionGroup var decimal: DecimalOption
 
         func validate() throws {
-            if amount.count > 1 {
-                throw ValidationError("Give one amount, not \(amount.count). Add them up first with `abakus sum`.")
+            let amounts = try ToolRunner.numberWords(amount)
+            if amounts.count > 1 {
+                throw ValidationError("Give one amount, not \(amounts.count). Add them up first with `abakus sum`.")
             }
         }
 
         func run() throws {
             var arguments: JSONObject = ["name": .string(name)]
-            if let first = amount.first {
+            if let first = try ToolRunner.numberWords(amount).first {
                 arguments["amount"] = .string(first)
             }
             decimal.apply(to: &arguments)
@@ -61,12 +62,12 @@ struct TallyCommand: ParsableCommand {
     struct Set: ParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Change a tally's value, count or thresholds (tally_set).",
-            discussion: "Threshold options replace all thresholds; --clear-thresholds removes them. Negative values: --value=-5."
+            discussion: "Threshold options replace all thresholds; --clear-thresholds removes them."
         )
 
         @Argument(help: "The name of an existing tally.") var name: String
-        @Option(help: "The new value.") var value: String?
-        @Option(help: "The new count (a whole number).") var count: String?
+        @Option(parsing: .unconditional, help: "The new value (negative values too: --value -5).") var value: String?
+        @Option(parsing: .unconditional, help: "The new count (a whole number).") var count: String?
         @Flag(help: "Remove all thresholds.") var clearThresholds = false
         @OptionGroup var thresholds: ThresholdOptions
         @OptionGroup var decimal: DecimalOption
@@ -123,12 +124,19 @@ struct TallyCommand: ParsableCommand {
 /// Threshold options, turned into tally_create's and tally_set's `thresholds` list. Each watches the value,
 /// or the count with the `-count` variant.
 struct ThresholdOptions: ParsableArguments {
-    @Option(help: ArgumentHelp("A ceiling on the value.", valueName: "n")) var limit: String?
-    @Option(help: ArgumentHelp("A ceiling on the count.", valueName: "n")) var limitCount: String?
-    @Option(help: ArgumentHelp("A mark on the value; repeat for several.", valueName: "n")) var at: [String] = []
-    @Option(help: ArgumentHelp("A mark on the count; repeat for several.", valueName: "n")) var atCount: [String] = []
-    @Option(help: ArgumentHelp("A period on the value: report every n.", valueName: "n")) var every: String?
-    @Option(help: ArgumentHelp("A period on the count: report every n additions.", valueName: "n")) var everyCount: String?
+    // `.unconditional`: the next word is the value even when it starts with "-" (a negative mark).
+    @Option(parsing: .unconditional, help: ArgumentHelp("A ceiling on the value.", valueName: "n"))
+    var limit: String?
+    @Option(parsing: .unconditional, help: ArgumentHelp("A ceiling on the count.", valueName: "n"))
+    var limitCount: String?
+    @Option(parsing: .unconditionalSingleValue, help: ArgumentHelp("A mark on the value; repeat for several.", valueName: "n"))
+    var at: [String] = []
+    @Option(parsing: .unconditionalSingleValue, help: ArgumentHelp("A mark on the count; repeat for several.", valueName: "n"))
+    var atCount: [String] = []
+    @Option(parsing: .unconditional, help: ArgumentHelp("A period on the value: report every n.", valueName: "n"))
+    var every: String?
+    @Option(parsing: .unconditional, help: ArgumentHelp("A period on the count: report every n additions.", valueName: "n"))
+    var everyCount: String?
 
     /// The `thresholds` argument, or nil when no threshold option was given.
     func list() -> JSONValue? {
