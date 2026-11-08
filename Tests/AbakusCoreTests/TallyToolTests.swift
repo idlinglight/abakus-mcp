@@ -212,9 +212,10 @@ import Testing
 
     @Test func overflowIsAnErrorAndChangesNothing() throws {
         let state = TallyTestState()
-        let largest = Decimal.greatestFiniteMagnitude.description
-        try state.plantTally(TallyTest.tally("huge", value: largest))
-        let error = try #require(state.failure("tally_add", ["name": "huge", "amount": .number(largest)]))
+        // 9e164 is readable (below 10^165), but twice that is past what exact decimal arithmetic holds.
+        let large = "9" + String(repeating: "0", count: 164)
+        try state.plantTally(TallyTest.tally("huge", value: large))
+        let error = try #require(state.failure("tally_add", ["name": "huge", "amount": .number(large)]))
         #expect(error.message.contains("too large"))
         #expect(error.message.contains("unchanged"))
         #expect(try state.call("tally_list")["tallies"]?.arrayValue?.first?.objectValue?["count"] == 0)

@@ -18,7 +18,19 @@ struct Serve: ParsableCommand {
         abstract: "Serve the tools over MCP on stdin and stdout (for an MCP client to start, not for a terminal)."
     )
 
+    /// Serves until stdin closes, then exits with status 0.
     func run() throws {
-        try MCPServer.run(tools: Catalog.tools, context: ToolContext.live())
+        let context: ToolContext
+        do {
+            context = try ToolContext.live()
+        } catch {
+            throw StartupFailure(description: error.message)
+        }
+        try MCPServer.run(tools: Catalog.tools, context: context)
+    }
+
+    /// ArgumentParser prints this as "Error: <description>" on stderr and exits with status 1.
+    struct StartupFailure: Error, CustomStringConvertible {
+        var description: String
     }
 }

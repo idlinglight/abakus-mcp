@@ -123,3 +123,13 @@ public struct JSONObject: Sendable, Equatable, ExpressibleByDictionaryLiteral {
         return lhs.entries.allSatisfy { rhs[$0.key] == $0.value }
     }
 }
+
+extension JSONObject {
+    /// Stores `entries` as they are, in linear time. The caller guarantees that no two keys are equal;
+    /// `init(_:)` checks that itself and takes quadratic time for it. `JSONReader` uses this after its own
+    /// duplicate check.
+    init(uniqueEntries entries: [(key: String, value: JSONValue)]) {
+        self.init()
+        self.entries = entries
+    }
+}
