@@ -64,10 +64,9 @@ import Testing
         #expect(Self.permissions(scratch.url.appendingPathComponent("a")) == 0o700)
         #expect(Self.permissions(folder.url) == 0o700)
         #expect(Self.permissions(folder.url.appendingPathComponent("x.json")) == 0o600)
-        #expect(Self.permissions(folder.url.appendingPathComponent(LockedFolder.lockFileName)) == 0o600)
-        // Only the file and the lock file remain: no temporary files left behind.
+        // Only the file remains: no lock file (the folder itself is locked), no temporary files.
         let entries = try FileManager.default.contentsOfDirectory(atPath: folder.url.path).sorted()
-        #expect(entries == [".lock", "x.json"])
+        #expect(entries == ["x.json"])
         let text = try folder.withLock(.shared, createFolder: false) { contents throws(ToolError) in
             try contents.read("x.json").map { String(decoding: $0, as: UTF8.self) }
         }
@@ -116,10 +115,40 @@ import Testing
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
         let blocked = scratch.url.appendingPathComponent("tallies")
         try Data().write(to: blocked)
+        for createFolder in [true, false] {
+            let error = try #require(throws: ToolError.self) {
+                try LockedFolder(blocked).withLock(.shared, createFolder: createFolder) { _ throws(ToolError) in }
+            }
+            #expect(error.message.contains("is not a folder"))
+            #expect(error.message.contains("ABAKUS_STATE_DIR"))
+        }
+        // A file above the folder, as with ABAKUS_STATE_DIR pointing at a file.
+        let below = LockedFolder(blocked.appendingPathComponent("tallies", isDirectory: true))
         let error = try #require(throws: ToolError.self) {
-            try LockedFolder(blocked).withLock(.exclusive, createFolder: true) { _ throws(ToolError) in }
+            try below.withLock(.shared, createFolder: false) { _ throws(ToolError) in }
         }
         #expect(error.message.contains("is not a folder"))
-        #expect(error.message.contains("ABAKUS_STATE_DIR"))
+    }
+
+    /// The folder can vanish (the clean-up removes an old empty one) between two calls; the next call then
+    /// sees no folder, just as if it had never existed.
+    @Test func aFolderThatVanishedCountsAsMissing() throws {
+        let scratch = Scratch()
+        let folder = LockedFolder(scratch.url)
+        try folder.withLock(.exclusive, createFolder: true) { _ throws(ToolError) in }
+        try FileManager.default.removeItem(at: scratch.url)
+        let exists = try folder.withLock(.exclusive, createFolder: false) { contents throws(ToolError) in contents.exists }
+        #expect(exists == false)
+    }
+
+    @Test func readingADirectoryWhereAFileShouldBeIsAnError() throws {
+        let scratch = Scratch()
+        try FileManager.default.createDirectory(at: scratch.url.appendingPathComponent("x.json"), withIntermediateDirectories: true)
+        let error = try #require(throws: ToolError.self) {
+            try LockedFolder(scratch.url).withLock(.shared, createFolder: false) { contents throws(ToolError) in
+                _ = try contents.read("x.json")
+            }
+        }
+        #expect(error.message.contains("Cannot read"))
     }
 }

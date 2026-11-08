@@ -1,7 +1,7 @@
 # ADR-0003: State: one file per tally in the per-user temporary folder
 
-Status: accepted, 2026-11-08; amended 2026-11-08 (tally files in `tallies/`, file format, one lock for all
-tallies, what creates folders, unreadable files)
+Status: accepted, 2026-11-08; amended 2026-11-08 (tally files in `tallies/`, file format, one lock on the
+folder itself for all tallies, what creates folders, unreadable files)
 
 ## Context
 
@@ -32,14 +32,18 @@ folder whatever the environment says.
 - The file carries a `format` version (currently 1) and keeps every decimal as a JSON string
   (`"value": "2490123.5"`), so no binary floating point is involved on the way to disk and back
   ([ADR-0005](0005-numbers.md)). A file in a newer format is refused and left alone, never overwritten.
-- Every change is a read-modify-write under an exclusive lock: `flock` on `tallies/.lock`, one lock for all
-  tallies. Reads take the same lock shared. Each call opens the lock file itself, so calls in one process
-  exclude each other just as processes do. Nothing writes to the lock file, so `dirhelper` may delete it
-  after three days, even while it is held; after locking, abakus checks that its file is still the one at the
-  path and locks again if not.
+- Every change is a read-modify-write under an exclusive lock: `flock` on the `tallies/` folder itself,
+  through a read-only descriptor of the directory, one lock for all tallies. Reads take the same lock shared.
+  There is no lock file: nothing would ever write to one, so `dirhelper` could delete it after three days
+  even while tallies are in daily use and while it is held, and a newcomer would then lock a fresh file
+  and change tallies alongside the holder.
+- Each call opens the folder itself, so calls in one process exclude each other just as processes do. After
+  locking, abakus checks that the folder at the path is still the one it locked (an empty folder untouched
+  for three days may be removed, and created again by someone else) and locks again if not. A folder that is
+  gone, also one that vanishes while the lock is being taken, simply holds no tallies.
 - The new content is written to a temporary file in the same folder, flushed, and renamed into place.
   Parallel calls from several sessions don't lose updates, and no reader sees half a file. Names starting
-  with `.` (the lock file, temporary files) belong to the folder; tally names cannot start with one.
+  with `.` (temporary files) belong to the folder; tally names cannot start with one.
 - Lifetime is the operating system's: a tally that has not changed for about three days may disappear.
   abakus never recreates one silently; an unknown name is an error that says this can happen.
 - A file that cannot be read (damaged, or written by a newer version) makes calls on that tally fail with an
