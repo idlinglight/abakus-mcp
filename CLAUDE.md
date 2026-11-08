@@ -13,6 +13,9 @@
 - Never use Foundation's `Decimal` arithmetic (`+ - * /`, `NSDecimal*`, `NSDecimalRound`) or
   `Decimal(string:)`: they truncate, miss overflow and round silently (ADR-0005 amendment). Use `DecimalMath`
   and `NumberReader`.
+- calc's expression trees (`CalcExpression`) can be about 500 levels deep (a flat `1+1+…+1` chain): walk them
+  with `fold` or another loop, never recursively. A recursive walk overflows the 512 KB stack of a test thread
+  in debug builds, and in the server it would crash the session's MCP connection (ADR-0007 amendment).
 - Decisions are ADRs in `docs/adr/` (`# ADR-NNNN: Title`, a status line, then Context, Decision,
   Consequences). A change that contradicts an ADR amends it or adds a new one. Keep the README's ADR list
   and tool table in step.
@@ -23,7 +26,9 @@
 - Tests never touch real state: anything that writes uses a fresh temporary folder as the
   `ToolContext.stateDirectory`, never `ToolContext.live()`.
 - Tool descriptions, error messages and the server's instructions are written for an agent reading them:
-  say what happened and what to do next, in plain sentences.
+  say what happened and what to do next, in plain sentences. For new or much-changed text, a usability probe
+  is worth its cost: give the draft alone to a few fresh agents (haiku, sonnet, opus) with tasks that include
+  traps, and ask for the calls they would make and what they had to guess (ADR-0007, Context).
 - The repository is public. Keep personal context, real data from real projects, and secrets out of it:
   examples and test fixtures are made up. Personal context goes into `CLAUDE.local.md` (not tracked).
 - The shell here is zsh. Pull requests run `.github/workflows/ci.yml` (job `build-and-test`, a required
