@@ -162,7 +162,7 @@ private func d(_ text: String) -> Decimal {
 // MARK: - Oracle
 
 /// SplitMix64: a small, seedable generator, so a failure can be replayed.
-struct SplitMix64: RandomNumberGenerator {
+private struct SplitMix64: RandomNumberGenerator {
     private var state: UInt64
 
     init(seed: UInt64) { state = seed }
@@ -178,7 +178,7 @@ struct SplitMix64: RandomNumberGenerator {
 
 /// An exact decimal as a digit array: `±digits × 10^exponent`. Deliberately simple, and independent of the big
 /// integers in AbakusCore.
-struct DigitNumber: Equatable, CustomStringConvertible {
+private struct DigitNumber: Equatable, CustomStringConvertible {
     var negative: Bool
     /// Most significant first, no leading or trailing zeros; empty for zero.
     var digits: [UInt8]

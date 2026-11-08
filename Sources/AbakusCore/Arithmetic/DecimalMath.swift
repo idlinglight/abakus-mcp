@@ -9,7 +9,7 @@ import Foundation
 public enum DecimalMath {
     public struct Result: Sendable, Equatable {
         public var value: Decimal
-        /// False when the result had to be rounded to fit 38 significant digits.
+        /// False when the result had to be rounded: to 38 significant digits, or at 10^-128.
         public var exact: Bool
 
         public init(value: Decimal, exact: Bool) {
