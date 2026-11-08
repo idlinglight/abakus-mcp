@@ -1,0 +1,16 @@
+# personal context for agents working here; the repository is public
+CLAUDE.local.md
+
+# no secrets in this repo; guard against accidents anyway
+.env*
+
+# Swift build products; Packages/ appears while a dependency is in edit mode
+.build/
+.swiftpm/
+/Packages/
+
+# macOS
+.DS_Store
+
+# LLVM coverage profiles written by instrumented binaries
+*.profraw
