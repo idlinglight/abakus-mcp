@@ -153,7 +153,8 @@ Years 1583 to 9999 ([ADR-0006](docs/adr/0006-date-differences.md)).
 
 The response has `from` and `to` in UTC, `from_is_now` / `to_is_now` when the current time was used,
 `to_before_from`, a `calendar` breakdown (`years`, `months`, `days`, `hours`, `minutes`, `seconds`; Gregorian,
-UTC, counted forward from the earlier instant, so Jan 31 + 1 month = Feb 28/29), a short `text`, `totals`
+UTC, counted forward from the earlier instant, so Jan 31 + 1 month = Feb 28/29), a short `text` (whole
+seconds only, `less than 1 second` when a fraction is all there is), `totals`
 (`days`, `hours`, `minutes`, `seconds`) and `notes` when something was assumed. When `to` is before `from`,
 every number is negative.
 
@@ -225,7 +226,7 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/):
 - [ADR-0003](docs/adr/0003-state-in-user-temp-folder.md): State: one file per tally in the per-user temporary folder (amended: locking)
 - [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names)
 - [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only)
-- [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC
+- [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC (amended: whole seconds in `text`)
 
 ## License
 

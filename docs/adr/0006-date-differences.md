@@ -1,6 +1,6 @@
 # ADR-0006: Date differences: ISO 8601 in, calendar units and exact totals out, in UTC
 
-Status: accepted, 2026-11-08
+Status: accepted, 2026-11-08; amended 2026-11-08 (no fractions of a second in `text`; see the end)
 
 ## Context
 
@@ -51,6 +51,7 @@ place and the tz database, which a tool call rarely carries.
 - `text` lists the non-zero parts: years, months, weeks, days, hours, minutes, seconds, singular for 1
   (`1 year 2 months 5 days`, `2 weeks 3 days`, `31.123 seconds`; `0 seconds` for no difference). Weeks appear
   only here: seven or more days are written as weeks and days, while `calendar.days` keeps the full count.
+  (Seconds amended at the end: `text` shows whole seconds only.)
 - `totals` (days, hours, minutes, seconds) come from the exact difference in nanoseconds. `seconds` is always
   exact. The others are readable results, the same policy as the mean of `sum` ([ADR-0005](0005-numbers.md)):
   exact when they come out even (17.5 days), otherwise rounded half away from zero to 15 significant digits
@@ -70,3 +71,26 @@ place and the tz database, which a tool call rarely carries.
   breakdown added to the earlier instant gives the later one; a change in Foundation would show there.
 - Fractions finer than a nanosecond, dates before 1583 and years beyond 9999 are refused rather than
   approximated.
+
+## Amendment 2026-11-08: no fractions of a second in `text`
+
+### Context
+
+With `to` defaulting to now, which is read to the millisecond, `text` came out as "3 hours 19 minutes
+59.016 seconds". `text` is the human-sized summary; the milliseconds are noise there, and they make the text
+look more precise than "now" is. `calendar` and `totals` carry the exact values for whoever needs them.
+
+### Decision
+
+- `text` shows whole seconds: the fraction is dropped, truncating toward zero, the same way every other part
+  of the breakdown counts only completed units (59.999 seconds is "59 seconds", never "1 minute"). A seconds
+  part that becomes 0 is left out like any other zero part: 3 hours and 0.5 seconds is "3 hours".
+- A difference of less than one second that is not zero reads "less than 1 second"; only no difference at all
+  reads "0 seconds". Plain truncation would turn a non-zero difference into "0 seconds", against the rule that
+  a readable value never shows a non-zero amount as 0 ([ADR-0005](0005-numbers.md)).
+- `calendar.seconds` and `totals` are unchanged and keep their fractions.
+
+### Consequences
+
+- `text` no longer changes with every millisecond between calls with `to` as now, only once a second.
+- Anyone who needs sub-second precision reads `calendar` or `totals`, as the description says.

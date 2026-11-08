@@ -60,7 +60,7 @@ import Testing
         #expect(result["to"] == "2026-11-08T17:20:31.123Z")
         #expect(result["to_is_now"] == true)
         #expect(result["calendar"] == calendar(0, 0, 7, 17, 20, .number("31.123")))
-        #expect(result["text"] == "1 week 17 hours 20 minutes 31.123 seconds")
+        #expect(result["text"] == "1 week 17 hours 20 minutes 31 seconds")  // calendar keeps the fraction
         // Rounded to 15 significant digits, half away from zero.
         #expect(result["totals"] == [
             "days": .number("7.72258244212963"), "days_exact": false,
@@ -77,7 +77,7 @@ import Testing
         #expect(result["from_is_now"] == true)
         #expect(result["to_is_now"] == nil)
         #expect(result["calendar"] == calendar(0, 1, 15, 6, 39, .number("28.877")))
-        #expect(result["text"] == "1 month 2 weeks 1 day 6 hours 39 minutes 28.877 seconds")
+        #expect(result["text"] == "1 month 2 weeks 1 day 6 hours 39 minutes 28 seconds")
         #expect(result["totals"]?.objectValue?["days"] == .number("45.2774175578704"))
         #expect(result["totals"]?.objectValue?["seconds"] == .number("3911968.877"))
         #expect(try diff(["from": " NOW "])["text"] == "0 seconds")
@@ -145,7 +145,7 @@ import Testing
     @Test func fractionalSecondsStayExact() throws {
         let result = try diff(["from": "2026-11-08T00:00:00.75Z", "to": "2026-11-08T00:00:01.5Z"])
         #expect(result["calendar"] == calendar(0, 0, 0, 0, 0, .number("0.75")))
-        #expect(result["text"] == "0.75 seconds")
+        #expect(result["text"] == "less than 1 second")
         // 15 significant digits; 0.75 / 60 = 0.0125 comes out even.
         #expect(result["totals"] == [
             "days": .number("0.00000868055555555556"), "days_exact": false,
@@ -159,7 +159,22 @@ import Testing
         #expect(nano["totals"]?.objectValue?["seconds"] == .number("-0.000000001"))
         // Rounded totals keep their digits and their sign; they never become 0.
         #expect(nano["totals"]?.objectValue?["days"] == .number("-0.0000000000000115740740740741"))
-        #expect(nano["text"] == "0.000000001 seconds")
+        #expect(nano["text"] == "less than 1 second")
+    }
+
+    /// text is the human-sized summary: whole seconds, truncated; calendar and totals stay exact.
+    @Test(arguments: [
+        ("2026-11-08T00:00:00Z", "2026-11-08T00:00:01.5Z", "1 second"),
+        ("2026-11-08T00:00:00Z", "2026-11-08T00:00:59.999999999Z", "59 seconds"),
+        ("2026-11-08T00:00:00Z", "2026-11-08T03:00:00.5Z", "3 hours"),
+        ("2026-11-08T00:00:00.25Z", "2026-11-08T03:19:59.266Z", "3 hours 19 minutes 59 seconds"),
+        ("2026-11-08T00:00:00Z", "2026-11-08T00:00:00.999Z", "less than 1 second"),
+    ])
+    func textLeavesOutFractionsOfASecond(from: String, to: String, text: String) throws {
+        let result = try diff(["from": .string(from), "to": .string(to)])
+        #expect(result["text"] == .string(text), "\(from) to \(to)")
+        #expect(try diff(["from": .string(to), "to": .string(from)])["text"] == .string(text), "\(to) to \(from)")
+        #expect(result["calendar"]?.objectValue?["seconds"] != .number("0"))
     }
 
     @Test func sameInstantIsZero() throws {
