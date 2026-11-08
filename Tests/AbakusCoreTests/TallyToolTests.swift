@@ -394,15 +394,46 @@ import Testing
         #expect(try String(contentsOf: state.file("items"), encoding: .utf8) == text)
     }
 
+    /// A file with these fields filled in, the rest valid.
+    private static func file(format: String = "1", value: String = #""1""#, count: String = "0", thresholds: String = "[]") -> String {
+        #"{"format": \#(format), "name": "x", "value": \#(value), "count": \#(count), "exact": true, "thresholds": \#(thresholds), "created": "", "updated": ""}"#
+    }
+
+    @Test func aValidFileReads() throws {
+        let tally = try Tally(fileData: Data(Self.file(thresholds: #"[{"every": "5", "of": "count"}]"#).utf8), name: "x")
+        #expect(tally.thresholds == [Threshold(.every(5), of: .count)])
+    }
+
+    /// Files follow the same rules as arguments; what breaks them is unreadable.
     @Test(arguments: [
-        #"{"format": 1, "name": "x", "value": 1, "count": 0, "exact": true, "thresholds": [], "created": "", "updated": ""}"#,
-        #"{"format": 1, "name": "x", "value": "1e3", "count": 0, "exact": true, "thresholds": [], "created": "", "updated": ""}"#,
-        #"{"format": 1, "name": "x", "value": "1", "count": 0, "exact": true, "thresholds": [{"of": "value"}], "created": "", "updated": ""}"#,
-        #"{"format": 1, "name": "x", "value": "1", "count": 0, "exact": true, "thresholds": [{"every": "0", "of": "value"}], "created": "", "updated": ""}"#,
-        "[]",
+        ("[]", "not a tally file"),
+        (file(format: "0"), "invalid file format version (0)"),
+        (file(format: "-1"), "invalid file format version (-1)"),
+        (file(value: "1"), "damaged"),
+        (file(value: #""1e3""#), "where a number belongs"),
+        (file(count: "-1"), "invalid count (count must be a whole number, 0 or more"),
+        (file(thresholds: #"[{"of": "value"}]"#), "without exactly one of limit, at and every"),
+        (file(thresholds: #"[{"limit": "1", "every": "2", "of": "value"}]"#), "without exactly one of limit, at and every"),
+        (file(thresholds: #"[{"limit": "1", "of": "items"}]"#), "neither value nor count"),
+        (file(thresholds: #"[{"every": "0", "of": "value"}]"#), "invalid threshold (thresholds[0].every must be greater than 0)"),
+        (file(thresholds: #"[{"at": [], "of": "value"}]"#), "invalid threshold (thresholds[0].at must be a non-empty list"),
+        (file(thresholds: #"[{"limit": "3", "of": "value"}, {"every": "2.5", "of": "count"}]"#), "invalid threshold (thresholds[1] watches the count"),
+        (file(thresholds: #"[{"at": ["1", "1.5"], "of": "count"}]"#), "whole numbers"),
     ])
-    func damagedFilesAreErrors(text: String) {
-        #expect(throws: ToolError.self) { try Tally(fileData: Data(text.utf8), name: "x") }
+    func invalidFilesAreUnreadable(text: String, expected: String) throws {
+        let error = try #require(throws: ToolError.self) { try Tally(fileData: Data(text.utf8), name: "x") }
+        #expect(error.message.contains(expected), "\(error.message)")
+        #expect(!error.message.hasSuffix("."))  // it is embedded as a clause
+    }
+
+    @Test func toolsTreatAFileBreakingTheRulesAsUnreadable() throws {
+        let state = TallyTestState()
+        try state.plant("checks.json", Self.file(thresholds: #"[{"every": "2.5", "of": "count"}]"#))
+        let error = try #require(state.failure("tally_add", ["name": "checks"]))
+        #expect(error.message.contains("cannot be read"))
+        #expect(error.message.contains("whole numbers"))
+        #expect(TallyTest.names(try state.call("tally_list"), in: "unreadable") == ["checks"])
+        #expect(try state.call("tally_drop", ["name": "checks"])["unreadable"] != nil)
     }
 }
 

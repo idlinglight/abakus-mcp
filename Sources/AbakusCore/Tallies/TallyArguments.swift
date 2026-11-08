@@ -90,15 +90,10 @@ struct TallyArguments {
         return try numbers.read(value, as: key)
     }
 
-    /// A count: a whole number, 0 or more.
+    /// A count: a whole number, 0 or more (`Tally.checkedCount`, the rule files follow too).
     mutating func count(_ key: String) throws(ToolError) -> Int? {
         guard let number = try number(key) else { return nil }
-        // `Decimal.description` of a whole number is its digits (no exponent, no ".0"), so Int(_:) is exact here
-        // and refuses fractions and numbers too large to be a count.
-        guard let count = Int(number.description), count >= 0 else {
-            throw ToolError("\(key) must be a whole number, 0 or more (it counts additions); got \(number).")
-        }
-        return count
+        return try Tally.checkedCount(number, label: key)
     }
 
     mutating func thresholds() throws(ToolError) -> [Threshold]? {

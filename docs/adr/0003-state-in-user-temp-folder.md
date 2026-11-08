@@ -46,8 +46,9 @@ folder whatever the environment says.
   with `.` (temporary files) belong to the folder; tally names cannot start with one.
 - Lifetime is the operating system's: a tally that has not changed for about three days may disappear.
   abakus never recreates one silently; an unknown name is an error that says this can happen.
-- A file that cannot be read (damaged, or written by a newer version) makes calls on that tally fail with an
-  error naming the file. `tally_drop` deletes it all the same, and `tally_list` reports it under `unreadable`
+- A file must meet the rules arguments meet (one validation for thresholds and counts, whichever way they
+  come in). A file that cannot be read (damaged, written by a newer version, or breaking those rules) makes
+  calls on that tally fail with an error naming the file. `tally_drop` deletes it all the same, and `tally_list` reports it under `unreadable`
   instead of failing.
 
 ## Consequences

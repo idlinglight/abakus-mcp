@@ -91,7 +91,7 @@ extension Threshold {
         case "limit":
             rule = .limit(try numbers.read(given, as: "\(label).limit"))
         case "at":
-            guard let items = given.arrayValue, !items.isEmpty else {
+            guard let items = given.arrayValue else {
                 throw ToolError("\(label).at must be a non-empty list of numbers, e.g. [10, 50].")
             }
             var marks: [Decimal] = []
@@ -100,13 +100,26 @@ extension Threshold {
             }
             rule = .at(marks)
         default:
-            let period = try numbers.read(given, as: "\(label).every")
+            rule = .every(try numbers.read(given, as: "\(label).every"))
+        }
+        return try checked(rule, of: of, label: label)
+    }
+
+    /// The rules every threshold follows, whether it comes from an argument or from a tally file: `at` has at
+    /// least one mark, `every` is greater than 0, and a threshold on the count uses whole numbers only.
+    static func checked(_ rule: Rule, of: Measure, label: String) throws(ToolError) -> Threshold {
+        switch rule {
+        case .limit:
+            break
+        case .at(let marks):
+            guard !marks.isEmpty else {
+                throw ToolError("\(label).at must be a non-empty list of numbers, e.g. [10, 50].")
+            }
+        case .every(let period):
             guard period > 0 else {
                 throw ToolError("\(label).every must be greater than 0.")
             }
-            rule = .every(period)
         }
-
         let threshold = Threshold(rule, of: of)
         if of == .count, !threshold.numbers.allSatisfy(\.isWhole) {
             throw ToolError("\(label) watches the count, which is a whole number of additions, so its numbers must be whole numbers too.")

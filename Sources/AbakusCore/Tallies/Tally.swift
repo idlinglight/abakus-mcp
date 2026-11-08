@@ -15,6 +15,16 @@ struct Tally: Sendable, Equatable {
     static func timestamp(_ date: Date) -> String {
         date.formatted(.iso8601)
     }
+
+    /// The rule for a count, from an argument or from a tally file: a whole number of additions, 0 or more.
+    static func checkedCount(_ number: Decimal, label: String) throws(ToolError) -> Int {
+        // `Decimal.description` of a whole number is its digits (no exponent, no ".0"), so Int(_:) is exact here
+        // and refuses fractions and numbers too large to be a count.
+        guard let count = Int(number.description), count >= 0 else {
+            throw ToolError("\(label) must be a whole number, 0 or more (it counts additions); got \(number).")
+        }
+        return count
+    }
 }
 
 // MARK: - File format
@@ -79,12 +89,18 @@ extension Tally {
         }
     }
 
-    /// Reads a tally file. Throws a plain description of what is wrong; the caller adds which file it was.
-    /// The name comes from the file name, which is what the tally is found by.
+    /// Reads a tally file. Throws a plain description of what is wrong (a clause, no final period); the caller
+    /// adds which file it was. The name comes from the file name, which is what the tally is found by.
+    ///
+    /// A file has to meet the same rules as arguments (`Threshold.checked`, `Tally.checkedCount`): whatever
+    /// fails them is unreadable, not half-trusted.
     init(fileData data: Data, name: String) throws(ToolError) {
         let decoder = JSONDecoder()
         guard let probe = try? decoder.decode(FormatProbe.self, from: data) else {
             throw ToolError("it is not a tally file (no format version)")
+        }
+        guard probe.format >= 1 else {
+            throw ToolError("it has an invalid file format version (\(probe.format))")
         }
         guard probe.format <= Self.fileFormat else {
             throw ToolError("it was written by a newer version of abakus (file format \(probe.format); this version reads \(Self.fileFormat))")
@@ -96,34 +112,50 @@ extension Tally {
             throw ToolError("it is damaged (\(error.localizedDescription))")
         }
         var thresholds: [Threshold] = []
-        for item in file.thresholds {
+        for (index, item) in file.thresholds.enumerated() {
+            let label = "thresholds[\(index)]"
             guard let of = Threshold.Measure(rawValue: item.of) else {
-                throw ToolError("it has a threshold on \"\(item.of)\"")
+                throw ToolError("it has a threshold on \"\(item.of)\", which is neither value nor count")
             }
+            let rule: Threshold.Rule
             switch (item.limit, item.at, item.every) {
             case (let limit?, nil, nil):
-                thresholds.append(Threshold(.limit(try Self.decimal(limit)), of: of))
+                rule = .limit(try Self.decimal(limit))
             case (nil, let marks?, nil):
                 var values: [Decimal] = []
                 for mark in marks { values.append(try Self.decimal(mark)) }
-                thresholds.append(Threshold(.at(values), of: of))
+                rule = .at(values)
             case (nil, nil, let period?):
-                let value = try Self.decimal(period)
-                guard value > 0 else { throw ToolError("it has a period that is not greater than 0") }
-                thresholds.append(Threshold(.every(value), of: of))
+                rule = .every(try Self.decimal(period))
             default:
                 throw ToolError("it has a threshold without exactly one of limit, at and every")
             }
+            do throws(ToolError) {
+                thresholds.append(try Threshold.checked(rule, of: of, label: label))
+            } catch {
+                throw ToolError("it has an invalid threshold (\(Self.clause(error.message)))")
+            }
+        }
+        let count: Int
+        do throws(ToolError) {
+            count = try Self.checkedCount(Decimal(file.count), label: "count")
+        } catch {
+            throw ToolError("it has an invalid count (\(Self.clause(error.message)))")
         }
         self.init(
             name: name,
             value: try Self.decimal(file.value),
-            count: file.count,
+            count: count,
             exact: file.exact,
             thresholds: thresholds,
             created: file.created,
             updated: file.updated
         )
+    }
+
+    /// A sentence as a clause to embed: without its final period.
+    private static func clause(_ sentence: String) -> String {
+        sentence.hasSuffix(".") ? String(sentence.dropLast()) : sentence
     }
 
     /// Decimals in files are written by `Decimal.description`: plain notation, `.` as the decimal mark.
