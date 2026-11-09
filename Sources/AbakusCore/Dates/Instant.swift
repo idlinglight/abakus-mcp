@@ -107,7 +107,7 @@ enum ISODateReader {
     static func read(_ original: String, argument: String, now: () throws(ToolError) -> Instant) throws(ToolError) -> Reading {
         let text = original.trimmingCharacters(in: .whitespacesAndNewlines)
         func fail(_ problem: String) -> ToolError {
-            ToolError("\(argument): Cannot read \(original.quotedForMessage) as a date: \(problem) \(accepted)", details: ["input": .string(original)])
+            ToolError("\(argument): Cannot read \(original.quotedForMessage) as a date: \(problem) \(accepted)", details: ["input": .string(original.cutForMessage)])
         }
         if text.lowercased() == "now" {
             return Reading(instant: try now(), assumedUTC: false, isNow: true)

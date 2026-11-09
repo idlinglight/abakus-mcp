@@ -19,8 +19,8 @@ enum TallyName {
     /// With `suffixed`, the name must leave room for the suffix (`-` and four characters).
     static func validate(_ name: String, suffixed: Bool = false) throws(ToolError) {
         guard isValid(name) else {
-            var message = "\"\(name)\" is not a valid tally name: \(rule)."
-            var details: JSONObject = ["name": .string(name)]
+            var message = "\(name.quotedForMessage) is not a valid tally name: \(rule)."
+            var details: JSONObject = ["name": .string(name.cutForMessage)]
             if let suggestion = suggestion(for: name) {
                 message += " Try \"\(suggestion)\"."
                 details["suggestion"] = .string(suggestion)

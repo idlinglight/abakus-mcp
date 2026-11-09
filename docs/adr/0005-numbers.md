@@ -1,7 +1,8 @@
 # ADR-0005: Numbers: exact decimals, read by stated rules
 
 Status: accepted, 2026-11-08; amended 2026-11-08 (see the end); amended 2026-11-08 (the rules in full in
-`sum`'s description only)
+`sum`'s description only); amended by [ADR-0008](0008-small-mcp-results.md), 2026-11-09 (over MCP, a reading shows
+only in a note when it was a choice; the command line shows every reading)
 
 ## Context
 

@@ -14,7 +14,7 @@ Some small tasks are done better by a small program than by a language model, ye
 ad-hoc tooling for. abakus is the pocket calculator for those. Its arithmetic is exact decimal arithmetic:
 `0.1 + 0.2` is `0.3`, and a result that had to be rounded says so.
 
-macOS only. Status: early, version 0.3.0.
+macOS only. Status: early, version 0.4.0.
 
 ## Install
 
@@ -169,12 +169,21 @@ Arithmetic is exact, with 38 significant digits; `calc` computes with exact frac
 
 `{"numbers": [number | string, …], "decimal": "." | ","}`. `numbers` is required and may be empty.
 
-The response has `total`, `count`, `mean` (null for an empty list) and `read`, how each string was read
-(`{"index", "input", "value"}`; left out when there are no strings). `total_exact: false` or
-`mean_exact: false` appear when a value had to be rounded.
+The response has `total`, `count` and `mean` (null for an empty list). `total_exact: false` or
+`mean_exact: false` appear when a value had to be rounded. `notes` appears when a string reads differently with
+the other decimal mark (`"1,234"` is 1234 with `.`, 1.234 with `,`) and no other string rules that mark out
+(`"12.50"` reads only with `.`): one short note, however many such strings there are, with how many, the first
+one with both readings, and what to do.
+
+The command line also prints `read`, how each string was read (`{"index", "input", "value"}`; left out when there
+are no strings). Over MCP it is left out: it grows with the list, and an MCP result stays small
+([ADR-0008](docs/adr/0008-small-mcp-results.md)). To see how one string is read, sum it alone.
 
 ```json
 {"numbers": ["1.234,5", "410k", 8], "decimal": ","}
+→ {"total": 411242.5, "count": 3, "mean": 137080.833333333, "mean_exact": false}
+
+abakus call sum '{"numbers": ["1.234,5", "410k", 8], "decimal": ","}'
 → {"total": 411242.5, "count": 3, "mean": 137080.833333333, "mean_exact": false,
    "read": [{"index": 0, "input": "1.234,5", "value": 1234.5}, {"index": 1, "input": "410k", "value": 410000}]}
 ```
@@ -261,7 +270,8 @@ every number is negative.
 
 ## Command line
 
-Each command runs one tool and prints the JSON an agent would get. A tool's error goes to stderr with exit
+Each command runs one tool and prints the JSON an agent would get, plus the details an MCP result leaves out,
+such as `sum`'s `read` ([ADR-0008](docs/adr/0008-small-mcp-results.md)). A tool's error goes to stderr with exit
 status 1 (the same text an agent reads); a usage mistake shows the usage with exit status 64.
 
 ```sh
@@ -276,7 +286,7 @@ abakus calc '{errors-k3f9} / {requests-p2x7} * 100'  # quote it: * ( { ^ mean so
 abakus calc -2^2                                 # -4; a leading minus is part of the expression
 abakus date-diff 2026-11-08 now
 abakus tools                                     # the tools and what they do
-abakus call sum '{"numbers": ["0.1", 0.2]}'      # any tool with JSON arguments, as over MCP
+abakus call sum '{"numbers": ["0.1", 0.2]}'      # any tool with JSON arguments, as an MCP client sends them
 ```
 
 `--help` on any command says the rest.
@@ -320,9 +330,10 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/):
 - [ADR-0002](docs/adr/0002-own-mcp-server.md): Own MCP server instead of the Swift SDK (amended: supported revisions, error mapping)
 - [ADR-0003](docs/adr/0003-state-in-user-temp-folder.md): State: one file per tally in the per-user temporary folder (amended: locking)
 - [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names; `tally_drop`'s advice for unknown names)
-- [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only)
+- [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only; by ADR-0008: how readings show over MCP)
 - [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC (amended: whole seconds in `text`)
 - [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name (amended: underflow and the readable policy in full, when `fraction` is left out, rounded tallies in the response, unknown names, flat chains of + and * in `read`, errors while evaluating, parser details)
+- [ADR-0008](docs/adr/0008-small-mcp-results.md): MCP results stay small; the command line shows everything
 
 ## License
 

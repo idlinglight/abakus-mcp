@@ -1,28 +1,39 @@
 import Foundation
 
-/// `sum`: adds a list of numbers exactly and reports how each string was read (ADR-0005).
+/// `sum`: adds a list of numbers exactly (ADR-0005). How each string was read is a detail: the command line prints
+/// it, an MCP result leaves it out (ADR-0008).
 public struct SumTool: Tool {
     public init() {}
 
     public let name = "sum"
+
+    public let detailKeys = ["read"]
 
     public let description = """
         Adds numbers exactly, in decimal arithmetic, and returns the total, the count and the mean. Use it instead \
         of adding in your head or with a binary floating point tool (bc, awk, a quick script) whenever the total \
         matters, and for numbers written as text (410k, 1,234.5, 1.234,5).
 
-        Arguments: numbers, a list of JSON numbers or number strings (an empty list gives total 0 and mean null); \
-        decimal, "." (default) or ",", the decimal mark in the strings.
+        Arguments: numbers, a list of JSON numbers (read from their literal text, never through binary floating \
+        point) or number strings (an empty list gives total 0 and mean null); decimal, "." (default) or ",", the \
+        decimal mark in the strings: pass "," when the source writes numbers like 1.234,5.
 
         \(NumberReader.rulesSummary)
 
-        Response: {"total", "count", "mean", "read"}. read lists how each string was read, as \
-        [{"index": 0, "input": "410k", "value": 410000}]; check it when an input could be read two ways. JSON \
-        numbers are not listed. The total is exact unless it has more than 38 significant digits; then it is \
-        rounded and total_exact: false is added. The mean is exact when it fits in 38 digits; otherwise it is \
-        rounded half away from zero to 15 significant digits (to whole units when the integer part is longer; \
-        1/3 shows as 0.333333333333333), and mean_exact: false is added. Without these flags, total and mean are \
-        exact.
+        Response: {"total", "count", "mean"}, plus notes when a string reads differently with the other decimal \
+        mark ("1,234" is 1234 with decimal ".", 1.234 with ",") and no other string rules that mark out ("12.50" \
+        reads only with "."): one short note, however many such strings there are, with how many, the first one \
+        with both readings, and what to do. The total is exact unless it has more than 38 significant digits; \
+        then it is rounded and total_exact: false is added. The mean is exact when it fits in 38 digits; \
+        otherwise it is rounded half away from zero to 15 significant digits (to whole units when the integer \
+        part is longer; 1/3 shows as 0.333333333333333), and mean_exact: false is added. Without these flags, \
+        total and mean are exact. Strings that follow the rules above need no checking; to see how a single \
+        string is read anyway, sum it alone: {"numbers": ["410k"]}.
+
+        The abakus command line (abakus sum, the same program as this server) prints the same JSON plus read, one \
+        entry per string: [{"index": 0, "input": "410k", "value": 410000}]. It takes the numbers as arguments or \
+        from stdin, separated by whitespace or line breaks (each one a string, so read lists them all), and \
+        --decimal , for a decimal comma.
         """
 
     public let inputSchema: JSONValue = [
@@ -53,6 +64,7 @@ public struct SumTool: Tool {
 
         var values: [Decimal] = []
         var read: [JSONValue] = []
+        var otherReadings = OtherDecimalReadings(decimal: decimal)
         for (index, item) in items.enumerated() {
             let value: Decimal
             do {
@@ -65,6 +77,7 @@ public struct SumTool: Tool {
             values.append(value)
             if case .string(let text) = item {
                 read.append(["index": .number(String(index)), "input": .string(text), "value": .decimal(value)])
+                otherReadings.check(text, index: index, value: value)
             }
         }
 
@@ -90,7 +103,52 @@ public struct SumTool: Tool {
             result["mean"] = .decimal(mean.value)
             if !mean.exact { result["mean_exact"] = false }
         }
+        if let note = otherReadings.note { result["notes"] = [.string(note)] }
         if !read.isEmpty { result["read"] = .array(read) }
         return result
+    }
+}
+
+/// Strings that the other `decimal` setting reads as a different number: `"1,234"` is 1234 with ".", 1.234 with
+/// ",". Such a string contains "." or "," and the other setting reads it as well; the two values then always
+/// differ, since the mark is the decimal mark in one reading and groups thousands in the other (ADR-0008).
+///
+/// A string with a mark that only the current setting reads (`"12.50"`, `"1,234.5"` with ".") shows how the list
+/// is written: then there is no note, since calling again with the other mark would fail on that string.
+struct OtherDecimalReadings {
+    let decimal: DecimalMark
+    private(set) var count = 0
+    /// A string with a mark that the other setting cannot read was seen. Later strings need no second reading.
+    private(set) var ruledOut = false
+    private var first: (index: Int, text: String, value: Decimal, other: Decimal)?
+
+    init(decimal: DecimalMark) {
+        self.decimal = decimal
+    }
+
+    mutating func check(_ text: String, index: Int, value: Decimal) {
+        guard !ruledOut, text.contains(where: { $0 == "." || $0 == "," }) else { return }
+        guard let other = NumberReader.value(of: text, decimal: decimal.other) else {
+            ruledOut = true
+            return
+        }
+        count += 1
+        if first == nil { first = (index, text, value, other) }
+    }
+
+    /// A note of fixed size, however many such strings there are: how many, the first one with both readings, and
+    /// what to do. nil when there are none, or when a string rules the other mark out.
+    var note: String? {
+        guard !ruledOut, let first else { return nil }
+        let setting = decimal == .point ? #"decimal: ",""# : #"decimal: "." (the default)"#
+        let advice = decimal == .point
+            ? #"If the numbers use a decimal comma, call again with decimal: ","."#
+            : "If the numbers use a decimal point, call again without decimal."
+        let string = "\(first.text.quotedForMessage) (numbers[\(first.index)])"
+        let reading = "was read as \(first.value); with \(setting) it would be \(first.other)."
+        if count == 1 {
+            return "\(string) \(reading) \(advice)"
+        }
+        return "\(count) strings read differently with the other decimal mark. The first, \(string), \(reading) \(advice)"
     }
 }

@@ -6,7 +6,10 @@ public enum DecimalMark: String, Sendable, CaseIterable {
     case comma = ","
 
     /// The other mark, which may group thousands.
-    public var groupingMark: String { self == .point ? "," : "." }
+    public var groupingMark: String { other.rawValue }
+
+    /// The other setting.
+    public var other: DecimalMark { self == .point ? .comma : .point }
 
     /// Reads a tool's optional `decimal` argument: absent or null is `.point`.
     public static func argument(_ value: JSONValue?, name: String = "decimal") throws(ToolError) -> DecimalMark {
@@ -66,6 +69,12 @@ public enum NumberReader {
         }
     }
 
+    /// The value of a string by the string rules, or nil when it cannot be read: for checks that only need to know
+    /// whether a string reads, without the cost of an error message (sum's note on the other decimal mark).
+    static func value(of text: String, decimal: DecimalMark) -> Decimal? {
+        try? build(try scan(text, decimal: decimal))
+    }
+
     // MARK: Strings
 
     /// Every error about a string says why it cannot be read and what is accepted, the range errors included.
@@ -75,7 +84,7 @@ public enum NumberReader {
         } catch {
             throw ToolError(
                 "Cannot read \(original.quotedForMessage) as a number: \(error.text) \(accepted(decimal))",
-                details: ["input": .string(original)]
+                details: ["input": .string(original.cutForMessage)]
             )
         }
     }
@@ -320,15 +329,17 @@ public enum NumberReader {
     private static func readLiteral(_ literal: String) throws(ToolError) -> Decimal {
         guard isJSONNumber(literal) else {
             throw ToolError(
-                "\(literal) is not a valid JSON number. Pass it as a string to have it read by the string rules.",
-                details: ["input": .string(literal)]
+                "\(literal.cutForMessage) is not a valid JSON number. Pass it as a string to have it read by the string rules.",
+                details: ["input": .string(literal.cutForMessage)]
             )
         }
         do {
             // A valid JSON literal reads the same under the string rules with "." as the decimal mark.
             return try build(try scan(literal, decimal: .point))
         } catch {
-            throw ToolError("Cannot use the number \(literal): \(error.text)", details: ["input": .string(literal)])
+            throw ToolError(
+                "Cannot use the number \(literal.cutForMessage): \(error.text)", details: ["input": .string(literal.cutForMessage)]
+            )
         }
     }
 

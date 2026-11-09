@@ -24,6 +24,16 @@ import Testing
         #expect(error.details?["suggestion"] == "my-items")
     }
 
+    /// A long invalid name is quoted cut in the middle; the suggestion has at most 64 characters anyway (ADR-0008).
+    @Test func errorCutsALongName() throws {
+        let name = "My " + String(repeating: "X", count: 5000)
+        let error = try #require(throws: ToolError.self) { try TallyName.validate(name) }
+        #expect(error.text.count < 1000)
+        #expect(error.message.hasPrefix("\"My XXX"))
+        #expect(error.message.contains("…"))
+        #expect(error.details?["name"]?.stringValue?.count == 100)
+    }
+
     @Test func suggestions() {
         #expect(TallyName.suggestion(for: "Items") == "items")
         #expect(TallyName.suggestion(for: "--Review Items!") == "review-items-")

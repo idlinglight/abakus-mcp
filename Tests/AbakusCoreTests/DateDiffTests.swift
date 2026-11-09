@@ -227,6 +227,15 @@ import Testing
         #expect(failure(["from": "2026-11-08", "to": .string(input)])?.message.hasPrefix("to: ") == true)
     }
 
+    /// A long unreadable date is quoted cut in the middle (ADR-0008).
+    @Test func errorCutsALongInput() throws {
+        let input = "2026-11-08 " + String(repeating: "x", count: 5000)
+        let error = try #require(failure(["from": .string(input)]))
+        #expect(error.text.count < 1000)
+        #expect(error.message.contains("…"))
+        #expect(error.details?["input"]?.stringValue?.count == 100)
+    }
+
     @Test func badArguments() {
         #expect(failure([:])?.message.contains("from is missing") == true)
         #expect(failure(["from": 20261108])?.message.contains("from must be a string") == true)

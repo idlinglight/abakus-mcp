@@ -2,7 +2,8 @@ import AbakusCore
 import ArgumentParser
 import Foundation
 
-/// Runs a catalog tool for a CLI command: the same tool, arguments and result an MCP client gets.
+/// Runs a catalog tool for a CLI command: the same tool and arguments as over MCP, and the full result, with the
+/// detail keys an MCP result leaves out (ADR-0008).
 ///
 /// Exit status: 0 with the result on stdout; 1 for a tool error ("Error: <message>" on stderr, the same text an
 /// agent reads); 64 for a usage mistake, with the command's usage.

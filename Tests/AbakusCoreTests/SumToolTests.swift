@@ -53,6 +53,49 @@ import Testing
         #expect(result.keys == ["total", "count", "mean", "read"])
     }
 
+    /// read grows with the list, so it is a detail: the command line prints it, an MCP result leaves it out
+    /// (ADR-0008).
+    @Test func readIsADetail() throws {
+        #expect(tool.detailKeys == ["read"])
+        let result = try sum(["numbers": ["410k", "1,234.5", 12]])
+        #expect(tool.withoutDetails(result) == ["total": .number("411246.5"), "count": 3, "mean": .number("137082.166666667"), "mean_exact": false])
+        #expect(tool.withoutDetails(result).keys == ["total", "count", "mean", "mean_exact"])
+    }
+
+    /// A string that the other decimal setting reads as another number gets a note of fixed size, however many such
+    /// strings there are (ADR-0008). It stays in the MCP result; read does not.
+    @Test func noteForStringsTheOtherDecimalMarkReadsDifferently() throws {
+        let one = try sum(["numbers": ["1,234", "410k", 6]])
+        #expect(one["notes"] == [
+            #""1,234" (numbers[0]) was read as 1234; with decimal: "," it would be 1.234. If the numbers use a decimal comma, call again with decimal: ","."#,
+        ])
+        #expect(tool.withoutDetails(one).keys == ["total", "count", "mean", "notes"])
+
+        let several = try sum(["numbers": ["410k", "1.000", "2,500", "3.141"]])
+        #expect(several["notes"] == [
+            #"3 strings read differently with the other decimal mark. The first, "1.000" (numbers[1]), was read as 1; with decimal: "," it would be 1000. If the numbers use a decimal comma, call again with decimal: ","."#,
+        ])
+
+        let comma = try sum(["numbers": ["1.234", "7"], "decimal": ","])
+        #expect(comma["notes"] == [
+            #""1.234" (numbers[0]) was read as 1234; with decimal: "." (the default) it would be 1.234. If the numbers use a decimal point, call again without decimal."#,
+        ])
+
+        // One reading only: both marks, a leading 0, groups of three, an exponent, no mark at all, JSON numbers.
+        #expect(try sum(["numbers": ["1,234.5", "0.123", "1,234,567", "2.5e3", "410k", "12", .number("1.234")]])["notes"] == nil)
+    }
+
+    /// A string that only the current setting reads shows how the list is written: no note, since calling again with
+    /// the other mark would fail on that string (ADR-0008). Before or after the ambiguous one alike.
+    @Test func noNoteWhenAnotherStringRulesTheOtherMarkOut() throws {
+        #expect(try sum(["numbers": ["1,234", "12.50"]])["notes"] == nil)
+        #expect(try sum(["numbers": ["12.50", "1,234"]])["notes"] == nil)
+        #expect(try sum(["numbers": ["1,234", "410k", "1,234.5"]])["notes"] == nil)
+        #expect(try sum(["numbers": ["1.234", "0,5"], "decimal": ","])["notes"] == nil)
+        // JSON numbers and strings without a mark rule nothing out.
+        #expect(try sum(["numbers": ["1,234", .number("12.50"), "7"]])["notes"] != nil)
+    }
+
     @Test func decimalComma() throws {
         let result = try sum(["numbers": ["1.234,5", "0,5", .number("1.5")], "decimal": ","])
         #expect(result["total"] == .number("1236.5"))
@@ -117,6 +160,33 @@ import Testing
         #expect(error.message.hasPrefix("numbers[1]: Cannot read \"12%\" as a number"))
         #expect(error.details == ["index": 1, "input": "12%"])
         #expect(failure(["numbers": [1, true]])?.message.hasPrefix("numbers[1]: Expected a number") == true)
+    }
+
+    /// An error quotes at most 100 characters of an input, cut in the middle (ADR-0008): one long string must not
+    /// make the error long.
+    @Test func errorsCutLongInputs() throws {
+        let long = "1" + String(repeating: "x", count: 5000) + "9"
+        let error = try #require(failure(["numbers": [.string(long)]]))
+        let cut = "1" + String(repeating: "x", count: 49) + "…" + String(repeating: "x", count: 48) + "9"
+        #expect(error.message.hasPrefix("numbers[0]: Cannot read \"\(cut)\" as a number"))
+        #expect(error.text.count < 1000)
+        #expect(error.details == ["index": 0, "input": .string(cut)])
+        // 100 characters are quoted whole.
+        let hundred = String(repeating: "x", count: 100)
+        #expect(failure(["numbers": [.string(hundred)]])?.message.contains("\"\(hundred)\"") == true)
+        // Cut by Unicode scalars: one character with 10,000 combining marks is cut too.
+        let marks = "1" + String(repeating: "\u{301}", count: 10_000)
+        #expect(try #require(failure(["numbers": [.string(marks)]])).text.unicodeScalars.count < 1000)
+        // JSON number literals: too many digits, and not a JSON number at all.
+        let manyDigits = JSONValue.number(String(repeating: "123456789", count: 500))
+        let digitsError = try #require(failure(["numbers": [manyDigits]]))
+        #expect(digitsError.text.count < 1000)
+        #expect(digitsError.message.contains("too large"))
+        #expect(try #require(failure(["numbers": [.number(String(repeating: "x", count: 5000))]])).text.count < 1000)
+        // An unknown argument's name too.
+        let name = String(repeating: "a", count: 300)
+        let unknown = try #require(failure(JSONObject([("numbers", [1]), (name, 1)])))
+        #expect(unknown.text.count < 400)
     }
 
     @Test func badArguments() {
