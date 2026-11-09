@@ -170,7 +170,9 @@ Arithmetic is exact, with 38 significant digits; `calc` computes with exact frac
 `{"numbers": [number | string, …], "decimal": "." | ","}`. `numbers` is required and may be empty.
 
 The response has `total`, `count` and `mean` (null for an empty list). `total_exact: false` or
-`mean_exact: false` appear when a value had to be rounded.
+`mean_exact: false` appear when a value had to be rounded. `notes` appears when a string reads differently with
+the other decimal mark (`"1,234"` is 1234 with `.`, 1.234 with `,`): one sentence, however many such strings
+there are, with the first one, both readings and what to do.
 
 The command line also prints `read`, how each string was read (`{"index", "input", "value"}`; left out when there
 are no strings). Over MCP it is left out: it grows with the list, and an MCP result stays small

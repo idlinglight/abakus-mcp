@@ -133,6 +133,9 @@ expect "cli: calc without an expression is a usage error" \
 expect "cli: sum reads 410k and 1,234.5, and prints read" \
   '.total == 411234.5 and .read == [{"index": 0, "input": "410k", "value": 410000}, {"index": 1, "input": "1,234.5", "value": 1234.5}]' \
   "$($abakus sum 410k 1,234.5)"
+expect "cli: sum notes a string the other decimal mark reads differently" \
+  '.total == 1239 and (.notes | length == 1) and (.notes[0] | contains("\"1,234\" (numbers[0]) was read as 1234"))' \
+  "$($abakus sum 1,234 5)"
 expect "cli: sum takes negative numbers" '.total == 2' "$($abakus sum 1 -2 3)"
 expect "cli: sum after a -- terminator" '.total == -4' "$($abakus sum 1 -- -5)"
 message=$($abakus sum 1 --decmal , 2 2>&1)

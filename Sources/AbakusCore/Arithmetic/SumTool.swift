@@ -19,7 +19,9 @@ public struct SumTool: Tool {
 
         \(NumberReader.rulesSummary)
 
-        Response: {"total", "count", "mean"}. The total is exact unless it has more than 38 significant digits; \
+        Response: {"total", "count", "mean"}, plus notes when a string reads differently with the other decimal \
+        mark ("1,234" is 1234 with decimal ".", 1.234 with ","): one sentence with the first such string, both \
+        readings and what to do. The total is exact unless it has more than 38 significant digits; \
         then it is rounded and total_exact: false is added. The mean is exact when it fits in 38 digits; \
         otherwise it is rounded half away from zero to 15 significant digits (to whole units when the integer \
         part is longer; 1/3 shows as 0.333333333333333), and mean_exact: false is added. Without these flags, \
@@ -58,6 +60,7 @@ public struct SumTool: Tool {
 
         var values: [Decimal] = []
         var read: [JSONValue] = []
+        var otherReadings = OtherDecimalReadings(decimal: decimal)
         for (index, item) in items.enumerated() {
             let value: Decimal
             do {
@@ -70,6 +73,7 @@ public struct SumTool: Tool {
             values.append(value)
             if case .string(let text) = item {
                 read.append(["index": .number(String(index)), "input": .string(text), "value": .decimal(value)])
+                otherReadings.check(text, index: index, value: value)
             }
         }
 
@@ -95,7 +99,45 @@ public struct SumTool: Tool {
             result["mean"] = .decimal(mean.value)
             if !mean.exact { result["mean_exact"] = false }
         }
+        if let note = otherReadings.note { result["notes"] = [.string(note)] }
         if !read.isEmpty { result["read"] = .array(read) }
         return result
+    }
+}
+
+/// Strings that the other `decimal` setting reads as a different number: `"1,234"` is 1234 with ".", 1.234 with
+/// ",". Such a string contains "." or "," and the other setting reads it as well; the two values then always
+/// differ, since the mark is the decimal mark in one reading and groups thousands in the other (ADR-0008).
+struct OtherDecimalReadings {
+    let decimal: DecimalMark
+    private(set) var count = 0
+    private var first: (index: Int, text: String, value: Decimal, other: Decimal)?
+
+    init(decimal: DecimalMark) {
+        self.decimal = decimal
+    }
+
+    mutating func check(_ text: String, index: Int, value: Decimal) {
+        guard text.contains(where: { $0 == "." || $0 == "," }) else { return }
+        let otherMark: DecimalMark = decimal == .point ? .comma : .point
+        guard let other = try? NumberReader.read(.string(text), decimal: otherMark) else { return }
+        count += 1
+        if first == nil { first = (index, text, value, other) }
+    }
+
+    /// One sentence of fixed size, however many such strings there are: how many, the first one with both readings,
+    /// and what to do. nil when there are none.
+    var note: String? {
+        guard let first else { return nil }
+        let setting = decimal == .point ? #"decimal: ",""# : #"decimal: "." (the default)"#
+        let advice = decimal == .point
+            ? #"If the numbers use a decimal comma, call again with decimal: ","."#
+            : "If the numbers use a decimal point, call again without decimal."
+        let string = "\(first.text.quotedForMessage) (numbers[\(first.index)])"
+        let reading = "was read as \(first.value); with \(setting) it would be \(first.other)."
+        if count == 1 {
+            return "\(string) \(reading) \(advice)"
+        }
+        return "\(count) strings read differently with the other decimal mark. The first, \(string), \(reading) \(advice)"
     }
 }

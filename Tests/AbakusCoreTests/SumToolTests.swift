@@ -62,6 +62,30 @@ import Testing
         #expect(tool.withoutDetails(result).keys == ["total", "count", "mean", "mean_exact"])
     }
 
+    /// A string that the other decimal setting reads as another number gets a note, one sentence of fixed size
+    /// however many such strings there are (ADR-0008). It stays in the MCP result; read does not.
+    @Test func noteForStringsTheOtherDecimalMarkReadsDifferently() throws {
+        let one = try sum(["numbers": ["1,234", "12.50", "410k", "1,234.5", 7]])
+        #expect(one["notes"] == [
+            #""1,234" (numbers[0]) was read as 1234; with decimal: "," it would be 1.234. If the numbers use a decimal comma, call again with decimal: ","."#,
+        ])
+        #expect(tool.withoutDetails(one).keys == ["total", "count", "mean", "notes"])
+
+        // "12.50" has only one reading; "1.000", "2,500" and "3.141" have two.
+        let several = try sum(["numbers": ["12.50", "1.000", "2,500", "3.141"]])
+        #expect(several["notes"] == [
+            #"3 strings read differently with the other decimal mark. The first, "1.000" (numbers[1]), was read as 1; with decimal: "," it would be 1000. If the numbers use a decimal comma, call again with decimal: ","."#,
+        ])
+
+        let comma = try sum(["numbers": ["1.234", "0,5"], "decimal": ","])
+        #expect(comma["notes"] == [
+            #""1.234" (numbers[0]) was read as 1234; with decimal: "." (the default) it would be 1.234. If the numbers use a decimal point, call again without decimal."#,
+        ])
+
+        // One reading only: both marks, a leading 0, groups of three, an exponent, no mark at all, JSON numbers.
+        #expect(try sum(["numbers": ["1,234.5", "0.123", "1,234,567", "2.5e3", "410k", "12", .number("1.234")]])["notes"] == nil)
+    }
+
     @Test func decimalComma() throws {
         let result = try sum(["numbers": ["1.234,5", "0,5", .number("1.5")], "decimal": ","])
         #expect(result["total"] == .number("1236.5"))
