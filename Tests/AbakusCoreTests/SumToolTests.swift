@@ -119,6 +119,24 @@ import Testing
         #expect(failure(["numbers": [1, true]])?.message.hasPrefix("numbers[1]: Expected a number") == true)
     }
 
+    /// An error quotes at most 100 characters of an input, cut in the middle (ADR-0008): one long string must not
+    /// make the error long.
+    @Test func errorsCutLongInputs() throws {
+        let long = "1" + String(repeating: "x", count: 5000) + "9"
+        let error = try #require(failure(["numbers": [.string(long)]]))
+        let cut = "1" + String(repeating: "x", count: 49) + "…" + String(repeating: "x", count: 48) + "9"
+        #expect(error.message.hasPrefix("numbers[0]: Cannot read \"\(cut)\" as a number"))
+        #expect(error.text.count < 1000)
+        #expect(error.details == ["index": 0, "input": .string(cut)])
+        // 100 characters are quoted whole.
+        let hundred = String(repeating: "x", count: 100)
+        #expect(failure(["numbers": [.string(hundred)]])?.message.contains("\"\(hundred)\"") == true)
+        // An unknown argument's name too.
+        let name = String(repeating: "a", count: 300)
+        let unknown = try #require(failure(JSONObject([("numbers", [1]), (name, 1)])))
+        #expect(unknown.text.count < 400)
+    }
+
     @Test func badArguments() {
         #expect(failure([:])?.message.contains("numbers is missing") == true)
         #expect(failure(["numbers": 5])?.message.contains("must be a list") == true)

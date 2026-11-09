@@ -75,7 +75,7 @@ public enum NumberReader {
         } catch {
             throw ToolError(
                 "Cannot read \(original.quotedForMessage) as a number: \(error.text) \(accepted(decimal))",
-                details: ["input": .string(original)]
+                details: ["input": .string(original.cutForMessage)]
             )
         }
     }

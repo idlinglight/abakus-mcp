@@ -19,7 +19,7 @@ enum UnknownArguments {
         if let hint = hints[unknown.key]?(unknown.value) {
             message += " " + hint
         }
-        throw ToolError(message, details: ["argument": .string(unknown.key)])
+        throw ToolError(message, details: ["argument": .string(unknown.key.cutForMessage)])
     }
 }
 
