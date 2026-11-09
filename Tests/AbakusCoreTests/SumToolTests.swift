@@ -53,6 +53,15 @@ import Testing
         #expect(result.keys == ["total", "count", "mean", "read"])
     }
 
+    /// read grows with the list, so it is a detail: the command line prints it, an MCP result leaves it out
+    /// (ADR-0008).
+    @Test func readIsADetail() throws {
+        #expect(tool.detailKeys == ["read"])
+        let result = try sum(["numbers": ["410k", "1,234.5", 12]])
+        #expect(tool.withoutDetails(result) == ["total": .number("411246.5"), "count": 3, "mean": .number("137082.166666667"), "mean_exact": false])
+        #expect(tool.withoutDetails(result).keys == ["total", "count", "mean", "mean_exact"])
+    }
+
     @Test func decimalComma() throws {
         let result = try sum(["numbers": ["1.234,5", "0,5", .number("1.5")], "decimal": ","])
         #expect(result["total"] == .number("1236.5"))

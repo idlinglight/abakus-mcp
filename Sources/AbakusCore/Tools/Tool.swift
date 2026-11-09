@@ -11,9 +11,27 @@ public protocol Tool: Sendable {
     /// JSON Schema of the arguments: an object schema (`"type": "object"`, `properties`, `required`).
     var inputSchema: JSONValue { get }
     var annotations: ToolAnnotations { get }
-    /// Runs the tool. The result is always a JSON object. Anything the caller should fix (unknown name,
-    /// unreadable number, ...) is a `ToolError`, which reaches the agent as a failed tool call it can read.
+    /// Keys of the result that grow with the input, such as how each string was read. The command line prints
+    /// them; an MCP result leaves them out, so that its size does not depend on how much input there was
+    /// (ADR-0008). Most tools have none.
+    var detailKeys: [String] { get }
+    /// Runs the tool. The result is always a JSON object, with the detail keys included. Anything the caller
+    /// should fix (unknown name, unreadable number, ...) is a `ToolError`, which reaches the agent as a failed tool
+    /// call it can read.
     func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject
+}
+
+extension Tool {
+    public var detailKeys: [String] { [] }
+
+    /// A result as an MCP client gets it: without the detail keys (ADR-0008).
+    public func withoutDetails(_ result: JSONObject) -> JSONObject {
+        var answer = result
+        for key in detailKeys {
+            answer[key] = nil
+        }
+        return answer
+    }
 }
 
 /// MCP tool annotations. Set every flag deliberately; clients show them and some decide on them.

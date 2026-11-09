@@ -34,7 +34,7 @@ responses=$(printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"check","version":"0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"sum","arguments":{"numbers":[0.1,0.2]}}}' \
+  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"sum","arguments":{"numbers":["0.1","0.2"]}}}' \
   '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"tally_add","arguments":{"name":"missing"}}}' \
   '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"tally_create","arguments":{"name":"requests","shared":true}}}' \
   '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"tally_add","arguments":{"name":"requests","amount":1250}}}' \
@@ -48,8 +48,9 @@ expect "mcp legacy: initialize negotiates 2025-11-25 and sends instructions" \
 expect "mcp legacy: tools/list has all eight tools" \
   '[.result.tools[].name] | sort == ["calc","date_diff","sum","tally_add","tally_create","tally_drop","tally_list","tally_set"]' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 2)')"
-expect "mcp legacy: sum of 0.1 and 0.2 is exactly 0.3" \
-  '.result.structuredContent.total == 0.3 and (.result.content[0].text | contains("\"total\":0.3"))' \
+expect "mcp legacy: sum of 0.1 and 0.2 is exactly 0.3, without read (a detail, ADR-0008)" \
+  '.result.structuredContent == {"total": 0.3, "count": 2, "mean": 0.15}
+     and (.result.content[0].text | contains("\"total\":0.3") and (contains("read") | not))' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 3)')"
 expect "mcp legacy: a tool error is a result with isError" \
   '.result.isError == true and (.result.content[0].text | test("missing"))' \
@@ -129,7 +130,9 @@ expect "cli: calc without an expression is a usage error" \
   "$(jq -n --argjson status $? --arg message "$message" '{status: $status, message: $message}')"
 
 # CLI: sum from arguments (number strings, a negative number) and from stdin
-expect "cli: sum reads 410k and 1,234.5" '.total == 411234.5' "$($abakus sum 410k 1,234.5)"
+expect "cli: sum reads 410k and 1,234.5, and prints read" \
+  '.total == 411234.5 and .read == [{"index": 0, "input": "410k", "value": 410000}, {"index": 1, "input": "1,234.5", "value": 1234.5}]' \
+  "$($abakus sum 410k 1,234.5)"
 expect "cli: sum takes negative numbers" '.total == 2' "$($abakus sum 1 -2 3)"
 expect "cli: sum after a -- terminator" '.total == -4' "$($abakus sum 1 -- -5)"
 message=$($abakus sum 1 --decmal , 2 2>&1)

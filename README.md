@@ -169,12 +169,18 @@ Arithmetic is exact, with 38 significant digits; `calc` computes with exact frac
 
 `{"numbers": [number | string, …], "decimal": "." | ","}`. `numbers` is required and may be empty.
 
-The response has `total`, `count`, `mean` (null for an empty list) and `read`, how each string was read
-(`{"index", "input", "value"}`; left out when there are no strings). `total_exact: false` or
+The response has `total`, `count` and `mean` (null for an empty list). `total_exact: false` or
 `mean_exact: false` appear when a value had to be rounded.
+
+The command line also prints `read`, how each string was read (`{"index", "input", "value"}`; left out when there
+are no strings). Over MCP it is left out: it grows with the list, and an MCP result stays small
+([ADR-0008](docs/adr/0008-small-mcp-results.md)). To see how one string is read, sum it alone.
 
 ```json
 {"numbers": ["1.234,5", "410k", 8], "decimal": ","}
+→ {"total": 411242.5, "count": 3, "mean": 137080.833333333, "mean_exact": false}
+
+abakus call sum '{"numbers": ["1.234,5", "410k", 8], "decimal": ","}'
 → {"total": 411242.5, "count": 3, "mean": 137080.833333333, "mean_exact": false,
    "read": [{"index": 0, "input": "1.234,5", "value": 1234.5}, {"index": 1, "input": "410k", "value": 410000}]}
 ```
@@ -261,7 +267,8 @@ every number is negative.
 
 ## Command line
 
-Each command runs one tool and prints the JSON an agent would get. A tool's error goes to stderr with exit
+Each command runs one tool and prints the JSON an agent would get, plus the details an MCP result leaves out,
+such as `sum`'s `read` ([ADR-0008](docs/adr/0008-small-mcp-results.md)). A tool's error goes to stderr with exit
 status 1 (the same text an agent reads); a usage mistake shows the usage with exit status 64.
 
 ```sh
@@ -276,7 +283,7 @@ abakus calc '{errors-k3f9} / {requests-p2x7} * 100'  # quote it: * ( { ^ mean so
 abakus calc -2^2                                 # -4; a leading minus is part of the expression
 abakus date-diff 2026-11-08 now
 abakus tools                                     # the tools and what they do
-abakus call sum '{"numbers": ["0.1", 0.2]}'      # any tool with JSON arguments, as over MCP
+abakus call sum '{"numbers": ["0.1", 0.2]}'      # any tool with JSON arguments, as an MCP client sends them
 ```
 
 `--help` on any command says the rest.

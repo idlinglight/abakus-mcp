@@ -1,10 +1,13 @@
 import Foundation
 
-/// `sum`: adds a list of numbers exactly and reports how each string was read (ADR-0005).
+/// `sum`: adds a list of numbers exactly (ADR-0005). How each string was read is a detail: the command line prints
+/// it, an MCP result leaves it out (ADR-0008).
 public struct SumTool: Tool {
     public init() {}
 
     public let name = "sum"
+
+    public let detailKeys = ["read"]
 
     public let description = """
         Adds numbers exactly, in decimal arithmetic, and returns the total, the count and the mean. Use it instead \
@@ -16,13 +19,15 @@ public struct SumTool: Tool {
 
         \(NumberReader.rulesSummary)
 
-        Response: {"total", "count", "mean", "read"}. read lists how each string was read, as \
-        [{"index": 0, "input": "410k", "value": 410000}]; check it when an input could be read two ways. JSON \
-        numbers are not listed. The total is exact unless it has more than 38 significant digits; then it is \
-        rounded and total_exact: false is added. The mean is exact when it fits in 38 digits; otherwise it is \
-        rounded half away from zero to 15 significant digits (to whole units when the integer part is longer; \
-        1/3 shows as 0.333333333333333), and mean_exact: false is added. Without these flags, total and mean are \
-        exact.
+        Response: {"total", "count", "mean"}. The total is exact unless it has more than 38 significant digits; \
+        then it is rounded and total_exact: false is added. The mean is exact when it fits in 38 digits; \
+        otherwise it is rounded half away from zero to 15 significant digits (to whole units when the integer \
+        part is longer; 1/3 shows as 0.333333333333333), and mean_exact: false is added. Without these flags, \
+        total and mean are exact. To see how one string is read, sum it alone: {"numbers": ["410k"]}.
+
+        The abakus command line (abakus sum, the same program as this server) prints the same result plus read, \
+        how each string was read, as [{"index": 0, "input": "410k", "value": 410000}]; it also reads numbers \
+        from stdin.
         """
 
     public let inputSchema: JSONValue = [

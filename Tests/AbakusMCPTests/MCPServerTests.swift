@@ -47,6 +47,25 @@ import Testing
         #expect(call["resultType"] == nil)
     }
 
+    /// A tool's detail keys stay out of the MCP result, in the text and in structuredContent alike (ADR-0008).
+    @Test func resultsLeaveOutDetailKeys() throws {
+        struct DetailTool: Tool {
+            let name = "detail"
+            let description = "Answers, with a detail."
+            let inputSchema: JSONValue = ["type": "object", "properties": [:]]
+            let annotations = ToolAnnotations(readOnly: true, destructive: false, idempotent: true)
+            let detailKeys = ["each"]
+
+            func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
+                ["answer": 3, "each": [1, 2]]
+            }
+        }
+        var server = MCPServer(tools: [DetailTool()], context: testContext())
+        let call = try result(&server, request(1, "tools/call", ["name": "detail"]))
+        #expect(call["structuredContent"] == ["answer": 3])
+        #expect(call[path: ["content", 0, "text"]] == #"{"answer":3}"#)
+    }
+
     @Test func toolListShapeFollowsTheNegotiatedRevision() throws {
         var newest = makeServer()
         _ = try result(&newest, initializeRequest(version: "2025-11-25"))

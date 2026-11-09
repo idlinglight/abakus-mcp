@@ -343,8 +343,9 @@ public struct MCPServer {
         return .object(definition)
     }
 
-    /// A tool's result reaches the model as compact JSON text, and clients on revisions that have it also get
-    /// the object as `structuredContent`. A `ToolError` becomes a result with `isError: true` whose text is the
+    /// A tool's result, without its detail keys (ADR-0008), reaches the model as compact JSON text, and clients on
+    /// revisions that have it also get the object as `structuredContent`. A `ToolError` becomes a result with
+    /// `isError: true` whose text is the
     /// message and, if present, the details; it carries no `structuredContent`, since that is reserved for the
     /// tool's result.
     private func callTool(_ params: JSONObject, revision: ProtocolRevision) -> Result<JSONObject, RPCError> {
@@ -369,7 +370,7 @@ public struct MCPServer {
         }
         var fields: JSONObject
         do {
-            let output = try tool.call(arguments, in: context)
+            let output = tool.withoutDetails(try tool.call(arguments, in: context))
             fields = ["content": [["type": "text", "text": .string(JSONWriter.write(output))]]]
             if revision.hasStructuredContent {
                 fields["structuredContent"] = .object(output)
