@@ -52,18 +52,38 @@ Considered and not chosen:
 - Shorter encodings (no `index`, parallel arrays, `"410k=410000"`): smaller by a constant factor, still growing.
 - Cutting the list after a number of entries: the entry that matters may be the one cut.
 
+Before deciding, two probes with fresh agents (Haiku, Sonnet and Opus each, given only the text under test):
+
+- The new `sum` description, with seven tasks that included traps: a German export, US thousands separators that
+  trigger the note, a German report read with the default mark, a request to prove how `410k` was read, 300
+  numbers in a file. Every trap was handled: the note was ignored for US data and acted on for German data. All
+  three read "to see how one string is read, sum it alone" as an invitation to check strings one by one, guessed
+  how the command line takes its input, and one wondered whether JSON numbers pass through binary floating point;
+  the description now answers each.
+- The rule below, with every tool's result shape, to sort into within and outside. All three gave the same verdict
+  for every tool, and all three found what the first draft of this record had missed: the tools that work on one
+  tally repeat every threshold, an `at` threshold with all its marks. They differed where the draft was silent:
+  whether stored state counts like input, whether a list of a fixed length plus a count is allowed, whether an
+  echo of the input belongs to the answer, and lists that grow with the size of a value. The rule now says.
+
 ## Decision
 
 ### Small results
 
 A successful MCP result grows at most logarithmically with the amount of input (the number of items in a list, of
-tallies, of characters in an expression) and stays within a few hundred characters. The size of one value is
-fixed by abakus's number rules (38 significant digits, below 10^165, no digits below 10^-128) and is not growth.
-A count of the input, which takes log n digits, is allowed; anything listed per input item is not.
+characters in an expression) and with the stored state it reports on (the number of tallies, the thresholds a tally
+keeps), and stays within a few hundred characters. The size of one value is fixed by abakus's number rules (38
+significant digits, below 10^165, no digits below 10^-128), or by a limit a tool states for one value (calc's
+`fraction`: at most 100 digits above and below the line), and is not growth. A count, which takes log n digits, is
+allowed. A list is allowed when it holds at most a fixed number of entries, followed by a count when there are
+more, whatever would make it long: more input, more stored state, or a larger value (crossings of an `every`
+threshold: at most 10 marks, then a count). A list with an entry for every input item is not.
 
 The result holds the answer the tool's name promises, plus what keeps that answer from misleading: a mark when it
 was rounded (`exact: false` and its kin, as before), and a note when the server chose one of two readings of an
-input.
+input. An echo of the input is not part of the answer: the agent has its request. Where a reading involved a
+choice, a note says so; any other reading the agent asks for, with a call on that part alone or on the command
+line.
 
 Errors are bounded too. They quote at most 100 characters of an input, cut in the middle with `…`, and list at most
 a fixed number of names (the tally errors list 20, as before).
@@ -88,30 +108,39 @@ the practical check; the growth rule says what does not belong in a result at al
 ### sum
 
 - Over MCP: `total`, `count`, `mean` and the `*_exact` flags, as before, and `notes` when a string reads
-  differently with the other decimal mark. Like date_diff's `notes` (ADR-0006), it is a list of sentences; here it
-  has one, of fixed size, whatever the number of such strings: how many there are, the first one with its index,
-  both readings, and what to do:
+  differently with the other decimal mark. Like date_diff's `notes` (ADR-0006), it is a list of strings; here it
+  holds one note of fixed size, whatever the number of such strings: how many there are, the first one with its
+  index, both readings, and what to do:
   `"1,234" (numbers[2]) was read as 1234; with decimal: "," it would be 1.234. If the numbers use a decimal comma,
   call again with decimal: ","`. Calling again sends the input again, but only after the server chose a reading
   that may be wrong: that is a correction, not a call made only to check.
 - A string reads differently with the other decimal mark when it contains `.` or `,` and the other `decimal`
   setting reads it as well. The two values then always differ: in one reading the mark is the decimal mark, in the
   other it groups thousands (and grouping excludes a leading 0, so `0.000` is not a case).
+- No note when another string in the list rules the other mark out, by containing a mark that only the current
+  setting reads (`"12.50"` or `"1,234.5"` with `.`): it shows how the list is written, and calling again with the
+  other mark would fail on it. Found in review.
 - `read` is a detail: the command line prints it, as before.
-- The description says how to check a single string: sum it alone, `{"numbers": ["410k"]}`.
+- The description says that strings following the rules need no checking, and how to check a single string
+  anyway: sum it alone, `{"numbers": ["410k"]}`.
 
 ### Scope
 
-- Now: `sum`, and the errors of every tool that quote an input (number strings, dates, tally names, unknown
-  argument names).
-- `calc` follows the same rule when it is next changed: `read` and `tallies` grow with the expression. Until then
-  they stay in its MCP result. ADR-0007's reasoning about `-2^2` relies on `read` being visible; the replacement
-  would be notes for the known traps.
-- `tally_list` grows with the number of tallies, other sessions' included, which the caller does not control.
-  Open: return the folder and what is in it instead. The files would become an interface that agents read, and
-  the description would have to say that tallies change only through the tally tools, which hold the lock.
+- Now: `sum`, and the errors of every tool that quote an input (number strings, JSON number literals, calc's
+  numbers, dates, tally names, unknown argument names).
+- `date_diff` is within the rule: its input is two instants, and every key it returns is bounded.
+- Known exceptions, each to be brought within the rule when it is next changed:
+  - `calc`: `read` grows with the expression and `tallies` with the tallies it names. ADR-0007's reasoning about
+    `-2^2` relies on `read` being visible; the replacement would be notes for the known traps, and `tallies` could
+    become a list of a fixed length plus a count.
+  - The tools that work on one tally (`tally_create`, `tally_add`, `tally_set`, `tally_drop`) repeat every
+    threshold the tally keeps, an `at` threshold with all its marks, and `crossed` repeats the marks of each `at`
+    threshold crossed. An error for an unknown name lists in `details.matching` up to 20 whole tallies, thresholds
+    included. A direction: show each threshold by what comes next, with a count of its marks.
+  - `tally_list` grows with the number of tallies, other sessions' included, which the caller does not control.
+    A direction: the folder and what is in it, plus a count. The files would become an interface that agents read,
+    and the description would have to say that tallies change only through the tally tools, which hold the lock.
 - A skill for the command line, user-level and installed on request, with its source in this repository: open.
-- `date_diff` and the tools that work on one tally are within the rule already.
 
 ## Consequences
 
