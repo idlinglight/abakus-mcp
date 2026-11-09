@@ -14,7 +14,7 @@ Some small tasks are done better by a small program than by a language model, ye
 ad-hoc tooling for. abakus is the pocket calculator for those. Its arithmetic is exact decimal arithmetic:
 `0.1 + 0.2` is `0.3`, and a result that had to be rounded says so.
 
-macOS only. Status: early, version 0.3.0.
+macOS only. Status: early, version 0.4.0.
 
 ## Install
 
@@ -330,10 +330,10 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/):
 - [ADR-0002](docs/adr/0002-own-mcp-server.md): Own MCP server instead of the Swift SDK (amended: supported revisions, error mapping)
 - [ADR-0003](docs/adr/0003-state-in-user-temp-folder.md): State: one file per tally in the per-user temporary folder (amended: locking)
 - [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names; `tally_drop`'s advice for unknown names)
-- [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only)
+- [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only; by ADR-0008: how readings show over MCP)
 - [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC (amended: whole seconds in `text`)
 - [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name (amended: underflow and the readable policy in full, when `fraction` is left out, rounded tallies in the response, unknown names, flat chains of + and * in `read`, errors while evaluating, parser details)
-- [ADR-0008](docs/adr/0008-small-mcp-results.md): MCP results stay small; the command line shows everything (proposed)
+- [ADR-0008](docs/adr/0008-small-mcp-results.md): MCP results stay small; the command line shows everything
 
 ## License
 

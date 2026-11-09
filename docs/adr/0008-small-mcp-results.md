@@ -1,6 +1,6 @@
 # ADR-0008: MCP results stay small; the command line shows everything
 
-Status: proposed, 2026-11-09 (draft for discussion)
+Status: accepted, 2026-11-09
 
 ## Context
 
@@ -150,3 +150,4 @@ the practical check; the growth rule says what does not belong in a result at al
 - `dev/check.zsh` checks both sides: no `read` over MCP, `read` on the command line.
 - Claude Code's session transcripts record every abakus call, so calls per session can be compared before and
   after this change.
+- abakus 0.4.0 is the first version with this rule. An agent that read `sum`'s `read` over MCP no longer gets it.
