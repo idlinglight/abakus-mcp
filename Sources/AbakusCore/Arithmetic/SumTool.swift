@@ -14,22 +14,25 @@ public struct SumTool: Tool {
         of adding in your head or with a binary floating point tool (bc, awk, a quick script) whenever the total \
         matters, and for numbers written as text (410k, 1,234.5, 1.234,5).
 
-        Arguments: numbers, a list of JSON numbers or number strings (an empty list gives total 0 and mean null); \
-        decimal, "." (default) or ",", the decimal mark in the strings.
+        Arguments: numbers, a list of JSON numbers (read from their literal text, never through binary floating \
+        point) or number strings (an empty list gives total 0 and mean null); decimal, "." (default) or ",", the \
+        decimal mark in the strings: pass "," when the source writes numbers like 1.234,5.
 
         \(NumberReader.rulesSummary)
 
         Response: {"total", "count", "mean"}, plus notes when a string reads differently with the other decimal \
-        mark ("1,234" is 1234 with decimal ".", 1.234 with ","): one sentence with the first such string, both \
-        readings and what to do. The total is exact unless it has more than 38 significant digits; \
+        mark ("1,234" is 1234 with decimal ".", 1.234 with ","): one short note, however many such strings there \
+        are, with how many, the first one with both readings, and what to do. The total is exact unless it has more than 38 significant digits; \
         then it is rounded and total_exact: false is added. The mean is exact when it fits in 38 digits; \
         otherwise it is rounded half away from zero to 15 significant digits (to whole units when the integer \
         part is longer; 1/3 shows as 0.333333333333333), and mean_exact: false is added. Without these flags, \
-        total and mean are exact. To see how one string is read, sum it alone: {"numbers": ["410k"]}.
+        total and mean are exact. Strings that follow the rules above need no checking; to see how a single \
+        string is read anyway, sum it alone: {"numbers": ["410k"]}.
 
-        The abakus command line (abakus sum, the same program as this server) prints the same result plus read, \
-        how each string was read, as [{"index": 0, "input": "410k", "value": 410000}]; it also reads numbers \
-        from stdin.
+        The abakus command line (abakus sum, the same program as this server) prints the same JSON plus read, one \
+        entry per string: [{"index": 0, "input": "410k", "value": 410000}]. It takes the numbers as arguments or \
+        from stdin, separated by whitespace or line breaks (each one a string, so read lists them all), and \
+        --decimal , for a decimal comma.
         """
 
     public let inputSchema: JSONValue = [
@@ -118,15 +121,15 @@ struct OtherDecimalReadings {
     }
 
     mutating func check(_ text: String, index: Int, value: Decimal) {
-        guard text.contains(where: { $0 == "." || $0 == "," }) else { return }
-        let otherMark: DecimalMark = decimal == .point ? .comma : .point
-        guard let other = try? NumberReader.read(.string(text), decimal: otherMark) else { return }
+        guard text.contains(where: { $0 == "." || $0 == "," }),
+            let other = NumberReader.value(of: text, decimal: decimal.other)
+        else { return }
         count += 1
         if first == nil { first = (index, text, value, other) }
     }
 
-    /// One sentence of fixed size, however many such strings there are: how many, the first one with both readings,
-    /// and what to do. nil when there are none.
+    /// A note of fixed size, however many such strings there are: how many, the first one with both readings, and
+    /// what to do. nil when there are none.
     var note: String? {
         guard let first else { return nil }
         let setting = decimal == .point ? #"decimal: ",""# : #"decimal: "." (the default)"#

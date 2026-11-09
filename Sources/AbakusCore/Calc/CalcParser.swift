@@ -491,7 +491,7 @@ struct CalcParser {
         }
         if char(at: index) == "." {
             guard digit(at: index + 1) != nil else {
-                let number = text(start, index)
+                let number = text(start, index).cutForMessage
                 throw ToolError(
                     "The number \(number). ends in a decimal mark \(at(index + 1)): write digits after the \".\" "
                         + "(\(number).0), or leave it out (\(number))."
@@ -545,7 +545,7 @@ struct CalcParser {
             while let c = char(at: end), c == "_" || c == "." || c.calcDigit != nil { end += 1 }
             throw ToolError(
                 "Unexpected \"_\" \(at(index + 1)): numbers take no separators. Write "
-                    + "\(text(start, end).replacingOccurrences(of: "_", with: ""))."
+                    + "\(text(start, end).replacingOccurrences(of: "_", with: "").cutForMessage)."
             )
         }
 
@@ -553,11 +553,11 @@ struct CalcParser {
         while char(at: index)?.isASCIILetter == true { index += 1 }
         if index > lettersStart {
             let letters = text(lettersStart, index)
-            let number = text(start, lettersStart)
+            let number = text(start, lettersStart).cutForMessage
             if letters.count == 1, let power = letters.first?.suffixPower {
                 if hasExponent {
                     throw ToolError(
-                        "The number \(text(start, index)) \(at(start + 1)) has both an exponent and a suffix: use one "
+                        "The number \(text(start, index).cutForMessage) \(at(start + 1)) has both an exponent and a suffix: use one "
                             + "or the other, as in 2.5e3 or 2.5k."
                     )
                 }
@@ -582,7 +582,7 @@ struct CalcParser {
 
         if let c = char(at: index), c.calcDigit != nil || c == "." || c == "_" {
             throw ToolError(
-                "Unexpected \(String(c).quotedForMessage) after the number \(text(start, index)) \(at(index + 1)): a "
+                "Unexpected \(String(c).quotedForMessage) after the number \(text(start, index).cutForMessage) \(at(index + 1)): a "
                     + "number is digits with at most one \".\", then an optional exponent (2.5e3) or suffix (410k)."
             )
         }
@@ -620,7 +620,7 @@ struct CalcParser {
     }
 
     private func rangeError(_ problem: NumberReader.Problem, literal: String, at position: Int) -> ToolError {
-        let found = "The number \(literal) \(at(position))"
+        let found = "The number \(literal.cutForMessage) \(at(position))"
         return switch problem {
         case .tooLarge:
             ToolError(
@@ -658,6 +658,14 @@ struct CalcParser {
             start = end + 1
         }
         let written = pieces.joined(separator: ",")
+        guard written.unicodeScalars.count <= String.messageLimit else {
+            // Rewrites of a long number would repeat it in full (ADR-0008): say what to change instead.
+            return ToolError(
+                "A comma between two digits \(at(comma + 1)): calc takes no thousands separators, and its decimal mark "
+                    + "is always \".\". Write a number without separators, with \".\" as the decimal mark, and separate "
+                    + "arguments with a comma and a space."
+            )
+        }
         let isPlain = { (piece: String) in !piece.isEmpty && piece.allSatisfy { $0.calcDigit != nil } }
         let leadingDigits = { (piece: String) in piece.prefix { $0.calcDigit != nil }.count }
 
@@ -819,7 +827,8 @@ struct CalcParser {
         if char(at: afterWord) == "(" {
             return ToolError("Unknown function \(found): calc has the functions abs, round, min and max." + star)
         }
-        if let previous, case .leaf(.number(_, let literal)) = previous.kind {
+        if let previous, case .leaf(.number(_, let written)) = previous.kind {
+            let literal = written.cutForMessage
             if word.count == 1, word.first?.suffixPower != nil {
                 return ToolError(
                     "Unexpected space before \(found): a suffix follows its number directly (write \(literal)\(word), "

@@ -345,9 +345,8 @@ public struct MCPServer {
 
     /// A tool's result, without its detail keys (ADR-0008), reaches the model as compact JSON text, and clients on
     /// revisions that have it also get the object as `structuredContent`. A `ToolError` becomes a result with
-    /// `isError: true` whose text is the
-    /// message and, if present, the details; it carries no `structuredContent`, since that is reserved for the
-    /// tool's result.
+    /// `isError: true` whose text is the message and, if present, the details; it carries no `structuredContent`,
+    /// since that is reserved for the tool's result.
     private func callTool(_ params: JSONObject, revision: ProtocolRevision) -> Result<JSONObject, RPCError> {
         guard let name = params["name"]?.stringValue else {
             return .failure(.invalidParams(

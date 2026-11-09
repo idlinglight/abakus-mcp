@@ -164,6 +164,15 @@ import Testing
         // 100 characters are quoted whole.
         let hundred = String(repeating: "x", count: 100)
         #expect(failure(["numbers": [.string(hundred)]])?.message.contains("\"\(hundred)\"") == true)
+        // Cut by Unicode scalars: one character with 10,000 combining marks is cut too.
+        let marks = "1" + String(repeating: "\u{301}", count: 10_000)
+        #expect(try #require(failure(["numbers": [.string(marks)]])).text.unicodeScalars.count < 1000)
+        // JSON number literals: too many digits, and not a JSON number at all.
+        let manyDigits = JSONValue.number(String(repeating: "123456789", count: 500))
+        let digitsError = try #require(failure(["numbers": [manyDigits]]))
+        #expect(digitsError.text.count < 1000)
+        #expect(digitsError.message.contains("too large"))
+        #expect(try #require(failure(["numbers": [.number(String(repeating: "x", count: 5000))]])).text.count < 1000)
         // An unknown argument's name too.
         let name = String(repeating: "a", count: 300)
         let unknown = try #require(failure(JSONObject([("numbers", [1]), (name, 1)])))

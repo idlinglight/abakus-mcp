@@ -221,6 +221,18 @@ import Testing
         #expect(late.contains("+ 1 + (\": "), "\(late)")
     }
 
+    /// A long number literal is cut in the middle wherever an error names it (ADR-0008).
+    @Test func errorsCutLongNumbers() {
+        let digits = String(repeating: "1234567890", count: 50)  // 500 digits
+        for expression in [digits, digits + "abc", digits + "_0", digits + ".", digits + "e3k", digits + ",234", digits + " m"] {
+            let text = message(expression)
+            #expect(text.count < 700, "\(expression.suffix(5)): \(text.count) characters")
+            #expect(!text.contains(String(repeating: "1234567890", count: 6)), "\(expression.suffix(5)): \(text)")
+        }
+        #expect(message(digits).contains("is too large"))
+        #expect(message(digits + ",234").contains("calc takes no thousands separators"))
+    }
+
     @Test func errorsNeverSuggestTheDecimalArgument() {
         for expression in ["1,234", "1,5", "1.234.567", "1 000", "1e400", "5m", "1_000"] {
             let text = message(expression)
