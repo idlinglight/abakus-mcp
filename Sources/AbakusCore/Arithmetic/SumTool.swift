@@ -21,8 +21,9 @@ public struct SumTool: Tool {
         \(NumberReader.rulesSummary)
 
         Response: {"total", "count", "mean"}, plus notes when a string reads differently with the other decimal \
-        mark ("1,234" is 1234 with decimal ".", 1.234 with ","): one short note, however many such strings there \
-        are, with how many, the first one with both readings, and what to do. The total is exact unless it has more than 38 significant digits; \
+        mark ("1,234" is 1234 with decimal ".", 1.234 with ",") and no other string rules that mark out ("12.50" \
+        reads only with "."): one short note, however many such strings there are, with how many, the first one \
+        with both readings, and what to do. The total is exact unless it has more than 38 significant digits; \
         then it is rounded and total_exact: false is added. The mean is exact when it fits in 38 digits; \
         otherwise it is rounded half away from zero to 15 significant digits (to whole units when the integer \
         part is longer; 1/3 shows as 0.333333333333333), and mean_exact: false is added. Without these flags, \
@@ -111,9 +112,14 @@ public struct SumTool: Tool {
 /// Strings that the other `decimal` setting reads as a different number: `"1,234"` is 1234 with ".", 1.234 with
 /// ",". Such a string contains "." or "," and the other setting reads it as well; the two values then always
 /// differ, since the mark is the decimal mark in one reading and groups thousands in the other (ADR-0008).
+///
+/// A string with a mark that only the current setting reads (`"12.50"`, `"1,234.5"` with ".") shows how the list
+/// is written: then there is no note, since calling again with the other mark would fail on that string.
 struct OtherDecimalReadings {
     let decimal: DecimalMark
     private(set) var count = 0
+    /// A string with a mark that the other setting cannot read was seen. Later strings need no second reading.
+    private(set) var ruledOut = false
     private var first: (index: Int, text: String, value: Decimal, other: Decimal)?
 
     init(decimal: DecimalMark) {
@@ -121,17 +127,19 @@ struct OtherDecimalReadings {
     }
 
     mutating func check(_ text: String, index: Int, value: Decimal) {
-        guard text.contains(where: { $0 == "." || $0 == "," }),
-            let other = NumberReader.value(of: text, decimal: decimal.other)
-        else { return }
+        guard !ruledOut, text.contains(where: { $0 == "." || $0 == "," }) else { return }
+        guard let other = NumberReader.value(of: text, decimal: decimal.other) else {
+            ruledOut = true
+            return
+        }
         count += 1
         if first == nil { first = (index, text, value, other) }
     }
 
     /// A note of fixed size, however many such strings there are: how many, the first one with both readings, and
-    /// what to do. nil when there are none.
+    /// what to do. nil when there are none, or when a string rules the other mark out.
     var note: String? {
-        guard let first else { return nil }
+        guard !ruledOut, let first else { return nil }
         let setting = decimal == .point ? #"decimal: ",""# : #"decimal: "." (the default)"#
         let advice = decimal == .point
             ? #"If the numbers use a decimal comma, call again with decimal: ","."#
