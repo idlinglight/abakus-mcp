@@ -13,9 +13,16 @@ struct Sum: ParsableCommand {
     var numbers: [String] = []
     @OptionGroup var decimal: DecimalOption
 
+    // Usage mistakes in validate() rather than run(), so that the usage shown is sum's.
+    func validate() throws {
+        if try ToolRunner.numberWords(numbers).isEmpty {
+            try ToolRunner.requireStandardInputNotTerminal(command: "sum")
+        }
+    }
+
     func run() throws {
         let given = try ToolRunner.numberWords(numbers)
-        let words = given.isEmpty ? try ToolRunner.wordsFromStandardInput(command: "sum") : given
+        let words = given.isEmpty ? ToolRunner.wordsFromStandardInput() : given
         var arguments: JSONObject = ["numbers": .array(words.map { .string($0) })]
         decimal.apply(to: &arguments)
         try ToolRunner.run("sum", arguments)

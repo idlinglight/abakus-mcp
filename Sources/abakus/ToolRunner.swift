@@ -63,12 +63,17 @@ enum ToolRunner {
         return result
     }
 
-    /// Whitespace-separated words from stdin, for commands that take numbers from a pipe. A terminal on stdin is
-    /// a usage mistake: nobody is going to type the numbers and press ctrl-D.
-    static func wordsFromStandardInput(command: String) throws -> [String] {
+    /// For commands that take numbers from a pipe when given none: a terminal on stdin is a usage mistake, since
+    /// nobody is going to type the numbers and press ctrl-D. Call it from `validate()`, so that the usage shown is
+    /// the command's.
+    static func requireStandardInputNotTerminal(command: String) throws {
         if isatty(STDIN_FILENO) != 0 {
             throw ValidationError("Give the numbers as arguments, or pipe them in: printf '1\\n2\\n' | abakus \(command)")
         }
+    }
+
+    /// Whitespace-separated words from stdin; see `requireStandardInputNotTerminal(command:)`.
+    static func wordsFromStandardInput() -> [String] {
         let data = FileHandle.standardInput.readDataToEndOfFile()
         return String(decoding: data, as: UTF8.self).split(whereSeparator: \.isWhitespace).map(String.init)
     }
