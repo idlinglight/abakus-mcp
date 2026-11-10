@@ -10,7 +10,7 @@ public enum TallyTools {
 
 // MARK: - tally_create
 
-struct TallyCreate: Tool {
+struct TallyCreate: TallyStateTool {
     let name = "tally_create"
 
     let detailKeys = TallySchema.detailKeys
@@ -90,7 +90,7 @@ struct TallyCreate: Tool {
 
 // MARK: - tally_add
 
-struct TallyAdd: Tool {
+struct TallyAdd: TallyStateTool {
     let name = "tally_add"
 
     let detailKeys = TallySchema.detailKeys
@@ -164,7 +164,7 @@ struct TallyAdd: Tool {
 
 // MARK: - tally_set
 
-struct TallySet: Tool {
+struct TallySet: TallyStateTool {
     let name = "tally_set"
 
     let detailKeys = TallySchema.detailKeys
@@ -306,11 +306,12 @@ struct TalliesInfo: Tool {
 
 // MARK: - tally_drop
 
-struct TallyDrop: Tool {
+struct TallyDrop: TallyStateTool {
     let name = "tally_drop"
 
     let description = """
-        Delete a tally you no longer need and get its final state back. An unknown name is an error. Also \
+        Delete a tally you no longer need and get its final state back; the abakus command line (the same program \
+        as this server) also prints all the marks of an at threshold (marks). An unknown name is an error. Also \
         removes a tally whose file cannot be read.
         """
 
@@ -360,7 +361,8 @@ enum TallySchema {
     static let readingsInBrief = """
         A number string that also reads with the other decimal mark, as a different number ("1,234" is 1234 with \
         ".", 1.234 with ","), gets a short note under notes on how to correct it. The abakus command line (the \
-        same program as this server) also prints read, how each string was read.
+        same program as this server) also prints read, how each string was read, and all the marks of an at \
+        threshold (marks).
         """
 
     static let namePattern = "^[a-z0-9][a-z0-9._-]{0,63}$"

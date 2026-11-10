@@ -215,30 +215,39 @@ extension String {
     }
 
     /// An at threshold shows how many marks it has, how many are passed (at or below the current value) and the
-    /// marks ahead, at most 5: an agent that lost its request still sees what comes next, and the status has the
-    /// same size for 7 marks or 2000. [] once all are passed, as crossed is [] when nothing was crossed.
+    /// marks ahead, at most 5: an agent that lost its request still sees what comes next, and the MCP form has the
+    /// same size for 7 marks or 2000. [] once all are passed, as crossed is [] when nothing was crossed. All the
+    /// marks come last, under marks, for the command line.
     @Test func statusGivesTheMarksAhead() throws {
         let marks = Threshold(.at([10, 20]))
-        #expect(try marks.status(of: tally(value: "-5")) == ["marks_total": 2, "of": "value", "passed": 0, "ahead": [10, 20]])
-        #expect(try marks.status(of: tally(value: "10")) == ["marks_total": 2, "of": "value", "passed": 1, "ahead": [20]])
-        #expect(try marks.status(of: tally(value: "19.99")) == ["marks_total": 2, "of": "value", "passed": 1, "ahead": [20]])
-        #expect(try marks.status(of: tally(value: "20")) == ["marks_total": 2, "of": "value", "passed": 2, "ahead": []])
+        #expect(try marks.status(of: tally(value: "-5")) == ["marks_total": 2, "of": "value", "passed": 0, "ahead": [10, 20], "marks": [10, 20]])
+        #expect(try mcp(marks.status(of: tally(value: "10"))) == ["marks_total": 2, "of": "value", "passed": 1, "ahead": [20]])
+        #expect(try mcp(marks.status(of: tally(value: "19.99"))) == ["marks_total": 2, "of": "value", "passed": 1, "ahead": [20]])
+        #expect(try marks.status(of: tally(value: "20")) == ["marks_total": 2, "of": "value", "passed": 2, "ahead": [], "marks": [10, 20]])
         // The two cases of the approved preview.
-        #expect(try Threshold(.at([50, 100, 150])).status(of: tally(value: "60")) == ["marks_total": 3, "of": "value", "passed": 1, "ahead": [100, 150]])
+        #expect(try mcp(Threshold(.at([50, 100, 150])).status(of: tally(value: "60"))) == ["marks_total": 3, "of": "value", "passed": 1, "ahead": [100, 150]])
         let hundreds = Threshold(.at((1...200).map { Decimal($0) }))
-        #expect(try hundreds.status(of: tally(value: "18.5")) == ["marks_total": 200, "of": "value", "passed": 18, "ahead": [19, 20, 21, 22, 23]])
+        #expect(try mcp(hundreds.status(of: tally(value: "18.5"))) == ["marks_total": 200, "of": "value", "passed": 18, "ahead": [19, 20, 21, 22, 23]])
         let many = Threshold(.at((1...2000).map { Decimal($0 * 1000) }), of: .count)
-        #expect(try many.status(of: tally(count: 2500)) == ["marks_total": 2000, "of": "count", "passed": 2, "ahead": [3000, 4000, 5000, 6000, 7000]])
+        let full = try many.status(of: tally(count: 2500))
+        #expect(mcp(full) == ["marks_total": 2000, "of": "count", "passed": 2, "ahead": [3000, 4000, 5000, 6000, 7000]])
+        #expect(full["marks"]?.arrayValue?.count == 2000)
+        #expect(full.keys.last == "marks")
         #expect(Threshold.marksAhead == 5)
     }
 
-    /// The worst case per at threshold is fixed: five marks of 38 significant digits.
+    /// The worst case per at threshold over MCP is fixed: five marks of 38 significant digits.
     @Test func theMarksAheadKeepTheStatusBounded() throws {
         let long = (1...200).map { TallyTest.decimal(String(repeating: "9", count: 34) + String(1000 + $0)) }
         #expect(long[0].description.count == 38)
-        let status = try Threshold(.at(long)).status(of: tally(value: "0"))
+        let status = mcp(try Threshold(.at(long)).status(of: tally(value: "0")))
         #expect(status["ahead"]?.arrayValue?.count == 5)
         #expect(JSONWriter.write(status).count <= 260, "\(JSONWriter.write(status).count)")
+    }
+
+    /// A status as an MCP result has it: without the list of all marks (TallyResponse.withoutDetails).
+    private func mcp(_ status: JSONObject) -> JSONObject {
+        TallyResponse.compact(["thresholds": [.object(status)]])["thresholds"]?.arrayValue?.first?.objectValue ?? [:]
     }
 
     @Test func everyStatusGivesTheNextMark() throws {
