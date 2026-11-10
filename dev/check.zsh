@@ -52,6 +52,7 @@ expect "mcp legacy: sum of 0.1 and 0.2 is exactly 0.3, without read (a detail, A
   '.result.structuredContent == {"total": 0.3, "count": 2, "mean": 0.15}
      and (.result.content[0].text | contains("\"total\":0.3") and (contains("read") | not))' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 3)')"
+mcp_sum_text=$(print -r -- "$responses" | jq -r 'select(.id == 3) | .result.content[0].text')  # for call --without-details
 expect "mcp legacy: a tool error is a result with isError" \
   '.result.isError == true and (.result.content[0].text | test("missing"))' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 4)')"
@@ -150,6 +151,11 @@ expect "cli: date-diff across an offset" '.totals.hours == 1738.5' \
   "$($abakus date-diff 2026-11-08T14:30:00+01:00 2027-01-20)"
 expect "cli: call passes JSON arguments through" '.total == 0.3' \
   "$($abakus call sum '{"numbers": ["0.1", 0.2]}')"
+expect "cli: call prints the details an MCP result leaves out" '.read == [{"index": 0, "input": "0.1", "value": 0.1}]' \
+  "$($abakus call sum '{"numbers": ["0.1", 0.2]}')"
+expect "cli: call --without-details prints the text of the MCP result above, character for character" '.cli == .mcp' \
+  "$(jq -n --arg cli "$($abakus call --without-details sum '{"numbers": ["0.1", 0.2]}')" \
+     --arg mcp "$mcp_sum_text" '{cli: $cli, mcp: $mcp}')"
 
 if (( failures )); then
   if [[ -s $stderr_log ]]; then

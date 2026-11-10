@@ -14,7 +14,7 @@ Some small tasks are done better by a small program than by a language model, ye
 ad-hoc tooling for. abakus is the pocket calculator for those. Its arithmetic is exact decimal arithmetic:
 `0.1 + 0.2` is `0.3`, and a result that had to be rounded says so.
 
-macOS only. Status: early, version 0.4.0.
+macOS only. Status: early, version 0.4.1.
 
 ## Install
 
@@ -271,7 +271,8 @@ every number is negative.
 ## Command line
 
 Each command runs one tool and prints the JSON an agent would get, plus the details an MCP result leaves out,
-such as `sum`'s `read` ([ADR-0008](docs/adr/0008-small-mcp-results.md)). A tool's error goes to stderr with exit
+such as `sum`'s `read` ([ADR-0008](docs/adr/0008-small-mcp-results.md)); `abakus call --without-details` leaves them
+out, so a successful result is exactly the text an MCP client gets. A tool's error goes to stderr with exit
 status 1 (the same text an agent reads); a usage mistake shows the usage with exit status 64.
 
 ```sh
@@ -287,6 +288,7 @@ abakus calc -2^2                                 # -4; a leading minus is part o
 abakus date-diff 2026-11-08 now
 abakus tools                                     # the tools and what they do
 abakus call sum '{"numbers": ["0.1", 0.2]}'      # any tool with JSON arguments, as an MCP client sends them
+abakus call --without-details sum '{"numbers": ["0.1"]}'  # exactly the text an MCP client gets
 ```
 
 `--help` on any command says the rest.
