@@ -14,7 +14,7 @@ Some small tasks are done better by a small program than by a language model, ye
 ad-hoc tooling for. abakus is the pocket calculator for those. Its arithmetic is exact decimal arithmetic:
 `0.1 + 0.2` is `0.3`, and a result that had to be rounded says so.
 
-macOS only. Status: early, version 0.5.3.
+macOS only. Status: early, version 0.5.4.
 
 ## Install
 
@@ -166,8 +166,7 @@ abakus tallies info bytes
                 "created": "2026-11-08T09:36:00Z", "updated": "2026-11-08T09:36:00Z"}]}
 ```
 
-Before 0.5.1 the tool was `tally_list`. That name, over MCP or with `abakus call`, is now an unknown tool whose
-error gives the new name; `abakus tally list` still works.
+Before 0.5.1 the tool was `tally_list`, and the command `abakus tally list`.
 
 `tally_drop` `{name}` deletes the tally and returns its final state with `"dropped": true`.
 
@@ -352,7 +351,7 @@ usage with exit status 64.
 abakus tally create review --limit 20 --every-count 5
 abakus tally add review-k3f9 6                   # the name it printed, suffix included
 abakus tally create build-errors --shared        # exactly this name, for several sessions
-abakus tallies info                              # every tally with its state (was: abakus tally list)
+abakus tallies info                              # every tally with its state
 abakus sum 410k 1,234.5 -3
 grep -oE '[0-9][0-9.]*k' build.log | abakus sum  # numbers from stdin
 abakus sum                                       # in a terminal: type or paste numbers, then ctrl-D
@@ -414,7 +413,7 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/):
 - [ADR-0001](docs/adr/0001-one-package-one-binary.md): One Swift package, one binary, MCP first
 - [ADR-0002](docs/adr/0002-own-mcp-server.md): Own MCP server instead of the Swift SDK (amended: supported revisions, error mapping)
 - [ADR-0003](docs/adr/0003-state-in-user-temp-folder.md): State: one file per tally in the per-user temporary folder (amended: locking; the files are not an interface for agents)
-- [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names; `tally_drop`'s advice for unknown names; an `at` threshold by how many marks it has, at most 5 thresholds, `read` as a detail with a decimal note; `tally_list` renamed `tallies_info`, over MCP the folder and counts; every mark of an `at` threshold on the command line)
+- [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names; `tally_drop`'s advice for unknown names; an `at` threshold by how many marks it has, at most 5 thresholds, `read` as a detail with a decimal note; `tally_list` renamed `tallies_info`, over MCP the folder and counts; every mark of an `at` threshold on the command line; the old name's command and the rename hint dropped)
 - [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only; by ADR-0008: how readings show over MCP)
 - [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC (amended: whole seconds in `text`)
 - [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name (amended: underflow and the readable policy in full, when `fraction` is left out, rounded tallies in the response, unknown names, flat chains of + and * in `read`, errors while evaluating, parser details; `read` a detail, notes where conventions differ, at most 5 tallies over MCP)

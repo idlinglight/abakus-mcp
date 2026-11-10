@@ -11,7 +11,7 @@ struct TallyCommand: ParsableCommand {
             name unless --shared is given. Names: lowercase letters, digits, '.', '_' and '-', at most 64 \
             characters including the suffix. `abakus tallies info` shows them all.
             """,
-        subcommands: [Create.self, Add.self, Set.self, List.self, Drop.self]
+        subcommands: [Create.self, Add.self, Set.self, Drop.self]
     )
 
     struct Create: ParsableCommand {
@@ -106,20 +106,6 @@ struct TallyCommand: ParsableCommand {
         }
     }
 
-    /// The command's name before 0.5.1, when the tool was tally_list (now tallies_info). Kept so that scripts keep
-    /// working, and left out of the help, which shows `abakus tallies info`.
-    struct List: ParsableCommand {
-        static let configuration = CommandConfiguration(
-            abstract: "The old name of `abakus tallies info`.", shouldDisplay: false
-        )
-
-        @OptionGroup var prefix: TallyPrefix
-
-        func run() throws {
-            try ToolRunner.run("tallies_info", prefix.arguments)
-        }
-    }
-
     struct Drop: ParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Delete a tally and print its final state (tally_drop).")
 
@@ -153,7 +139,7 @@ struct TalliesCommand: ParsableCommand {
     }
 }
 
-/// The optional name prefix of `abakus tallies info` and of its old name, `abakus tally list`.
+/// The optional name prefix of `abakus tallies info`.
 struct TallyPrefix: ParsableArguments {
     @Argument(help: "Only tallies whose name starts with this.") var prefix: String?
 
