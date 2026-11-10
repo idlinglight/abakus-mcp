@@ -92,8 +92,8 @@ extension Tally {
     /// Reads a tally file. Throws a plain description of what is wrong (a clause, no final period); the caller
     /// adds which file it was. The name comes from the file name, which is what the tally is found by.
     ///
-    /// A file has to meet the same rules as arguments (`Threshold.checked`, `Tally.checkedCount`): whatever
-    /// fails them is unreadable, not half-trusted.
+    /// A file has to meet the same rules as arguments (`Threshold.checkCount`, `Threshold.checked`,
+    /// `Tally.checkedCount`): whatever fails them is unreadable, not half-trusted.
     init(fileData data: Data, name: String) throws(ToolError) {
         let decoder = JSONDecoder()
         guard let probe = try? decoder.decode(FormatProbe.self, from: data) else {
@@ -110,6 +110,11 @@ extension Tally {
             file = try decoder.decode(TallyFile.self, from: data)
         } catch {
             throw ToolError("it is damaged (\(error.localizedDescription))")
+        }
+        do throws(ToolError) {
+            try Threshold.checkCount(file.thresholds.count)
+        } catch {
+            throw ToolError("it has too many thresholds (\(Self.clause(error.message)))")
         }
         var thresholds: [Threshold] = []
         for (index, item) in file.thresholds.enumerated() {

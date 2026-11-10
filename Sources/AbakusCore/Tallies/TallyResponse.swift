@@ -1,16 +1,21 @@
 import Foundation
 
-/// How tally tools answer: the tally's full state as an ordered JSON object, plus what the call itself did.
+/// How tally tools answer: the tally's state as an ordered JSON object, plus what the call itself did. Each
+/// threshold shows its status; an `at` threshold by how many marks it has, not the marks, so the response stays the
+/// same size however many there are (ADR-0004, amendment of 2026-11-10; ADR-0008).
 ///
 ///     {"name": "review-k3f9", "value": 7, "count": 5, "added": 2,
 ///      "crossed": [{"every": 5, "of": "count", "at": [5]}],
 ///      "thresholds": [{"limit": 20, "of": "value", "reached": false, "remaining": 13},
+///                     {"marks": 50, "of": "value", "passed": 2, "next": 10},
 ///                     {"every": 5, "of": "count", "next": 10}],
 ///      "created": "2026-11-08T09:12:00Z", "updated": "2026-11-08T09:40:31Z"}
 enum TallyResponse {
     /// - `dropped`: the tally was just deleted (`tally_drop`).
     /// - `added`, `crossed`: what a `tally_add` added and crossed (`crossed` is present, possibly empty, on adds).
-    /// - `reads`: numbers that came as strings, and how they were read.
+    /// - `reads`: numbers that came as strings, and how they were read: `read`, a detail of the tools that take
+    ///   numbers (the command line prints it, an MCP result leaves it out).
+    /// - `note`: tally_create's note on an existing name; `decimalNote`: the decimal note, under `notes` like sum's.
     ///
     /// Never fails: thresholds only inform (ADR-0004), so one whose status cannot be computed (arithmetic
     /// beyond Decimal's range) carries a `problem` note instead of taking the response down with it.
@@ -19,7 +24,9 @@ enum TallyResponse {
         dropped: Bool = false,
         added: Decimal? = nil,
         reads: [NumberRead] = [],
-        crossed: [JSONObject]? = nil
+        crossed: [JSONObject]? = nil,
+        note: String? = nil,
+        decimalNote: String? = nil
     ) -> JSONObject {
         var object: JSONObject = ["name": .string(tally.name)]
         if dropped { object["dropped"] = true }
@@ -34,6 +41,8 @@ enum TallyResponse {
         object["thresholds"] = .array(tally.thresholds.map { .object(status($0, of: tally)) })
         object["created"] = .string(tally.created)
         object["updated"] = .string(tally.updated)
+        if let note { object["note"] = .string(note) }
+        if let decimalNote { object["notes"] = [.string(decimalNote)] }
         return object
     }
 
@@ -69,6 +78,44 @@ enum TallyResponse {
     /// tally_create returned earlier and the agent gave again (after compaction, say) to continue it.
     static func recreatedNote(_ requested: String, as name: String) -> String {
         "A tally named \"\(requested)\" already exists, and tally_create always makes a new tally: this one is \"\(name)\". If you meant to continue \"\(requested)\", add to it with tally_add and drop this new one with tally_drop."
+    }
+
+    // MARK: The decimal note
+
+    // sum's note (ADR-0008, `OtherDecimalReadings`), with advice that fits each tool: by the time the agent reads
+    // it, the call has changed the tally, so only an idempotent tool can simply be called again.
+
+    /// tally_create: the tally exists, its thresholds read one way. Creating again would make a second tally, so
+    /// the correction is tally_set with the thresholds and the other mark.
+    static func decimalNote(_ readings: OtherDecimalReadings, created name: String) -> String? {
+        let (numbers, mark) = readings.decimal == .point
+            ? ("a decimal comma", #"with decimal: ",""#)
+            : ("a decimal point", "without decimal")
+        return readings.note(
+            advice: "If the numbers use \(numbers), replace the thresholds with tally_set on \"\(name)\", passing them again \(mark); calling tally_create again would make a second tally."
+        )
+    }
+
+    /// tally_add: the addition has counted with the reading it got, and adding again would count it twice. The
+    /// correction is tally_set with the value the other reading gives, which keeps the count: it was one addition
+    /// either way. A negative amount would correct the value but count a second addition, which throws off a
+    /// checkpoint every N items.
+    static func decimalNote(_ readings: OtherDecimalReadings, addedTo before: Tally) -> String? {
+        guard let first = readings.noted else { return nil }
+        let correction: String
+        if let corrected = try? DecimalMath.add(before.value, first.other), corrected.exact {
+            correction = "correct the value with tally_set {\"name\": \"\(before.name)\", \"value\": \(corrected.value)}, which keeps the count"
+        } else {
+            correction = "set the value with tally_set to the value before this addition plus \(first.other), which keeps the count"
+        }
+        return readings.note(
+            advice: "The addition counted as \(first.value). If you meant \(first.other), \(correction); adding again would count a second time."
+        )
+    }
+
+    /// tally_set: idempotent, so calling again with the other mark corrects it, as in sum.
+    static func decimalNote(_ readings: OtherDecimalReadings) -> String? {
+        readings.note(advice: readings.callAgain)
     }
 }
 

@@ -32,8 +32,14 @@ struct Threshold: Sendable, Equatable {
         self.of = of
     }
 
-    /// Up to this many `every` marks crossed by one addition are listed; beyond it, a crossing gives a count.
+    /// Up to this many marks of one threshold (`at` or `every`) crossed by one addition are listed; beyond it, a
+    /// crossing gives a count with the first and the last (ADR-0008: a list of a fixed length, then a count).
     static let listedMarks = 10
+
+    /// A tally keeps at most this many thresholds, whether they come from an argument or from a tally file. An `at`
+    /// threshold takes any number of marks: its status shows how many, not the marks (ADR-0004, amendment of
+    /// 2026-11-10).
+    static let maximumPerTally = 5
 
     static let example = #"[{"limit": 20}, {"every": 5, "of": "count"}]"#
 
@@ -54,6 +60,13 @@ extension Threshold {
     static func parseList(_ value: JSONValue, numbers: inout NumberReading) throws(ToolError) -> [Threshold] {
         guard let items = value.arrayValue else {
             throw ToolError("thresholds must be a list, for example \(example). Pass [] for none.")
+        }
+        do throws(ToolError) {
+            try checkCount(items.count)
+        } catch {
+            throw ToolError(
+                "\(error.message) Pass at most \(maximumPerTally): one at threshold takes any number of marks, so marks on the value (or on the count) fit in one, e.g. {\"at\": [10, 50, 100]}. To watch more, create a second tally with the others and add to both."
+            )
         }
         var result: [Threshold] = []
         for (index, item) in items.enumerated() {
@@ -89,20 +102,27 @@ extension Threshold {
         let rule: Rule
         switch kind {
         case "limit":
-            rule = .limit(try numbers.read(given, as: "\(label).limit"))
+            rule = .limit(try numbers.read(given, as: "\(label).limit", wholeNumber: of == .count))
         case "at":
             guard let items = given.arrayValue else {
                 throw ToolError("\(label).at must be a non-empty list of numbers, e.g. [10, 50].")
             }
             var marks: [Decimal] = []
             for (index, item) in items.enumerated() {
-                marks.append(try numbers.read(item, as: "\(label).at[\(index)]"))
+                marks.append(try numbers.read(item, as: "\(label).at[\(index)]", wholeNumber: of == .count))
             }
             rule = .at(marks)
         default:
-            rule = .every(try numbers.read(given, as: "\(label).every"))
+            rule = .every(try numbers.read(given, as: "\(label).every", wholeNumber: of == .count))
         }
         return try checked(rule, of: of, label: label)
+    }
+
+    /// The rule for how many thresholds a tally keeps, whether they come from an argument or from a tally file.
+    static func checkCount(_ count: Int) throws(ToolError) {
+        guard count <= maximumPerTally else {
+            throw ToolError("thresholds has \(count) items, and a tally takes at most \(maximumPerTally).")
+        }
     }
 
     /// The rules every threshold follows, whether it comes from an argument or from a tally file: `at` has at
@@ -139,12 +159,14 @@ extension Threshold {
 // MARK: - Status and crossings
 
 extension Threshold {
-    /// The threshold as responses show it, e.g. `{"every": 5, "of": "count"}`.
+    /// The threshold as responses show it, e.g. `{"every": 5, "of": "count"}`: its kind and what it watches. An
+    /// `at` threshold shows how many marks it has, not the marks (`{"marks": 50, "of": "value"}`), so a response
+    /// does not grow with them (ADR-0008); the tally file keeps them all. Statuses and crossings start with this.
     var spec: JSONObject {
         var object = JSONObject()
         switch rule {
         case .limit(let limit): object["limit"] = .decimal(limit)
-        case .at(let marks): object["at"] = .array(marks.map(JSONValue.decimal))
+        case .at(let marks): object["marks"] = .number(String(marks.count))
         case .every(let period): object["every"] = .decimal(period)
         }
         object["of"] = .string(of.rawValue)
@@ -159,8 +181,8 @@ extension Threshold {
     }
 
     /// The spec plus where the tally stands: a limit says whether it is reached and what remains or how far
-    /// past it the tally is; `at` and `every` give the next mark above the current value (`at` none when all
-    /// marks are passed).
+    /// past it the tally is; `at` says how many of its marks are passed (at or below the current value or count)
+    /// and the next one, none when all are passed; `every` gives the next mark above the current value.
     func status(of tally: Tally) throws(ToolError) -> JSONObject {
         var object = spec
         let current = measure(tally)
@@ -172,8 +194,11 @@ extension Threshold {
             object[reached ? "over" : "remaining"] = .decimal(distance.value)
             if !distance.exact { object["exact"] = false }
         case .at(let marks):
-            if let next = marks.first(where: { $0 > current }) {
-                object["next"] = .decimal(next)
+            // Ascending, so the marks passed come first and the next one follows them.
+            let passed = marks.prefix { $0 <= current }.count
+            object["passed"] = .number(String(passed))
+            if passed < marks.count {
+                object["next"] = .decimal(marks[passed])
             }
         case .every(let period):
             let passed = try Self.multiples(upTo: current, of: period)
@@ -186,11 +211,12 @@ extension Threshold {
         return object
     }
 
-    /// What going from `before` to `after` crossed, or nil if nothing:
-    /// `{"limit": 20, "of": "value"}`, `{"at": [10], "of": "value"}` (the marks crossed), or
-    /// `{"every": 5, "of": "count", "at": [10]}`; for more than `listedMarks` multiples
-    /// `{"every": 1, "of": "value", "times": 250, "first": 1, "last": 250}`, which also serves when
-    /// neighbouring marks cannot be told apart in 38 digits (then with `"exact": false`).
+    /// What going from `before` to `after` crossed, or nil if nothing. It starts with the spec, as the status does:
+    /// `{"limit": 20, "of": "value"}`, `{"marks": 50, "of": "value", "at": [10]}` (the marks crossed), or
+    /// `{"every": 5, "of": "count", "at": [10]}`. For more than `listedMarks` marks crossed, a count with the first
+    /// and the last: `{"marks": 400, "of": "value", "times": 250, "first": 1, "last": 250}`, or
+    /// `{"every": 1, "of": "value", "times": 250, "first": 1, "last": 250}`, which also serves when neighbouring
+    /// multiples cannot be told apart in 38 digits (then with `"exact": false`).
     func crossing(from before: Tally, to after: Tally) throws(ToolError) -> JSONObject? {
         let old = measure(before), new = measure(after)
         guard new > old else { return nil }
@@ -199,8 +225,16 @@ extension Threshold {
             return old < limit && limit <= new ? spec : nil
         case .at(let marks):
             let crossed = marks.filter { old < $0 && $0 <= new }
-            if crossed.isEmpty { return nil }
-            return ["at": .array(crossed.map(JSONValue.decimal)), "of": .string(of.rawValue)]
+            guard let first = crossed.first, let last = crossed.last else { return nil }
+            var object = spec
+            if crossed.count <= Self.listedMarks {
+                object["at"] = .array(crossed.map(JSONValue.decimal))
+            } else {
+                object["times"] = .number(String(crossed.count))
+                object["first"] = .decimal(first)
+                object["last"] = .decimal(last)
+            }
+            return object
         case .every(let period):
             let low = try Self.multiples(upTo: old, of: period)
             let high = try Self.multiples(upTo: new, of: period)
