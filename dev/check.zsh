@@ -390,6 +390,11 @@ expect "cli: a command's --help shows its usage" '.status == 0 and (.stdout | te
 # that starts with two spaces and a name; a hidden command is not listed, so not in the map.
 skill_folder=${0:A:h:h}/skills/abakus
 skill_files=($skill_folder/*.md(N))
+# Without files, the checks below would find nothing and pass; a grep given no file would wait on stdin. So the
+# folder's state is a check of its own, and every grep over the files also reads /dev/null.
+expect "skill: skills/abakus/ holds SKILL.md and at least two topic files" '.files >= 3 and .skill_md' \
+  "$(jq -nc --argjson files $#skill_files --argjson skill_md $([[ -f $skill_folder/SKILL.md ]] && print true || print false) \
+     '{files: $files, skill_md: $skill_md}')"
 typeset -A help_for
 subcommands() { print -r -- $1 | awk '/^SUBCOMMANDS:/ { s = 1; next } s && /^  [a-z]/ { print $1 }' }
 is_group() { [[ ${help_for[$1]-} == *SUBCOMMANDS:* ]] }
@@ -441,9 +446,8 @@ for file in $skill_files; do
 done
 skill_commands=(${(u)skill_commands})
 expect "skill: every command its files name is one the help lists (no hidden old name)" \
-  '.files >= 3 and .found > 5 and .unknown == []' \
-  "$(jq -nc --argjson files $#skill_files --argjson found $#skill_commands \
-     '{files: $files, found: $found, unknown: $ARGS.positional}' --args -- ${(u)unknown})"
+  '.found > 5 and .unknown == []' \
+  "$(jq -nc --argjson found $#skill_commands '{found: $found, unknown: $ARGS.positional}' --args -- ${(u)unknown})"
 unnamed=()
 for command in ${(ok)help_for}; do
   is_group $command || (( ${skill_commands[(Ie)$command]} )) || unnamed+=$command
@@ -455,35 +459,68 @@ expect "skill: each option its files name is in the help of the command it is wr
   "$(jq -nc --argjson found $option_count '{found: $found, misplaced: $ARGS.positional}' --args -- ${(u)misplaced})"
 # The skill's tables of MCP terms: each tool name in them (snake_case in backticks, such as `tally_create`) is a tool.
 tool_names=(${(f)"$($abakus tools | awk '{ print $1 }')"})
-table_tools=(${(u)${(f)"$(grep -h '^|' $skill_files | grep -oE '`[a-z]+(_[a-z]+)+`' | tr -d '`')"}})
+table_tools=(${(u)${(f)"$(grep -h '^|' $skill_files /dev/null | grep -oE '`[a-z]+(_[a-z]+)+`' | tr -d '`')"}})
 not_tools=()
 for name in $table_tools; do
   (( ${tool_names[(Ie)$name]} )) || not_tools+=$name
 done
 expect "skill: each tool name in its tables of MCP terms is a tool" '.found >= 5 and .unknown == []' \
   "$(jq -nc --argjson found $#table_tools '{found: $found, unknown: $ARGS.positional}' --args -- $not_tools)"
-# Claude Code loads SKILL.md when the skill triggers, and another file of the folder only when SKILL.md sends the
-# agent there: every file it links (a Markdown link, not a web address or an #anchor) exists, and it links every
-# topic file.
-skill_links=(${(u)${(f)"$(grep -oE '\]\([^)#]+' $skill_folder/SKILL.md | cut -c 3- | grep -v '://')"}})
-missing=() unlinked=()
-for link in $skill_links; do
-  [[ -f $skill_folder/$link ]] || missing+=$link
+# Claude Code loads SKILL.md when the skill triggers, and another file of the folder only when a link sends the
+# agent there. markdown_parts <file> links|anchors prints, one per line and outside fenced code blocks, the target
+# of each Markdown link (without a title, `[x](f.md "T")`, and outside `inline code`), or the anchor of each
+# heading, as GitHub makes it: lowercase, punctuation dropped, spaces as hyphens. (Not handled, since the skill has
+# neither: letters outside ASCII, and the -1 suffix of a repeated heading.)
+markdown_parts() {
+  awk -v part=$2 '/^[[:space:]]*```/ { fence = !fence; next }
+    fence { next }
+    part == "anchors" && /^#+[[:space:]]/ {
+      anchor = tolower($0); sub(/^#+[[:space:]]+/, "", anchor); gsub(/[^a-z0-9 _-]/, "", anchor)
+      gsub(/ /, "-", anchor); print anchor }
+    part == "links" {
+      line = $0; gsub(/`[^`]*`/, "", line)
+      while (match(line, /\]\([^)]*\)/)) {
+        target = substr(line, RSTART + 2, RLENGTH - 3); line = substr(line, RSTART + RLENGTH)
+        sub(/^[[:space:]]+/, "", target); sub(/[[:space:]].*$/, "", target); print target } }' $1
+}
+# Every link in the skill's files leads to a file that exists (./ allowed), and an #anchor to a heading there; web
+# addresses are not followed. SKILL.md links every topic file.
+link_count=0 broken=() skill_links=() unlinked=()
+for file in $skill_files; do
+  for link in ${(f)"$(markdown_parts $file links)"}; do
+    [[ $link == *://* || $link == mailto:* ]] && continue
+    link_count=$(( link_count + 1 ))
+    target=${${link%%\#*}#./} anchor=${link#*\#}
+    [[ $link == *\#* ]] || anchor=
+    [[ ${file:t} == SKILL.md && -n $target ]] && skill_links+=$target
+    linked=${file:h}/${target:-${file:t}}
+    if [[ ! -f $linked ]]; then
+      broken+="${file:t}: $link"
+    elif [[ -n $anchor ]]; then
+      anchors=(${(f)"$(markdown_parts $linked anchors)"})
+      (( ${anchors[(Ie)$anchor]} )) || broken+="${file:t}: $link"
+    fi
+  done
 done
 for file in $skill_files; do
   [[ ${file:t} == SKILL.md ]] || (( ${skill_links[(Ie)${file:t}]} )) || unlinked+=${file:t}
 done
-expect "skill: every file SKILL.md links exists, and it links every topic file" \
-  '.links >= 2 and .missing == [] and .unlinked == []' \
-  "$(jq -nc --argjson links $#skill_links --argjson missing "$(jq -nc '$ARGS.positional' --args -- $missing)" \
-     --argjson unlinked "$(jq -nc '$ARGS.positional' --args -- $unlinked)" \
-     '{links: $links, missing: $missing, unlinked: $unlinked}')"
+expect "skill: every link in its files leads to a file that exists, and an #anchor to a heading there" \
+  '.links >= 4 and .broken == []' \
+  "$(jq -nc --argjson links $link_count '{links: $links, broken: $ARGS.positional}' --args -- $broken)"
+expect "skill: SKILL.md links every topic file" '. == []' "$(jq -nc '$ARGS.positional' --args -- $unlinked)"
 # Claude Code knows the skill by the name in SKILL.md's frontmatter, and decides from its description, at most 1024
-# characters, when to load it.
+# characters, when to load it. The description is one line (`description: …`, quotes allowed) or a block
+# (`description: >-` and indented lines), which ends at the next key that is not indented.
 frontmatter=$(awk 'NR == 1 && /^---$/ { f = 1; next } f && /^---$/ { exit } f { print }' $skill_folder/SKILL.md)
-skill_name=$(print -r -- $frontmatter | sed -n 's/^name: //p')
-description=$(print -r -- $frontmatter |
-  awk '/^description:/ { d = 1; next } d && /^  / { sub(/^  /, ""); printf "%s%s", s, $0; s = " " }')
+skill_name=$(print -r -- $frontmatter | sed -n 's/^name:[[:space:]]*//p')
+description=$(print -r -- $frontmatter | awk '
+  /^description:/ { d = 1; v = $0; sub(/^description:[[:space:]]*/, "", v)
+    if (v ~ /^".*"$/ || v ~ /^'\''.*'\''$/) v = substr(v, 2, length(v) - 2)
+    if (v != "" && v !~ /^[>|][-+]?$/) { printf "%s", v; s = " " }
+    next }
+  d && /^[^[:space:]]/ { d = 0 }
+  d && /[^[:space:]]/ { sub(/^[[:space:]]+/, ""); printf "%s%s", s, $0; s = " " }')
 expect "skill: SKILL.md's frontmatter names the folder, with a description of at most 1024 characters" \
   '.name == "abakus" and (.description | length) > 100 and (.description | length) <= 1024' \
   "$(jq -nc --arg name "$skill_name" --arg description "$description" '{name: $name, description: $description}')"
