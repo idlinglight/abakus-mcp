@@ -433,7 +433,8 @@ import Testing
         #expect(response["crossed"] == nil)
         #expect(response["read"] == [["input": "10", "value": 10]])
         #expect(TallyTest.tool("tally_set").withoutDetails(response)["read"] == nil)
-        #expect(response["thresholds"] == [["marks_total": 1, "of": "value", "passed": 1, "ahead": []]])
+        #expect(response["thresholds"] == [["marks_total": 1, "of": "value", "passed": 1, "ahead": [], "marks": [5]]])
+        #expect(TallyTest.tool("tally_set").withoutDetails(response)["thresholds"] == [["marks_total": 1, "of": "value", "passed": 1, "ahead": []]])
 
         let cleared = try state.call("tally_set", ["name": "items", "thresholds": []])
         #expect(cleared["thresholds"] == [])
@@ -584,11 +585,80 @@ import Testing
 
         let added = try state.call("tally_add", ["name": .string(name), "amount": "150,500"])
         #expect(added["crossed"] == [["marks_total": 200, "of": "value", "times": 150, "first": 1000, "last": 150000]])
-        #expect(added["thresholds"] == [["marks_total": 200, "of": "value", "passed": 150, "ahead": [151000, 152000, 153000, 154000, 155000]]])
-        let addText = JSONWriter.write(TallyTest.tool("tally_add").withoutDetails(added))
+        let mcpAdded = TallyTest.tool("tally_add").withoutDetails(added)
+        #expect(mcpAdded["thresholds"] == [["marks_total": 200, "of": "value", "passed": 150, "ahead": [151000, 152000, 153000, 154000, 155000]]])
+        let addText = JSONWriter.write(mcpAdded)
         #expect(addText.count <= 700, "\(addText.count): \(addText)")
-        // The command line still gets every reading.
+        // The command line still gets every reading and every mark.
         #expect(created["read"]?.arrayValue?.count == 200)
+        #expect(added["thresholds"]?.arrayValue?.first?.objectValue?["marks"]?.arrayValue?.count == 200)
+    }
+}
+
+/// The command line shows every mark of an at threshold; an MCP result and errors do not (ADR-0004, amendment
+/// "every mark on the command line").
+@Suite struct TallyAllMarksTests {
+    private static let marks: JSONValue = .array((1...50).map { .number(String($0 * 10)) })
+
+    /// Each tool that answers with a tally's state: the full result has all marks, last in the status, and the MCP
+    /// form is the full result without them (and without read), so it is the start of what the command line prints.
+    @Test func theCommandLineGetsEveryMarkAndMCPTheMarksAhead() throws {
+        let state = TallyTestState()
+        let created = try state.call("tally_create", ["name": "bytes", "shared": true, "thresholds": [["at": Self.marks], ["limit": "1k"]]])
+        let results: [(String, JSONObject)] = [
+            ("tally_create", created),
+            ("tally_add", try state.call("tally_add", ["name": "bytes", "amount": "125"])),
+            ("tally_set", try state.call("tally_set", ["name": "bytes", "value": "205"])),
+            ("tally_drop", try state.call("tally_drop", ["name": "bytes"])),
+        ]
+        for (name, full) in results {
+            let status = try #require(full["thresholds"]?.arrayValue?.first?.objectValue, "\(name)")
+            #expect(status["marks"] == Self.marks, "\(name)")
+            #expect(status.keys.last == "marks", "\(name)")
+            let mcp = TallyTest.tool(name).withoutDetails(full)
+            let compact = try #require(mcp["thresholds"]?.arrayValue?.first?.objectValue, "\(name)")
+            #expect(compact["marks"] == nil, "\(name)")
+            #expect(compact.keys == Array(status.keys.dropLast()), "\(name)")
+            #expect(mcp["read"] == nil, "\(name)")
+            #expect(mcp["thresholds"]?.arrayValue?.last == full["thresholds"]?.arrayValue?.last, "\(name)")  // the limit, as is
+        }
+        let dropped = try #require(results.last?.1)
+        #expect(TallyTest.tool("tally_drop").withoutDetails(dropped)["thresholds"]?.arrayValue?.first == [
+            "marks_total": 50, "of": "value", "passed": 20, "ahead": [210, 220, 230, 240, 250],
+        ])
+    }
+
+    /// Every tool that answers with a tally's state adopts TallyStateTool, whose withoutDetails leaves out the marks,
+    /// and says in its description that the command line prints them.
+    @Test func theToolsThatAnswerWithATallysStateAdoptTallyStateTool() {
+        let adopting = TallyTools.all.filter { $0 is any TallyStateTool }
+        #expect(adopting.map(\.name) == ["tally_create", "tally_add", "tally_set", "tally_drop"])
+        for tool in adopting {
+            #expect(tool.description.contains("also prints read, how each string was read, and all the marks of an at threshold (marks)")
+                || tool.description.contains("also prints all the marks of an at threshold (marks)"), "\(tool.name)")
+        }
+    }
+
+    /// tallies_info's list is the command line's only: there, each tally has every mark.
+    @Test func talliesInfoListsEveryMarkOnTheCommandLine() throws {
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "bytes", "shared": true, "thresholds": [["at": Self.marks]]])
+        let info = try state.call("tallies_info")
+        let status = info["tallies"]?.arrayValue?.first?.objectValue?["thresholds"]?.arrayValue?.first?.objectValue
+        #expect(status?["marks"] == Self.marks)
+        #expect(TallyTest.tool("tallies_info").withoutDetails(info)["tallies"] == nil)
+    }
+
+    /// Errors are not shortened on the way out, so the shared-name error carries the compact state: its size does
+    /// not grow with the marks.
+    @Test func errorsCarryTheCompactState() throws {
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "few", "shared": true, "thresholds": [["at": [1, 2]]]])
+        try state.call("tally_create", ["name": "many", "shared": true, "thresholds": [["at": .array((1...2000).map { .number(String($0)) })]]])
+        let few = try #require(state.failure("tally_create", ["name": "few", "shared": true]))
+        let many = try #require(state.failure("tally_create", ["name": "many", "shared": true]))
+        #expect(many.details?["existing"]?.objectValue?["thresholds"] == [["marks_total": 2000, "of": "value", "passed": 0, "ahead": [1, 2, 3, 4, 5]]])
+        #expect(many.text.count - few.text.count < 20, "\(few.text.count) and \(many.text.count)")
     }
 }
 
@@ -845,7 +915,8 @@ import Testing
         #expect(!error.message.hasSuffix("."))  // it is embedded as a clause
     }
 
-    /// A file keeps every mark; responses only count them.
+    /// A file keeps every mark, as the command line's full status shows them; an MCP result counts them and lists
+    /// the next few.
     @Test func aFileKeepsAllMarks() throws {
         let marks = (1...500).map { TallyTest.decimal("\($0).5") }
         let tally = TallyTest.tally("bytes", thresholds: [Threshold(.at(marks))])
@@ -868,7 +939,7 @@ import Testing
         let sixThresholds = JSONValue.array((1...6).map { ["limit": .number(String($0))] })
         #expect(state.failure("tally_set", ["name": "old", "thresholds": sixThresholds])?.message.hasPrefix("thresholds has 6 items") == true)
         let replaced = try state.call("tally_set", ["name": "old", "thresholds": [["at": [1, 2, 3, 4, 5, 6]]]])
-        #expect(replaced["thresholds"] == [["marks_total": 6, "of": "value", "passed": 4, "ahead": [5, 6]]])
+        #expect(replaced["thresholds"] == [["marks_total": 6, "of": "value", "passed": 4, "ahead": [5, 6], "marks": [1, 2, 3, 4, 5, 6]]])
         #expect(replaced["value"] == 4)
         #expect(replaced["count"] == 1)
     }

@@ -2,7 +2,8 @@
 
 Status: accepted, 2026-11-09; amended 2026-11-10 (`abakus call --without-details`; the tools that work on one
 tally within the rule; `tallies_info`, formerly `tally_list`, within the rule; calc within the rule, and a tool may
-shorten a list over MCP; the skill for the command line; see Scope and the end)
+shorten a list over MCP, as the tally tools do with an `at` threshold's marks; the skill for the command line; see
+Scope and the end)
 
 ## Context
 
@@ -194,6 +195,9 @@ be wrong; an expression rarely names more than five tallies; and the command lin
 - Errors do not go through `withoutDetails`: an error that carries such a list shortens it itself, the same way
   (calc's `details.tallies`), and since an error is the same text on both sides, the command line shows the
   shortened list too.
+- The tally tools do the same with an `at` threshold's `marks` ([ADR-0004](0004-tallies.md), amendment "every
+  mark of an `at` threshold on the command line"): the command line prints them all, an MCP result keeps
+  `marks_total` and the 5 marks `ahead`. Errors carry the short form.
 - calc is within the rule (ADR-0007, amendment 2026-11-10): `read` is a detail, notes show the two readings where
   conventions differ (a leading minus before a power, a chain of powers), and `tallies` lists at most 5 over MCP,
   then `tallies_total`. Its bullet under Known exceptions is removed.

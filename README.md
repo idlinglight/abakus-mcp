@@ -14,7 +14,7 @@ Some small tasks are done better by a small program than by a language model, ye
 ad-hoc tooling for. abakus is the pocket calculator for those. Its arithmetic is exact decimal arithmetic:
 `0.1 + 0.2` is `0.3`, and a result that had to be rounded says so.
 
-macOS only. Status: early, version 0.5.2.
+macOS only. Status: early, version 0.5.3.
 
 ## Install
 
@@ -70,8 +70,9 @@ Names: lowercase letters, digits, `.`, `_`, `-`, starting with a letter or digit
 including the suffix (so 59 as given, 64 with `shared: true`); a longer name is refused with a suggestion cut
 to 59. Tallies untouched for about three days expire ([ADR-0003](docs/adr/0003-state-in-user-temp-folder.md)).
 
-Every response is the tally's state, each threshold with its status. Its size does not depend on how many marks
-the thresholds have, so it stays small over MCP ([ADR-0008](docs/adr/0008-small-mcp-results.md)).
+Every response is the tally's state, each threshold with its status. Over MCP its size does not depend on how many
+marks the thresholds have ([ADR-0008](docs/adr/0008-small-mcp-results.md)); the command line also prints every
+mark of an `at` threshold, under `marks`.
 
 **Thresholds** are a list of at most 5; each item has exactly one of `limit` (a ceiling), `at` (a list of
 marks, any number of them) or `every` (a period), and optionally `of: "value"` (default) or `"count"`. An
@@ -82,8 +83,8 @@ many are `passed` (reached) and the marks `ahead`, at most 5 (`[]` once all are 
 request to a context compaction still sees what comes next:
 `{"marks_total": 200, "of": "value", "passed": 18, "ahead": [19, 20, 21, 22, 23]}`; `every` says the `next` mark.
 A sixth threshold is an error that says to pass fewer, to watch some with a second tally, or, when two `at`
-thresholds watch the same measure, to merge them (one takes any number of marks). The tally's file keeps every
-mark.
+thresholds watch the same measure, to merge them (one takes any number of marks). The command line adds all of an
+`at` threshold's marks after `ahead`: `"marks": [1, 2, …, 200]`; errors, like MCP results, leave them out.
 
 **Number strings**: over MCP, a string that reads differently with the other decimal mark (`"1,234"` is 1234 with
 `.`, 1.234 with `,`), when no other string in the call rules that mark out, gets one note under `notes` that names
@@ -160,7 +161,8 @@ writes, and its error for an unknown name (below) shows the tallies named `items
 abakus tallies info bytes
 → {"folder": "/var/folders/…/T/abakus/tallies", "tallies_found": 1,
    "tallies": [{"name": "bytes", "value": 2490123.5, "count": 1,
-                "thresholds": [{"marks_total": 2, "of": "value", "passed": 1, "ahead": [5000000]}],
+                "thresholds": [{"marks_total": 2, "of": "value", "passed": 1, "ahead": [5000000],
+                                "marks": [1000000, 5000000]}],
                 "created": "2026-11-08T09:36:00Z", "updated": "2026-11-08T09:36:00Z"}]}
 ```
 
@@ -341,7 +343,7 @@ every number is negative.
 
 Each command runs one tool and prints the JSON an agent would get, plus what an MCP result leaves out: the
 details, such as the `read` of `sum`, `calc` and the tally tools, and the whole of a list that an MCP result
-shortens, such as `calc`'s `tallies` ([ADR-0008](docs/adr/0008-small-mcp-results.md)). `abakus call
+shortens, such as `calc`'s `tallies` or an `at` threshold's `marks` ([ADR-0008](docs/adr/0008-small-mcp-results.md)). `abakus call
 --without-details` gives the result as the server does, so a successful result is exactly the text an MCP client
 gets. A tool's error goes to stderr with exit status 1 (the same text an agent reads); a usage mistake shows the
 usage with exit status 64.
@@ -412,11 +414,11 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/):
 - [ADR-0001](docs/adr/0001-one-package-one-binary.md): One Swift package, one binary, MCP first
 - [ADR-0002](docs/adr/0002-own-mcp-server.md): Own MCP server instead of the Swift SDK (amended: supported revisions, error mapping)
 - [ADR-0003](docs/adr/0003-state-in-user-temp-folder.md): State: one file per tally in the per-user temporary folder (amended: locking; the files are not an interface for agents)
-- [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names; `tally_drop`'s advice for unknown names; an `at` threshold by how many marks it has, at most 5 thresholds, `read` as a detail with a decimal note; `tally_list` renamed `tallies_info`, over MCP the folder and counts)
+- [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names; `tally_drop`'s advice for unknown names; an `at` threshold by how many marks it has, at most 5 thresholds, `read` as a detail with a decimal note; `tally_list` renamed `tallies_info`, over MCP the folder and counts; every mark of an `at` threshold on the command line)
 - [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only; by ADR-0008: how readings show over MCP)
 - [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC (amended: whole seconds in `text`)
 - [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name (amended: underflow and the readable policy in full, when `fraction` is left out, rounded tallies in the response, unknown names, flat chains of + and * in `read`, errors while evaluating, parser details; `read` a detail, notes where conventions differ, at most 5 tallies over MCP)
-- [ADR-0008](docs/adr/0008-small-mcp-results.md): MCP results stay small; the command line shows everything (amended: `call --without-details`; the tools that work on one tally within the rule; `tallies_info` within the rule; calc within the rule; a tool may shorten a list over MCP; the skill for the command line)
+- [ADR-0008](docs/adr/0008-small-mcp-results.md): MCP results stay small; the command line shows everything (amended: `call --without-details`; the tools that work on one tally within the rule; `tallies_info` within the rule; calc within the rule; a tool may shorten a list over MCP, as calc and the tally tools do; the skill for the command line)
 
 ## License
 
