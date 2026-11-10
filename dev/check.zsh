@@ -175,13 +175,15 @@ expect "cli: tally create prints read, one entry per string, and every mark, aft
   '(.read | length == 200 and .[0] == {"input": "1,000", "value": 1000})
      and (.thresholds[0] | (.marks | length == 200 and .[199] == 200000) and (keys_unsorted | last == "marks"))' \
   "$($abakus call tally_create "$marks_args")"
-expect "cli: tally add prints every mark too, and tallies info" \
-  '.name as $name | (.add.thresholds[0].marks | length) == 200
-     and (.info.tallies | map(select(.name == $name)) | .[0].thresholds[0].marks | length) == 200' \
-  "$(jq -n --arg name "$marks_name" --argjson add "$($abakus tally add "$marks_name")" \
-     --argjson info "$($abakus tallies info bytes)" '{add: $add, info: $info, name: $name}')"
-expect "cli: tally add prints read and the note" '.read == [{"input": "2,000", "value": 2000}] and (.notes | length == 1)' \
-  "$($abakus tally add "$marks_name" 2,000)"
+# One addition, run on its own: its exit status and stderr are checked before its output is read.
+marks_added=$(outcome $abakus tally add "$marks_name" 2,000)
+expect "cli: tally add on the 200-mark tally succeeds and prints read, the note and every mark" \
+  '.status == 0 and .stderr == "" and (.stdout | fromjson
+     | .read == [{"input": "2,000", "value": 2000}] and (.notes | length == 1) and (.thresholds[0].marks | length == 200))' \
+  "$marks_added"
+expect "cli: tallies info prints every mark too" \
+  ".tallies | map(select(.name == \"$marks_name\")) | .[0].thresholds[0].marks | length == 200" \
+  "$($abakus tallies info bytes)"
 expect "cli: tally create's and tally set's help say that the six threshold options cannot all be given" \
   'map(gsub("\\s+"; " ") | contains("At most 5 thresholds in all, so not all six threshold options at once")) | all' \
   "$(jq -n --arg create "$($abakus tally create --help)" --arg set "$($abakus tally set --help)" '[$create, $set]')"
