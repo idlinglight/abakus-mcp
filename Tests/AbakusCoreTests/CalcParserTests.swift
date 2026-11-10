@@ -277,6 +277,28 @@ import Testing
         #expect(star.unicodeScalars.count < 400, "\(star.unicodeScalars.count)")
     }
 
+    /// A tally reference's errors repeat what the braces hold cut in the middle, to 40 scalars, whatever its length
+    /// and however many combining marks it carries (ADR-0008).
+    @Test func tallyReferenceErrorsCutWhatTheBracesHold() {
+        let marks = String(repeating: "\u{301}", count: 20_000)
+        let field = message("{a:x" + marks + "}")
+        // Compared by scalars (.literal): "x" and its marks are one character, which String compares whole.
+        let fieldStart = "The tally reference {a:x" + String(repeating: "\u{301}", count: 17) + "…"
+        #expect(field.unicodeScalars.starts(with: fieldStart.unicodeScalars), "\(field.prefix(80))")
+        #expect(field.range(of: "ends in an unknown \":x\u{301}", options: .literal) != nil, "\(field.prefix(300))")
+        #expect(field.unicodeScalars.count < 400, "\(field.unicodeScalars.count)")
+        let letters = String(repeating: "x", count: 900)
+        let empty = message("{ :" + letters + "}")
+        #expect(empty.hasPrefix("The tally reference { :" + String(repeating: "x", count: 18) + "…"), "\(empty.prefix(80))")
+        #expect(empty.contains("has no name"), "\(empty.prefix(300))")
+        #expect(empty.count < 400, "\(empty.count)")
+        let unknown = message("{a:" + letters + "}")
+        #expect(unknown.contains("ends in an unknown \":" + String(repeating: "x", count: 20) + "…"), "\(unknown.prefix(300))")
+        #expect(unknown.count < 400, "\(unknown.count)")
+        // Short contents are repeated whole, as before.
+        #expect(message("{ : count}").hasPrefix("The tally reference { : count} at character 1 of \"{ : count}\" has no name"))
+    }
+
     /// A long number literal is cut in the middle wherever an error names it (ADR-0008).
     @Test func errorsCutLongNumbers() {
         let digits = String(repeating: "1234567890", count: 50)  // 500 digits

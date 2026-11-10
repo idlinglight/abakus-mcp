@@ -241,6 +241,10 @@ marks_json=$(jq -nc '{expression: ("-2^ " + ([range(20000)] | map("\u0301") | jo
 expect "size: calc refuses -2^2 with 20,000 combining marks in a space, in an error within 400 characters" \
   '.status == 1 and .stdout == "" and (.stderr | test("^Error: Unexpected ") and length <= 400)' \
   "$(outcome $abakus call calc --without-details "$marks_json")"
+braces_json=$(jq -nc '{expression: ("{a:x" + ([range(20000)] | map("́") | join("")) + "}")}')
+expect "size: calc's error for a tally reference with 20,000 combining marks in its braces stays within 400 characters" \
+  '.status == 1 and .stdout == "" and (.stderr | test("^Error: The tally reference ") and length <= 400)' \
+  "$(outcome $abakus call calc "$braces_json")"
 
 # tallies_info in a state folder of its own, so that its counts do not depend on the checks above: 30 tallies with
 # thresholds, one more, and a file that cannot be read. Over MCP (measured with call --without-details, exactly the

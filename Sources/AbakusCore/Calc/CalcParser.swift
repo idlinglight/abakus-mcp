@@ -23,6 +23,8 @@ import Foundation
 struct CalcParser {
     static let maximumLength = 1000
     static let maximumDepth = 64
+    /// How much of a tally reference's braces an error repeats, in Unicode scalars, before it is cut in the middle.
+    static let contentLimit = 40
 
     /// Parses `expression`. `maximumLength` exists for tests, which lift it to reach the depth guard with
     /// inputs far beyond the length limit.
@@ -760,9 +762,12 @@ struct CalcParser {
         let parts = content.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
         let name = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
         let fieldText = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        // What the braces hold is repeated cut in the middle: it can be any length, and one character can carry any
+        // number of combining marks (ADR-0008).
+        let shownContent = content.cutForMessage(limit: Self.contentLimit)
         if name.isEmpty {
             throw ToolError(
-                "The tally reference {\(content)} \(at(position)) has no name: write the tally's full name in braces, "
+                "The tally reference {\(shownContent)} \(at(position)) has no name: write the tally's full name in braces, "
                     + "as tally_create returned it, like {errors-k3f9}."
             )
         }
@@ -775,7 +780,8 @@ struct CalcParser {
         case "count": field = .count
         default:
             throw ToolError(
-                "The tally reference {\(content)} \(at(position)) ends in an unknown \":\(fieldText ?? "")\": write "
+                "The tally reference {\(shownContent)} \(at(position)) ends in an unknown "
+                    + "\":\((fieldText ?? "").cutForMessage(limit: Self.contentLimit))\": write "
                     + "{\(shownName):count} for the tally's count, or {\(shownName)} (or {\(shownName):value}) for its value."
             )
         }
