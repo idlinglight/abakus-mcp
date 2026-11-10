@@ -96,7 +96,7 @@ public struct CalcTool: Tool {
             values[item.reference] = try item.number()
         }
 
-        let value = try Self.evaluate(expression, text: text, values: values, details: details)
+        let value = try Self.evaluate(expression, text: text, values: values, used: used)
         let rounded: Fraction.DecimalResult
         do throws(FractionError) {
             rounded = try value.decimalResult()
@@ -272,21 +272,21 @@ public struct CalcTool: Tool {
     /// The exact value of the expression, from the leaves up, with each reference's number from `values`. A failure
     /// names the operation and where it is.
     private static func evaluate(
-        _ expression: CalcExpression, text: String, values: [Reference: Fraction], details: JSONObject?
+        _ expression: CalcExpression, text: String, values: [Reference: Fraction], used: [UsedTally]
     ) throws(ToolError) -> Fraction {
         try expression.fold { (node: CalcExpression, operands: [Fraction]) throws(ToolError) -> Fraction in
             let result: Fraction?
             do throws(FractionError) {
                 result = try combine(node, operands, values: values)
             } catch {
-                throw evaluationError(error, at: node, operands: operands, text: text, details: details)
+                throw evaluationError(error, at: node, operands: operands, text: text, used: used)
             }
             guard let result else {
                 // Not reached: every reference is read before evaluating, and the parser checks the arguments.
                 throw ToolError(
                     "calc has no value for \(node.rendered) \(CalcParser.at(node.position, of: text)), which is a bug "
                         + "in abakus. Nothing was computed.",
-                    details: details
+                    details: Self.details(used)
                 )
             }
             return result
@@ -332,9 +332,12 @@ public struct CalcTool: Tool {
     // MARK: Errors
 
     /// An error while working out `node`: what happened, where (as the parser says it), and what to do instead.
+    /// `details.tallies` lists the tallies used; for a division by zero, those of the divisor first, so that the
+    /// tallies the message names come with their values.
     private static func evaluationError(
-        _ error: FractionError, at node: CalcExpression, operands: [Fraction], text: String, details: JSONObject?
+        _ error: FractionError, at node: CalcExpression, operands: [Fraction], text: String, used: [UsedTally]
     ) -> ToolError {
+        var details = Self.details(used)
         let at = CalcParser.at(node.position, of: text)
         let exponents = "\(Fraction.exponentRange.lowerBound) to \(Fraction.exponentRange.upperBound)"
         let places = "\(Fraction.placesRange.lowerBound) to \(Fraction.placesRange.upperBound)"
@@ -342,9 +345,11 @@ public struct CalcTool: Tool {
         let message: String
         switch (error, node.node) {
         case (.divisionByZero, .binary(.power, let base, _)):
+            details = Self.details(used, first: base)
             message = "0 raised to a negative power \(at): the base\(named(base)) is 0, and 0 ^ -n is 1 / 0^n, a "
                 + "division by zero. " + whileZero(base, "base", details: details)
         case (.divisionByZero, .binary(_, _, let divisor)):
+            details = Self.details(used, first: divisor)
             message = "Division by zero \(at): the divisor\(named(divisor)) is 0. "
                 + whileZero(divisor, "divisor", details: details)
         case (.tooManyDigits, _):
@@ -454,11 +459,18 @@ public struct CalcTool: Tool {
     }
 
     /// The tallies an expression used, for errors that come after reading them: a division by zero is often a
-    /// tally at 0. At most `shownTallies`, then `tallies_total`, as over MCP: errors are bounded too (ADR-0008).
-    private static func details(_ used: [UsedTally]) -> JSONObject? {
+    /// tally at 0. At most `shownTallies`, then `tallies_total`, as over MCP: errors are bounded too (ADR-0008). In
+    /// the order of first appearance, except that the references in `operand` (a divisor that is 0) come first.
+    private static func details(_ used: [UsedTally], first operand: CalcExpression? = nil) -> JSONObject? {
         guard !used.isEmpty else { return nil }
+        var ordered = used
+        if let operand {
+            let first = references(in: operand).references
+            ordered = first.compactMap { reference in used.first { $0.reference == reference } }
+                + used.filter { !first.contains($0.reference) }
+        }
         var details = JSONObject()
-        addTallies(used.map { .object($0.entry) }, to: &details)
+        addTallies(ordered.map { .object($0.entry) }, to: &details)
         return details
     }
 
@@ -487,16 +499,18 @@ public struct CalcTool: Tool {
     }
 
     /// An operand as the agent can find it in what it wrote: a number as written (`1e-50`), anything else as `read`
-    /// writes it, in parentheses when it is an operation; a long one is cut in the middle.
+    /// writes it, in parentheses when it is an operation; a long one is cut in the middle, to `operandLimit` scalars.
     private static func written(_ operand: CalcExpression) -> String {
         let text = switch operand.node {
         case .number(_, let literal): literal
         case .binary: "(" + operand.rendered + ")"
         default: operand.rendered
         }
-        guard text.count > 40 else { return text }
-        return String(text.prefix(20)) + "…" + String(text.suffix(19))
+        return text.cutForMessage(limit: operandLimit)
     }
+
+    /// How long an operand or a note's occurrence may be in a message before it is cut in the middle (ADR-0008).
+    static let operandLimit = 40
 
     /// An operand that came to 0, after a space: nothing for a plain number, which is 0 as written.
     private static func named(_ operand: CalcExpression) -> String {
