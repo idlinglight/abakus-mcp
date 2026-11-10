@@ -12,9 +12,11 @@
 - Targets: `AbakusCore` (all tool behaviour), `AbakusMCP` (the MCP server), `abakus` (the executable:
   `abakus mcp` and the CLI). A tool is defined once in the core as a `Tool` and listed in its area's `all`
   (`TallyTools`, `ArithmeticTools`, `DateTools`), which `Catalog` concatenates. CLI commands only build a
-  tool's arguments and print its result (`ToolRunner`); behaviour never lives in the CLI. Result keys that
-  grow with the input are the tool's `detailKeys`: the MCP server leaves them out, the CLI prints them, and a
-  successful MCP result stays within a few hundred characters (ADR-0008).
+  tool's arguments and print its result (`ToolRunner`); behaviour never lives in the CLI. What grows with the
+  input stays off MCP (ADR-0008): a top-level key that grows is one of the tool's `detailKeys`, which the MCP
+  server leaves out; a list that MCP shortens, or one nested inside the result, goes through the tool's own
+  `withoutDetails` override (calc's `tallies`, the tally tools' `marks` via `TallyStateTool`). The CLI prints
+  everything, and a successful MCP result stays within a few hundred characters.
 - A new or changed tool: update its description, the README section and tool table, `dev/check.zsh` if the
   end-to-end path changes, and the ADR if a decision changes.
 - `install.zsh` installs into the user's `~/.local/bin` (with `--skill`, also into `~/.claude/skills`); only
