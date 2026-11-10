@@ -204,12 +204,10 @@ expect "cli: call --without-details prints the text of the MCP result above, cha
      --arg mcp "$mcp_sum_text" '{cli: $cli, mcp: $mcp}')"
 
 # CLI: the tool list, help and version
-expect "cli: tools lists the eight tools by name and title, a short line each, then how to see more" \
-  '.status == 0 and (.stdout | split("\n\n") | length == 2
-     and (.[0] | split("\n") | all(length <= 80 and test("^[a-z_]+ +[A-Z]")) and any(test("^sum +Exact sum$"))
-       and ([.[] | split(" ")[0]] | sort)
-         == ["calc","date_diff","sum","tally_add","tally_create","tally_drop","tally_list","tally_set"])
-     and (.[1] | test("tools --show")))' \
+expect "cli: tools lists the eight tools by name and title, a short line each and nothing else" \
+  '.status == 0 and (.stdout | split("\n") | all(length <= 80 and test("^[a-z_]+ +[A-Z]")) and any(test("^sum +Exact sum$"))
+     and ([.[] | split(" ")[0]] | sort)
+       == ["calc","date_diff","sum","tally_add","tally_create","tally_drop","tally_list","tally_set"])' \
   "$(outcome $abakus tools)"
 expect "cli: tools --show prints a tool's description and input schema" \
   '.status == 0 and (.stdout | test("Adds numbers exactly") and test("\"numbers\""))' "$(outcome $abakus tools --show sum)"

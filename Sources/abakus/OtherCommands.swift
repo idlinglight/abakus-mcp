@@ -103,8 +103,6 @@ struct Tools: ParsableCommand {
         for tool in Catalog.tools {
             print(tool.name.padding(toLength: width, withPad: " ", startingAt: 0) + "  " + (tool.annotations.title ?? ""))
         }
-        print()
-        print("abakus tools --show <name>: a tool's full description and input schema")
     }
 }
 
