@@ -98,7 +98,8 @@ the practical check; the growth rule says what does not belong in a result at al
 
 - A tool's result in the core holds everything abakus knows about the call. Keys that grow with the input are the
   tool's details (`Tool.detailKeys`): the MCP server leaves them out, the command line prints them. The behaviour
-  stays in the core; each side chooses what it shows.
+  stays in the core; each side chooses what it shows. One exception, amended 2026-11-10: `abakus call
+  --without-details` prints a result as the server sends it (see Consequences).
 - The command line takes numbers as arguments or from stdin, so a check can be a command that runs again over the
   source data (`grep -oE '…' build.log | abakus sum`), and its output can go through `jq` or `head` or into a file.
 - The tool descriptions say that the command line exists and what it adds. They do not tell an agent to run it: a

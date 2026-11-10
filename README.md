@@ -271,7 +271,8 @@ every number is negative.
 ## Command line
 
 Each command runs one tool and prints the JSON an agent would get, plus the details an MCP result leaves out,
-such as `sum`'s `read` ([ADR-0008](docs/adr/0008-small-mcp-results.md)). A tool's error goes to stderr with exit
+such as `sum`'s `read` ([ADR-0008](docs/adr/0008-small-mcp-results.md)); `abakus call --without-details` leaves them
+out, so a successful result is exactly the text an MCP client gets. A tool's error goes to stderr with exit
 status 1 (the same text an agent reads); a usage mistake shows the usage with exit status 64.
 
 ```sh
