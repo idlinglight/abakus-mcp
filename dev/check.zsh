@@ -1,6 +1,7 @@
 #!/usr/bin/env zsh
 # check: run a built abakus end to end, through the MCP server (both protocol eras) and through the CLI, in a
-# scratch state folder that is removed afterwards. Real tallies are never touched.
+# scratch state folder that is removed afterwards. Real tallies are never touched. Also checks the abakus-cli
+# skill against the CLI's help, and that install.zsh refuses an unknown argument (it installs nothing).
 # usage: [ABAKUS=<binary>] dev/check.zsh     (default: .build/debug/abakus)
 # exit status: 0 all checks passed, 1 a check failed
 # No `set -e`: a failing command must end up as a FAIL line with what it printed, not end the script silently.
@@ -387,6 +388,90 @@ expect "cli: --help lists the commands" '.status == 0 and (.stdout | test("SUBCO
   "$(outcome $abakus --help)"
 expect "cli: a command's --help shows its usage" '.status == 0 and (.stdout | test("USAGE: abakus sum "))' \
   "$(outcome $abakus sum --help)"
+
+# The abakus-cli skill (skills/abakus-cli/SKILL.md) against this binary, so that the two cannot drift apart.
+# help_for maps each command the help lists, one level of groups deep, to its --help text: "abakus", "abakus sum",
+# "abakus tally create". In ArgumentParser's help, a command is a line under SUBCOMMANDS: that starts with two
+# spaces and a name; a hidden command, such as the old name `abakus tally list`, is not listed, so not in the map.
+skill_file=${0:A:h:h}/skills/abakus-cli/SKILL.md
+typeset -A help_for
+subcommands() { print -r -- $1 | awk '/^SUBCOMMANDS:/ { s = 1; next } s && /^  [a-z]/ { print $1 }' }
+is_group() { [[ ${help_for[$1]-} == *SUBCOMMANDS:* ]] }
+help_for[abakus]=$($abakus --help)
+for top in $(subcommands ${help_for[abakus]}); do
+  key="abakus $top"
+  help_for[$key]=$($abakus $top --help)
+  for sub in $(subcommands ${help_for[$key]}); do
+    key="abakus $top $sub"
+    help_for[$key]=$($abakus $top $sub --help)
+  done
+done
+# Only the skill's code is read, fenced blocks and `inline code`, split into words as the shell would. A command is
+# "abakus" and each next word that names a command of the group before it. Its options are the words that start
+# with -- up to the end of the command: |, ||, ;, &&, &, ) or a # comment. So `jq --raw-output` is no option of
+# abakus, and an option written on its own in the text is not checked.
+skill_code=$(awk '/^[[:space:]]*```/ { fence = !fence; next }
+  fence { print; next }
+  { while (match($0, /`[^`]+`/)) { print substr($0, RSTART + 1, RLENGTH - 2); $0 = substr($0, RSTART + RLENGTH) } }' \
+  $skill_file)
+skill_commands=() unknown=() misplaced=() option_count=0
+for line in ${(f)skill_code}; do
+  words=(${(z)line})
+  for (( i = 1; i <= $#words; i++ )); do
+    [[ ${words[i]} == '#'* ]] && break  # a comment ends the line
+    [[ ${words[i]} == abakus ]] || continue
+    command=abakus j=$(( i + 1 ))
+    while is_group $command && [[ ${words[j]-} == [a-z]* ]]; do
+      command+=" ${words[j]}"
+      j=$(( j + 1 ))
+    done
+    if (( ! ${+help_for[$command]} )); then
+      unknown+=$command
+      continue
+    fi
+    [[ $command == abakus ]] || skill_commands+=$command
+    for (( ; j <= $#words; j++ )); do
+      case ${words[j]} in
+        ('|'|'||'|';'|'&&'|'&'|')'|'#'*) break ;;
+        (--[a-z]*)
+          option_count=$(( option_count + 1 ))
+          [[ $'\n'${help_for[$command]}$'\n' == *[^a-z-]${words[j]}[^a-z-]* ]] || misplaced+="$command ${words[j]}" ;;
+      esac
+    done
+  done
+done
+skill_commands=(${(u)skill_commands})
+expect "skill: every command it names is one the help lists (no hidden old name)" '.found > 5 and .unknown == []' \
+  "$(jq -nc --argjson found $#skill_commands '{found: $found, unknown: $ARGS.positional}' --args -- ${(u)unknown})"
+unnamed=()
+for command in ${(ok)help_for}; do
+  is_group $command || (( ${skill_commands[(Ie)$command]} )) || unnamed+=$command
+done
+expect "skill: names every command the help lists" '. == []' "$(jq -nc '$ARGS.positional' --args -- $unnamed)"
+expect "skill: each option it names is in the help of the command it is written with" \
+  '.found > 10 and .misplaced == []' \
+  "$(jq -nc --argjson found $option_count '{found: $found, misplaced: $ARGS.positional}' --args -- ${(u)misplaced})"
+# The skill's table of MCP terms: each tool name in it (snake_case in backticks, such as `tally_create`) is a tool.
+tool_names=(${(f)"$($abakus tools | awk '{ print $1 }')"})
+table_tools=(${(u)${(f)"$(grep '^|' $skill_file | grep -oE '`[a-z]+(_[a-z]+)+`' | tr -d '`')"}})
+not_tools=()
+for name in $table_tools; do
+  (( ${tool_names[(Ie)$name]} )) || not_tools+=$name
+done
+expect "skill: each tool name in its table of MCP terms is a tool" '.found >= 5 and .unknown == []' \
+  "$(jq -nc --argjson found $#table_tools '{found: $found, unknown: $ARGS.positional}' --args -- $not_tools)"
+
+# install.zsh refuses an unknown argument, and a relative CLAUDE_CONFIG_DIR with --skill, before it builds or
+# installs anything. PATH and HOME point to nothing useful, so that even a broken check could neither build (swift
+# is not found) nor install.
+expect "install.zsh: an unknown argument is a usage error, exit 2, before anything is built" \
+  '.status == 2 and .stdout == "" and .stderr == "usage: ./install.zsh [--skill]"' \
+  "$(outcome env PATH=/var/empty HOME=$ABAKUS_STATE_DIR/home /bin/zsh -f ${0:A:h:h}/install.zsh --nosuch)"
+expect "install.zsh --skill refuses a relative CLAUDE_CONFIG_DIR, exit 1, before anything is built" \
+  '.status == 1 and .stdout == ""
+     and (.stderr | startswith("not installed: CLAUDE_CONFIG_DIR is \"relative/config\", not an absolute path."))' \
+  "$(outcome env PATH=/var/empty HOME=$ABAKUS_STATE_DIR/home CLAUDE_CONFIG_DIR=relative/config \
+     /bin/zsh -f ${0:A:h:h}/install.zsh --skill)"
 
 if (( failures )); then
   if [[ -s $stderr_log ]]; then

@@ -32,6 +32,15 @@ claude mcp add --scope user abakus -- ~/.local/bin/abakus mcp
 
 Other MCP clients: the command is `abakus mcp` (stdio).
 
+```sh
+./install.zsh --skill
+```
+
+also installs the skill `abakus-cli` for Claude Code, as a user-level skill in `~/.claude/skills/abakus-cli/`
+(`$CLAUDE_CONFIG_DIR/skills/abakus-cli/` when that is set, which must then be an absolute path), so agents have
+it in every project. The folder is replaced as a whole, so nothing of an earlier install stays. Its source is
+[`skills/abakus-cli/SKILL.md`](skills/abakus-cli/SKILL.md); see [Command line](#command-line).
+
 ## Tools
 
 | Tool | What it does |
@@ -358,6 +367,13 @@ abakus call --without-details sum '{"numbers": ["0.1"]}'  # exactly the text an 
 
 `--help` on any command says the rest.
 
+The tool descriptions say that the command line exists and what it adds, but not when or how to run it: text
+from a tool server that asks for shell commands reads like the instructions careful agents distrust. That is the
+job of the skill `abakus-cli` (`./install.zsh --skill`), the user's own channel: when the command line is the
+better way and when not, the commands and options, quoting, stdin, exit codes, and how notes written in MCP terms
+map to options ([ADR-0008](docs/adr/0008-small-mcp-results.md)). `dev/check.zsh` fails when the skill names a
+command the help does not list, an option its command lacks or a tool that does not exist, or misses a command.
+
 ## MCP protocol support
 
 `abakus mcp` speaks MCP over stdio: newline-delimited JSON-RPC 2.0, one message per line, diagnostics on
@@ -388,7 +404,7 @@ Requires macOS 15 or later and Swift 6.2 or later (Xcode 27 or its command line 
 ```sh
 swift build
 swift test
-dev/check.zsh      # end to end against .build/debug/abakus: both MCP eras and the CLI, in a scratch folder
+dev/check.zsh      # end to end against .build/debug/abakus: both MCP eras, the CLI and the skill, in a scratch folder
 ```
 
 ## Decisions
@@ -402,7 +418,7 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/):
 - [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only; by ADR-0008: how readings show over MCP)
 - [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC (amended: whole seconds in `text`)
 - [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name (amended: underflow and the readable policy in full, when `fraction` is left out, rounded tallies in the response, unknown names, flat chains of + and * in `read`, errors while evaluating, parser details; `read` a detail, notes where conventions differ, at most 5 tallies over MCP)
-- [ADR-0008](docs/adr/0008-small-mcp-results.md): MCP results stay small; the command line shows everything (amended: `call --without-details`; the tools that work on one tally within the rule; `tallies_info` within the rule; calc within the rule; a tool may shorten a list over MCP, as calc and the tally tools do)
+- [ADR-0008](docs/adr/0008-small-mcp-results.md): MCP results stay small; the command line shows everything (amended: `call --without-details`; the tools that work on one tally within the rule; `tallies_info` within the rule; calc within the rule; a tool may shorten a list over MCP, as calc and the tally tools do; the skill for the command line)
 
 ## License
 
