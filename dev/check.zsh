@@ -1,6 +1,7 @@
 #!/usr/bin/env zsh
 # check: run a built abakus end to end, through the MCP server (both protocol eras) and through the CLI, in a
-# scratch state folder that is removed afterwards. Real tallies are never touched.
+# scratch state folder that is removed afterwards. Real tallies are never touched. Also checks the abakus-cli
+# skill against the CLI's help, and that install.zsh refuses an unknown argument (it installs nothing).
 # usage: [ABAKUS=<binary>] dev/check.zsh     (default: .build/debug/abakus)
 # exit status: 0 all checks passed, 1 a check failed
 # No `set -e`: a failing command must end up as a FAIL line with what it printed, not end the script silently.
@@ -319,6 +320,68 @@ expect "cli: --help lists the commands" '.status == 0 and (.stdout | test("SUBCO
   "$(outcome $abakus --help)"
 expect "cli: a command's --help shows its usage" '.status == 0 and (.stdout | test("USAGE: abakus sum "))' \
   "$(outcome $abakus sum --help)"
+
+# The abakus-cli skill (skills/abakus-cli/SKILL.md) against this binary, so that the two cannot drift apart. Only
+# its code is read, fenced blocks and `inline code`, split into words as the shell would. A command is the word
+# after "abakus", and the next word too when the first is a group (tally, tallies). Each command the skill names
+# must show its own usage, each command in the help must be named, and each option the skill names must be in the
+# help of the root or of a command it names.
+skill_code=$(awk '/^[[:space:]]*```/ { fence = !fence; next }
+  fence { print; next }
+  { while (match($0, /`[^`]+`/)) { print substr($0, RSTART + 1, RLENGTH - 2); $0 = substr($0, RSTART + RLENGTH) } }' \
+  ${0:A:h:h}/skills/abakus-cli/SKILL.md)
+is_group() { [[ $($abakus $1 --help 2>/dev/null) == *SUBCOMMANDS:* ]] }
+skill_commands=()
+for line in ${(f)skill_code}; do
+  words=(${(z)line})
+  for (( i = 1; i < $#words; i++ )); do
+    [[ ${words[i]} == abakus && ${words[i+1]} == [a-z]* ]] || continue
+    command=${words[i+1]}
+    if [[ ${words[i+2]-} == [a-z]* ]] && is_group $command; then
+      command+=" ${words[i+2]}"
+    fi
+    skill_commands+=$command
+  done
+done
+skill_commands=(${(u)skill_commands})
+unknown=() helps=$($abakus --help)
+for command in $skill_commands; do
+  help=$($abakus ${=command} --help 2>&1)
+  if (( $? )) || [[ $help != *"USAGE: abakus $command"* ]]; then
+    unknown+=$command
+  fi
+  helps+=$'\n'$help
+done
+expect "skill: names commands, each shows its own usage" '.found > 10 and .unknown == []' \
+  "$(jq -nc --argjson found $#skill_commands '{found: $found, unknown: $ARGS.positional}' --args -- $unknown)"
+# the commands in the help, one level of groups deep: in ArgumentParser's help, a line under SUBCOMMANDS: that
+# starts with two spaces and a name
+help_commands() { $abakus ${=1} --help | awk '/^SUBCOMMANDS:/ { s = 1; next } s && /^  [a-z]/ { print $1 }' }
+unnamed=()
+for command in $(help_commands ""); do
+  [[ $command == help ]] && continue
+  if is_group $command; then
+    for sub in $(help_commands $command); do
+      (( ${skill_commands[(Ie)$command $sub]} )) || unnamed+="$command $sub"
+    done
+  else
+    (( ${skill_commands[(Ie)$command]} )) || unnamed+=$command
+  fi
+done
+expect "skill: names every command in the help" '. == []' "$(jq -nc '$ARGS.positional' --args -- $unnamed)"
+skill_options=(${(u)${(f)"$(print -r -- $skill_code | grep -oE -- '--[a-z][a-z-]*')"}})
+missing=()
+for option in $skill_options; do
+  print -r -- $helps | grep -qE -- "(^|[^a-z-])${option}([^a-z-]|\$)" || missing+=$option
+done
+expect "skill: names options, each in the help" '.found > 10 and .missing == []' \
+  "$(jq -nc --argjson found $#skill_options '{found: $found, missing: $ARGS.positional}' --args -- $missing)"
+
+# install.zsh refuses an unknown argument before it builds or installs anything. PATH and HOME point to nothing
+# useful, so that even a broken check of the arguments could neither build nor install.
+expect "install.zsh: an unknown argument is a usage error, exit 2, before anything is built" \
+  '.status == 2 and .stdout == "" and .stderr == "usage: ./install.zsh [--skill]"' \
+  "$(outcome env PATH=/var/empty HOME=$ABAKUS_STATE_DIR/home /bin/zsh -f ${0:A:h:h}/install.zsh --nosuch)"
 
 if (( failures )); then
   if [[ -s $stderr_log ]]; then
