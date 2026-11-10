@@ -16,7 +16,7 @@ import Foundation
 enum TallyResponse {
     /// A tally tool's result as an MCP client gets it (ADR-0008): without the tool's detail keys (`read`), and each
     /// `at` threshold under `thresholds` without the list of all its marks. Every tool that answers with a tally's
-    /// state uses it as its `withoutDetails`.
+    /// state uses it as its `withoutDetails`, through `TallyStateTool`.
     static func withoutDetails(_ result: JSONObject, detailKeys: [String]) -> JSONObject {
         var answer = JSONObject()
         for (key, value) in result.entries where !detailKeys.contains(key) {
@@ -140,6 +140,18 @@ enum TallyResponse {
         return readings.note(
             advice: "If you meant \(first.other), \(correction), which keeps the count and reports no crossings (crossed above follows \(first.value)); adding again would count a second time."
         )
+    }
+}
+
+/// A tool that answers with a tally's state (`TallyResponse.state`). Its MCP result leaves out the detail keys and
+/// each `at` threshold's `marks` (`TallyResponse.withoutDetails`). Adopting this protocol is the one place that says
+/// so: a tool that answers with a tally's state and adopts only `Tool` would fall back to the default and send every
+/// mark over MCP.
+protocol TallyStateTool: Tool {}
+
+extension TallyStateTool {
+    func withoutDetails(_ result: JSONObject) -> JSONObject {
+        TallyResponse.withoutDetails(result, detailKeys: detailKeys)
     }
 }
 

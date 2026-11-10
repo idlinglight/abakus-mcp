@@ -628,6 +628,17 @@ import Testing
         ])
     }
 
+    /// Every tool that answers with a tally's state adopts TallyStateTool, whose withoutDetails leaves out the marks,
+    /// and says in its description that the command line prints them.
+    @Test func theToolsThatAnswerWithATallysStateAdoptTallyStateTool() {
+        let adopting = TallyTools.all.filter { $0 is any TallyStateTool }
+        #expect(adopting.map(\.name) == ["tally_create", "tally_add", "tally_set", "tally_drop"])
+        for tool in adopting {
+            #expect(tool.description.contains("also prints read, how each string was read, and all the marks of an at threshold (marks)")
+                || tool.description.contains("also prints all the marks of an at threshold (marks)"), "\(tool.name)")
+        }
+    }
+
     /// tallies_info's list is the command line's only: there, each tally has every mark.
     @Test func talliesInfoListsEveryMarkOnTheCommandLine() throws {
         let state = TallyTestState()

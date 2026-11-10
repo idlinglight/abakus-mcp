@@ -330,6 +330,8 @@ shows everything" suggests.
   grows with the marks, as the command line's output may (ADR-0008).
 - The MCP result, and the 700-character check in `dev/check.zsh`, are unchanged; the shared-name error for a tally
   with 2000 marks is as long as for 2, give or take the digits of the count.
-- The descriptions of `tally_create`, `tally_add` and `tally_set` say that the command line also prints all the
-  marks (`marks`), as ADR-0008 asks of a tool that shortens a list.
+- The descriptions of `tally_create`, `tally_add`, `tally_set` and `tally_drop` say that the command line also
+  prints all the marks (`marks`), as ADR-0008 asks of a tool that shortens a list.
+- The four tools get their `withoutDetails` from one place, the protocol `TallyStateTool`; a later tool that
+  answers with a tally's state adopts it, or it would send every mark over MCP.
 - abakus 0.5.3 is the first version with this.

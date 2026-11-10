@@ -10,14 +10,10 @@ public enum TallyTools {
 
 // MARK: - tally_create
 
-struct TallyCreate: Tool {
+struct TallyCreate: TallyStateTool {
     let name = "tally_create"
 
     let detailKeys = TallySchema.detailKeys
-
-    func withoutDetails(_ result: JSONObject) -> JSONObject {
-        TallyResponse.withoutDetails(result, detailKeys: detailKeys)
-    }
 
     let description = """
         Create a tally: an exact value plus a count of additions, kept outside your context so it survives long \
@@ -94,14 +90,10 @@ struct TallyCreate: Tool {
 
 // MARK: - tally_add
 
-struct TallyAdd: Tool {
+struct TallyAdd: TallyStateTool {
     let name = "tally_add"
 
     let detailKeys = TallySchema.detailKeys
-
-    func withoutDetails(_ result: JSONObject) -> JSONObject {
-        TallyResponse.withoutDetails(result, detailKeys: detailKeys)
-    }
 
     let description = """
         Add an amount to a tally (default 1, so a plain call counts one item) and get its state back: value, \
@@ -172,14 +164,10 @@ struct TallyAdd: Tool {
 
 // MARK: - tally_set
 
-struct TallySet: Tool {
+struct TallySet: TallyStateTool {
     let name = "tally_set"
 
     let detailKeys = TallySchema.detailKeys
-
-    func withoutDetails(_ result: JSONObject) -> JSONObject {
-        TallyResponse.withoutDetails(result, detailKeys: detailKeys)
-    }
 
     let description = """
         Correct a tally: set its value and/or count, or replace its thresholds (at most \
@@ -318,16 +306,12 @@ struct TalliesInfo: Tool {
 
 // MARK: - tally_drop
 
-struct TallyDrop: Tool {
+struct TallyDrop: TallyStateTool {
     let name = "tally_drop"
 
-    // No detail keys, but the final state has an at threshold's marks, which an MCP result leaves out.
-    func withoutDetails(_ result: JSONObject) -> JSONObject {
-        TallyResponse.withoutDetails(result, detailKeys: detailKeys)
-    }
-
     let description = """
-        Delete a tally you no longer need and get its final state back. An unknown name is an error. Also \
+        Delete a tally you no longer need and get its final state back; the abakus command line (the same program \
+        as this server) also prints all the marks of an at threshold (marks). An unknown name is an error. Also \
         removes a tally whose file cannot be read.
         """
 
