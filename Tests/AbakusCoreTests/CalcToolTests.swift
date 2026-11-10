@@ -388,6 +388,13 @@ import Testing
             mathematics. Excel groups them from the left; for that reading, write ((2 ** 3) ** 2) ^ 1.
             """,
         ]),
+        // Beyond four operands, the readings are described.
+        ("2^1^1^1^1", [
+            """
+            In "2^1^1^1^1" at character 1, powers group from the right, as in mathematics. Excel groups them from the \
+            left; for that reading, write the parentheses yourself, as in (2^3)^2.
+            """,
+        ]),
         // Both kinds: one note each, the minus first.
         ("-2^3^2", [
             """

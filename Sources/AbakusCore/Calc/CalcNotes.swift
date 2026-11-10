@@ -95,7 +95,8 @@ enum CalcNotes {
         let text = String(source[top.span])
         var reading: String?
         var other: String?
-        if text.count <= writtenOutLimit {
+        // Beyond four operands, the parentheses written out would be longer than the chain and hard to read.
+        if text.count <= writtenOutLimit && operands.count <= 4 {
             let inner = operands.dropFirst().dropLast()
             reading = inserting(
                 inner.map { ($0.outerSpan.lowerBound, "(") } + inner.map { _ in (top.span.upperBound, ")") },
