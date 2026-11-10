@@ -34,7 +34,8 @@ If that is missing too, abakus is not installed: use the MCP tools, or tell the 
   - `read` of `sum` and of the tally tools: how each number string was read, as `{"input", "value"}` (with
     `"index"` for `sum`).
   - `read` of `calc`: the expression as calc understood it, with parentheses that show the grouping; and every
-    tally the expression used, where an MCP result lists the first 5 and then `tallies_total`.
+    tally the expression used, where an MCP result lists the first 5 and then `tallies_total`. This is for a
+    successful result: a calc error is the same text on both sides and lists at most 5 tallies.
   - `abakus tallies info`: every tally with its full state (`tallies`), and each tally file that cannot be read,
     with what is wrong (`unreadable`). Over MCP, `tallies_info` only counts them.
 - **Shaping output before you read it**, with `jq` or `head`, or into a file in a scratch folder. A sum over 5,000
