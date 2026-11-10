@@ -7,8 +7,8 @@
   check there; a usage error checks that the usage shown is the command's own.
 - The skill `skills/abakus-cli/SKILL.md` (installed by `install.zsh --skill`) tells agents when and how to use
   the CLI; the tool descriptions only say that it exists (ADR-0008). A new or changed command, option or detail
-  key goes into the skill too; `dev/check.zsh` fails when the skill names a command or option the CLI lacks, or
-  misses a command.
+  key goes into the skill too; `dev/check.zsh` fails when the skill names a command the help does not list, an
+  option its command lacks or a tool that does not exist, or misses a command.
 - Targets: `AbakusCore` (all tool behaviour), `AbakusMCP` (the MCP server), `abakus` (the executable:
   `abakus mcp` and the CLI). A tool is defined once in the core as a `Tool` and listed in its area's `all`
   (`TallyTools`, `ArithmeticTools`, `DateTools`), which `Catalog` concatenates. CLI commands only build a

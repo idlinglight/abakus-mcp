@@ -37,7 +37,8 @@ Other MCP clients: the command is `abakus mcp` (stdio).
 ```
 
 also installs the skill `abakus-cli` for Claude Code, as a user-level skill in `~/.claude/skills/abakus-cli/`
-(`$CLAUDE_CONFIG_DIR/skills/abakus-cli/` when that is set), so agents have it in every project. Its source is
+(`$CLAUDE_CONFIG_DIR/skills/abakus-cli/` when that is set, which must then be an absolute path), so agents have
+it in every project. The folder is replaced as a whole, so nothing of an earlier install stays. Its source is
 [`skills/abakus-cli/SKILL.md`](skills/abakus-cli/SKILL.md); see [Command line](#command-line).
 
 ## Tools
@@ -369,7 +370,7 @@ from a tool server that asks for shell commands reads like the instructions care
 job of the skill `abakus-cli` (`./install.zsh --skill`), the user's own channel: when the command line is the
 better way and when not, the commands and options, quoting, stdin, exit codes, and how notes written in MCP terms
 map to options ([ADR-0008](docs/adr/0008-small-mcp-results.md)). `dev/check.zsh` fails when the skill names a
-command or option the command line lacks, or misses a command.
+command the help does not list, an option its command lacks or a tool that does not exist, or misses a command.
 
 ## MCP protocol support
 

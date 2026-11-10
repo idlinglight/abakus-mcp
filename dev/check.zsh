@@ -373,67 +373,89 @@ expect "cli: --help lists the commands" '.status == 0 and (.stdout | test("SUBCO
 expect "cli: a command's --help shows its usage" '.status == 0 and (.stdout | test("USAGE: abakus sum "))' \
   "$(outcome $abakus sum --help)"
 
-# The abakus-cli skill (skills/abakus-cli/SKILL.md) against this binary, so that the two cannot drift apart. Only
-# its code is read, fenced blocks and `inline code`, split into words as the shell would. A command is the word
-# after "abakus", and the next word too when the first is a group (tally, tallies). Each command the skill names
-# must show its own usage, each command in the help must be named, and each option the skill names must be in the
-# help of the root or of a command it names.
+# The abakus-cli skill (skills/abakus-cli/SKILL.md) against this binary, so that the two cannot drift apart.
+# help_for maps each command the help lists, one level of groups deep, to its --help text: "abakus", "abakus sum",
+# "abakus tally create". In ArgumentParser's help, a command is a line under SUBCOMMANDS: that starts with two
+# spaces and a name; a hidden command, such as the old name `abakus tally list`, is not listed, so not in the map.
+skill_file=${0:A:h:h}/skills/abakus-cli/SKILL.md
+typeset -A help_for
+subcommands() { print -r -- $1 | awk '/^SUBCOMMANDS:/ { s = 1; next } s && /^  [a-z]/ { print $1 }' }
+is_group() { [[ ${help_for[$1]-} == *SUBCOMMANDS:* ]] }
+help_for[abakus]=$($abakus --help)
+for top in $(subcommands ${help_for[abakus]}); do
+  key="abakus $top"
+  help_for[$key]=$($abakus $top --help)
+  for sub in $(subcommands ${help_for[$key]}); do
+    key="abakus $top $sub"
+    help_for[$key]=$($abakus $top $sub --help)
+  done
+done
+# Only the skill's code is read, fenced blocks and `inline code`, split into words as the shell would. A command is
+# "abakus" and each next word that names a command of the group before it. Its options are the words that start
+# with -- up to the end of the command: |, ||, ;, &&, &, ) or a # comment. So `jq --raw-output` is no option of
+# abakus, and an option written on its own in the text is not checked.
 skill_code=$(awk '/^[[:space:]]*```/ { fence = !fence; next }
   fence { print; next }
   { while (match($0, /`[^`]+`/)) { print substr($0, RSTART + 1, RLENGTH - 2); $0 = substr($0, RSTART + RLENGTH) } }' \
-  ${0:A:h:h}/skills/abakus-cli/SKILL.md)
-is_group() { [[ $($abakus $1 --help 2>/dev/null) == *SUBCOMMANDS:* ]] }
-skill_commands=()
+  $skill_file)
+skill_commands=() unknown=() misplaced=() option_count=0
 for line in ${(f)skill_code}; do
   words=(${(z)line})
-  for (( i = 1; i < $#words; i++ )); do
-    [[ ${words[i]} == abakus && ${words[i+1]} == [a-z]* ]] || continue
-    command=${words[i+1]}
-    if [[ ${words[i+2]-} == [a-z]* ]] && is_group $command; then
-      command+=" ${words[i+2]}"
+  for (( i = 1; i <= $#words; i++ )); do
+    [[ ${words[i]} == '#'* ]] && break  # a comment ends the line
+    [[ ${words[i]} == abakus ]] || continue
+    command=abakus j=$(( i + 1 ))
+    while is_group $command && [[ ${words[j]-} == [a-z]* ]]; do
+      command+=" ${words[j]}"
+      j=$(( j + 1 ))
+    done
+    if (( ! ${+help_for[$command]} )); then
+      unknown+=$command
+      continue
     fi
-    skill_commands+=$command
+    [[ $command == abakus ]] || skill_commands+=$command
+    for (( ; j <= $#words; j++ )); do
+      case ${words[j]} in
+        ('|'|'||'|';'|'&&'|'&'|')'|'#'*) break ;;
+        (--[a-z]*)
+          option_count=$(( option_count + 1 ))
+          [[ $'\n'${help_for[$command]}$'\n' == *[^a-z-]${words[j]}[^a-z-]* ]] || misplaced+="$command ${words[j]}" ;;
+      esac
+    done
   done
 done
 skill_commands=(${(u)skill_commands})
-unknown=() helps=$($abakus --help)
-for command in $skill_commands; do
-  help=$($abakus ${=command} --help 2>&1)
-  if (( $? )) || [[ $help != *"USAGE: abakus $command"* ]]; then
-    unknown+=$command
-  fi
-  helps+=$'\n'$help
-done
-expect "skill: names commands, each shows its own usage" '.found > 10 and .unknown == []' \
-  "$(jq -nc --argjson found $#skill_commands '{found: $found, unknown: $ARGS.positional}' --args -- $unknown)"
-# the commands in the help, one level of groups deep: in ArgumentParser's help, a line under SUBCOMMANDS: that
-# starts with two spaces and a name
-help_commands() { $abakus ${=1} --help | awk '/^SUBCOMMANDS:/ { s = 1; next } s && /^  [a-z]/ { print $1 }' }
+expect "skill: every command it names is one the help lists (no hidden old name)" '.found > 5 and .unknown == []' \
+  "$(jq -nc --argjson found $#skill_commands '{found: $found, unknown: $ARGS.positional}' --args -- ${(u)unknown})"
 unnamed=()
-for command in $(help_commands ""); do
-  [[ $command == help ]] && continue
-  if is_group $command; then
-    for sub in $(help_commands $command); do
-      (( ${skill_commands[(Ie)$command $sub]} )) || unnamed+="$command $sub"
-    done
-  else
-    (( ${skill_commands[(Ie)$command]} )) || unnamed+=$command
-  fi
+for command in ${(ok)help_for}; do
+  is_group $command || (( ${skill_commands[(Ie)$command]} )) || unnamed+=$command
 done
-expect "skill: names every command in the help" '. == []' "$(jq -nc '$ARGS.positional' --args -- $unnamed)"
-skill_options=(${(u)${(f)"$(print -r -- $skill_code | grep -oE -- '--[a-z][a-z-]*')"}})
-missing=()
-for option in $skill_options; do
-  print -r -- $helps | grep -qE -- "(^|[^a-z-])${option}([^a-z-]|\$)" || missing+=$option
+expect "skill: names every command the help lists" '. == []' "$(jq -nc '$ARGS.positional' --args -- $unnamed)"
+expect "skill: each option it names is in the help of the command it is written with" \
+  '.found > 10 and .misplaced == []' \
+  "$(jq -nc --argjson found $option_count '{found: $found, misplaced: $ARGS.positional}' --args -- ${(u)misplaced})"
+# The skill's table of MCP terms: each tool name in it (snake_case in backticks, such as `tally_create`) is a tool.
+tool_names=(${(f)"$($abakus tools | awk '{ print $1 }')"})
+table_tools=(${(u)${(f)"$(grep '^|' $skill_file | grep -oE '`[a-z]+(_[a-z]+)+`' | tr -d '`')"}})
+not_tools=()
+for name in $table_tools; do
+  (( ${tool_names[(Ie)$name]} )) || not_tools+=$name
 done
-expect "skill: names options, each in the help" '.found > 10 and .missing == []' \
-  "$(jq -nc --argjson found $#skill_options '{found: $found, missing: $ARGS.positional}' --args -- $missing)"
+expect "skill: each tool name in its table of MCP terms is a tool" '.found >= 5 and .unknown == []' \
+  "$(jq -nc --argjson found $#table_tools '{found: $found, unknown: $ARGS.positional}' --args -- $not_tools)"
 
-# install.zsh refuses an unknown argument before it builds or installs anything. PATH and HOME point to nothing
-# useful, so that even a broken check of the arguments could neither build nor install.
+# install.zsh refuses an unknown argument, and a relative CLAUDE_CONFIG_DIR with --skill, before it builds or
+# installs anything. PATH and HOME point to nothing useful, so that even a broken check could neither build (swift
+# is not found) nor install.
 expect "install.zsh: an unknown argument is a usage error, exit 2, before anything is built" \
   '.status == 2 and .stdout == "" and .stderr == "usage: ./install.zsh [--skill]"' \
   "$(outcome env PATH=/var/empty HOME=$ABAKUS_STATE_DIR/home /bin/zsh -f ${0:A:h:h}/install.zsh --nosuch)"
+expect "install.zsh --skill refuses a relative CLAUDE_CONFIG_DIR, exit 1, before anything is built" \
+  '.status == 1 and .stdout == ""
+     and (.stderr | startswith("not installed: CLAUDE_CONFIG_DIR is \"relative/config\", not an absolute path."))' \
+  "$(outcome env PATH=/var/empty HOME=$ABAKUS_STATE_DIR/home CLAUDE_CONFIG_DIR=relative/config \
+     /bin/zsh -f ${0:A:h:h}/install.zsh --skill)"
 
 if (( failures )); then
   if [[ -s $stderr_log ]]; then
