@@ -40,6 +40,10 @@ struct Threshold: Sendable, Equatable {
     /// request (to a context compaction, say) still sees what comes next (ADR-0004, amendment of 2026-11-10).
     static let marksAhead = 5
 
+    /// The key of all an `at` threshold's marks in its status: the list that `marks_total` counts. The command line
+    /// prints it; an MCP result and errors leave it out.
+    static let allMarksKey = "marks"
+
     /// tally_create and tally_set take at most this many thresholds. An `at` threshold takes any number of marks:
     /// its status shows how many, not the marks (ADR-0004, amendment of 2026-11-10). The cap keeps responses small;
     /// it does not make a threshold invalid, so a tally file written before it, with more, still loads.
@@ -174,8 +178,7 @@ extension Threshold {
 extension Threshold {
     /// The threshold as responses show it, e.g. `{"every": 5, "of": "count"}`: its kind and what it watches. An
     /// `at` threshold shows how many marks it has, not the marks (`{"marks_total": 50, "of": "value"}`), so a
-    /// response does not grow with them (ADR-0008); the tally file keeps them all. Statuses and crossings start
-    /// with this.
+    /// crossing does not grow with them (ADR-0008). Statuses and crossings start with this.
     var spec: JSONObject {
         var object = JSONObject()
         switch rule {
@@ -197,7 +200,9 @@ extension Threshold {
     /// The spec plus where the tally stands: a limit says whether it is reached and what remains or how far
     /// past it the tally is; `at` says how many of its marks are passed (at or below the current value or count)
     /// and lists the marks ahead, ascending, at most `marksAhead` (`[]` once all are passed, as `crossed` is `[]`
-    /// when nothing was crossed); `every` gives the next mark above the current value.
+    /// when nothing was crossed), then all its marks (`marks`), which only the command line shows: an MCP result
+    /// and errors leave them out (`TallyResponse.withoutDetails`, ADR-0004, amendment "every mark on the command
+    /// line"); `every` gives the next mark above the current value.
     func status(of tally: Tally) throws(ToolError) -> JSONObject {
         var object = spec
         let current = measure(tally)
@@ -214,6 +219,8 @@ extension Threshold {
             object["passed"] = .number(String(passed))
             let ahead = marks[passed...].prefix(Self.marksAhead)
             object["ahead"] = .array(ahead.map(JSONValue.decimal))
+            // Last, so that the MCP form, without it, is the start of the full status.
+            object[Self.allMarksKey] = .array(marks.map(JSONValue.decimal))
         case .every(let period):
             let passed = try Self.multiples(upTo: current, of: period)
             let following = try DecimalMath.add(passed, 1)

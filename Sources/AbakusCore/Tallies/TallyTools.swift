@@ -15,6 +15,10 @@ struct TallyCreate: Tool {
 
     let detailKeys = TallySchema.detailKeys
 
+    func withoutDetails(_ result: JSONObject) -> JSONObject {
+        TallyResponse.withoutDetails(result, detailKeys: detailKeys)
+    }
+
     let description = """
         Create a tally: an exact value plus a count of additions, kept outside your context so it survives long \
         work and compaction. For counting work against a budget, a checkpoint every N items, or summing numbers \
@@ -95,6 +99,10 @@ struct TallyAdd: Tool {
 
     let detailKeys = TallySchema.detailKeys
 
+    func withoutDetails(_ result: JSONObject) -> JSONObject {
+        TallyResponse.withoutDetails(result, detailKeys: detailKeys)
+    }
+
     let description = """
         Add an amount to a tally (default 1, so a plain call counts one item) and get its state back: value, \
         count, added, crossed and thresholds. crossed lists what this addition reached or passed: a limit reached \
@@ -168,6 +176,10 @@ struct TallySet: Tool {
     let name = "tally_set"
 
     let detailKeys = TallySchema.detailKeys
+
+    func withoutDetails(_ result: JSONObject) -> JSONObject {
+        TallyResponse.withoutDetails(result, detailKeys: detailKeys)
+    }
 
     let description = """
         Correct a tally: set its value and/or count, or replace its thresholds (at most \
@@ -309,6 +321,11 @@ struct TalliesInfo: Tool {
 struct TallyDrop: Tool {
     let name = "tally_drop"
 
+    // No detail keys, but the final state has an at threshold's marks, which an MCP result leaves out.
+    func withoutDetails(_ result: JSONObject) -> JSONObject {
+        TallyResponse.withoutDetails(result, detailKeys: detailKeys)
+    }
+
     let description = """
         Delete a tally you no longer need and get its final state back. An unknown name is an error. Also \
         removes a tally whose file cannot be read.
@@ -360,7 +377,8 @@ enum TallySchema {
     static let readingsInBrief = """
         A number string that also reads with the other decimal mark, as a different number ("1,234" is 1234 with \
         ".", 1.234 with ","), gets a short note under notes on how to correct it. The abakus command line (the \
-        same program as this server) also prints read, how each string was read.
+        same program as this server) also prints read, how each string was read, and all the marks of an at \
+        threshold (marks).
         """
 
     static let namePattern = "^[a-z0-9][a-z0-9._-]{0,63}$"

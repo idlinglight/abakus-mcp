@@ -1,16 +1,45 @@
 import Foundation
 
 /// How tally tools answer: the tally's state as an ordered JSON object, plus what the call itself did. Each
-/// threshold shows its status; an `at` threshold by how many marks it has and at most 5 of those ahead, so the
-/// response stays the same size however many there are (ADR-0004, amendment of 2026-11-10; ADR-0008).
+/// threshold shows its status; an `at` threshold by how many marks it has, at most 5 of those ahead, and all of them
+/// under `marks`, which the command line prints. Over MCP, `withoutDetails` leaves out `marks`, so the response
+/// stays the same size however many there are (ADR-0004, amendments of 2026-11-10; ADR-0008). Errors use the same
+/// compact form (`compact`), since errors are not shortened on the way out.
 ///
 ///     {"name": "review-k3f9", "value": 7, "count": 5, "added": 2,
 ///      "crossed": [{"every": 5, "of": "count", "at": [5]}],
 ///      "thresholds": [{"limit": 20, "of": "value", "reached": false, "remaining": 13},
-///                     {"marks_total": 50, "of": "value", "passed": 2, "ahead": [10, 20, 30, 40, 50]},
+///                     {"marks_total": 50, "of": "value", "passed": 2, "ahead": [10, 20, 30, 40, 50],
+///                      "marks": [2, 5, 10, 20, 30, 40, 50, …]},
 ///                     {"every": 5, "of": "count", "next": 10}],
 ///      "created": "2026-11-08T09:12:00Z", "updated": "2026-11-08T09:40:31Z"}
 enum TallyResponse {
+    /// A tally tool's result as an MCP client gets it (ADR-0008): without the tool's detail keys (`read`), and each
+    /// `at` threshold under `thresholds` without the list of all its marks. Every tool that answers with a tally's
+    /// state uses it as its `withoutDetails`.
+    static func withoutDetails(_ result: JSONObject, detailKeys: [String]) -> JSONObject {
+        var answer = JSONObject()
+        for (key, value) in result.entries where !detailKeys.contains(key) {
+            answer[key] = key == "thresholds" ? withoutAllMarks(value) : value
+        }
+        return answer
+    }
+
+    /// A tally's state in the MCP form, for errors: they reach the command line unshortened, so they must not carry
+    /// what grows with the marks.
+    static func compact(_ state: JSONObject) -> JSONObject {
+        withoutDetails(state, detailKeys: [])
+    }
+
+    private static func withoutAllMarks(_ thresholds: JSONValue) -> JSONValue {
+        guard let items = thresholds.arrayValue else { return thresholds }
+        return .array(items.map { item in
+            guard var status = item.objectValue, status["marks_total"] != nil else { return item }
+            status[Threshold.allMarksKey] = nil
+            return .object(status)
+        })
+    }
+
     /// - `dropped`: the tally was just deleted (`tally_drop`).
     /// - `added`, `crossed`: what a `tally_add` added and crossed (`crossed` is present, possibly empty, on adds).
     /// - `reads`: numbers that came as strings, and how they were read: `read`, a detail of the tools that take
@@ -209,7 +238,7 @@ enum TallyErrors {
 
     /// Only `shared: true` can run into an existing name; without it, tally_create picks a free suffix.
     static func exists(_ tally: Tally) -> ToolError {
-        let state = TallyResponse.state(tally)
+        let state = TallyResponse.compact(TallyResponse.state(tally))
         return ToolError(
             "A tally named \"\(tally.name)\" already exists (details.existing shows its state) and may be in use by other sessions. Add to it with tally_add only if you are coordinating with whoever created it. To count your own work, call tally_create without shared: the tally then gets a random suffix and is yours alone.",
             details: ["existing": .object(state)]

@@ -89,6 +89,20 @@ import Testing
         #expect(call[path: ["content", 0, "text"]] == #"{"answer":3,"each":[1],"each_total":3}"#)
     }
 
+    /// The tally tools go through their own withoutDetails too: an at threshold's marks stay off MCP, in the text
+    /// and in structuredContent, while the core result has them for the command line.
+    @Test func tallyResultsLeaveOutTheMarksOfAnAtThreshold() throws {
+        var server = MCPServer(tools: TallyTools.all, context: testContext())
+        let marks: JSONValue = .array((1...20).map { .number(String($0)) })
+        let arguments: JSONValue = ["name": "marks", "shared": true, "thresholds": [["at": marks]]]
+        let call = try result(&server, request(1, "tools/call", ["name": "tally_create", "arguments": arguments]))
+        let expected: JSONValue = [["marks_total": 20, "of": "value", "passed": 0, "ahead": [1, 2, 3, 4, 5]]]
+        #expect(call[path: ["structuredContent", "thresholds"]] == expected)
+        let text = try #require(call[path: ["content", 0, "text"]]?.stringValue)
+        #expect(text.contains(#""thresholds":[{"marks_total":20,"of":"value","passed":0,"ahead":[1,2,3,4,5]}]"#))
+        #expect(!text.contains(#""marks":"#))
+    }
+
     @Test func toolListShapeFollowsTheNegotiatedRevision() throws {
         var newest = makeServer()
         _ = try result(&newest, initializeRequest(version: "2025-11-25"))

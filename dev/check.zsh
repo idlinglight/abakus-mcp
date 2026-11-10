@@ -138,9 +138,9 @@ expect "cli: tally add with two amounts is a usage error, with tally add's usage
   '.status == 64 and .stdout == "" and (.stderr | test("Give one amount, not 2") and test("Usage: abakus tally add "))' \
   "$(outcome $abakus tally add "$name" 1 2)"
 expect "cli: tally set takes a negative value" '.value == -1.5' "$($abakus tally set "$name" --value -1.5)"
-expect "cli: tally set replaces the thresholds, from repeated --at and --at-count, each at with the marks ahead" \
-  '.thresholds == [{"marks_total": 2, "of": "value", "passed": 0, "ahead": [1, 2]},
-                   {"marks_total": 1, "of": "count", "passed": 0, "ahead": [5]}]' \
+expect "cli: tally set replaces the thresholds, from repeated --at and --at-count, each at with the marks ahead and all" \
+  '.thresholds == [{"marks_total": 2, "of": "value", "passed": 0, "ahead": [1, 2], "marks": [1, 2]},
+                   {"marks_total": 1, "of": "count", "passed": 0, "ahead": [5], "marks": [5]}]' \
   "$($abakus tally set "$name" --at 1 --at 2 --at-count 5)"
 expect "cli: tally set refuses --clear-thresholds with threshold options, with tally set's usage" \
   '.status == 64 and .stdout == "" and (.stderr | test("either --clear-thresholds or threshold options") and test("Usage: abakus tally set "))' \
@@ -155,7 +155,7 @@ expect "cli: adding to a dropped tally fails with exit 1 and says why" \
 # Tallies within ADR-0008: an at threshold of 200 marks, given as strings that also read with a decimal comma.
 # call --without-details prints exactly the MCP text (checked for sum below); over MCP, tally_create and tally_add
 # stay within a budget of 700 characters each: marks counted, at most 5 of those ahead listed, one note for all the
-# strings. The command line prints read.
+# strings. The command line prints read and every mark; an error about such a tally stays as small as for a few.
 marks_args=$(jq -nc '{name: "bytes", thresholds: [{at: [range(1; 201) | "\(.),000"]}]}')
 mcp_text=$($abakus call --without-details tally_create "$marks_args")
 marks_name=$(print -r -- "$mcp_text" | jq -r .name)
@@ -171,13 +171,27 @@ expect "mcp text: tally_add crossing 150 of the marks stays within 700 character
      and (has("read") | not)
      and (.notes[0] | contains("crossed above follows 150500") and contains("\"value\": 150.5")))' \
   "$(jq -n --arg text "$mcp_text" '{length: ($text | length), json: ($text | fromjson)}')"
-expect "cli: tally create prints read, one entry per string" '.read | length == 200 and .[0] == {"input": "1,000", "value": 1000}' \
+expect "cli: tally create prints read, one entry per string, and every mark, after the marks ahead" \
+  '(.read | length == 200 and .[0] == {"input": "1,000", "value": 1000})
+     and (.thresholds[0] | (.marks | length == 200 and .[199] == 200000) and (keys_unsorted | last == "marks"))' \
   "$($abakus call tally_create "$marks_args")"
+expect "cli: tally add prints every mark too, and tallies info" \
+  '.name as $name | (.add.thresholds[0].marks | length) == 200
+     and (.info.tallies | map(select(.name == $name)) | .[0].thresholds[0].marks | length) == 200' \
+  "$(jq -n --arg name "$marks_name" --argjson add "$($abakus tally add "$marks_name")" \
+     --argjson info "$($abakus tallies info bytes)" '{add: $add, info: $info, name: $name}')"
 expect "cli: tally add prints read and the note" '.read == [{"input": "2,000", "value": 2000}] and (.notes | length == 1)' \
   "$($abakus tally add "$marks_name" 2,000)"
 expect "cli: tally create's and tally set's help say that the six threshold options cannot all be given" \
   'map(gsub("\\s+"; " ") | contains("At most 5 thresholds in all, so not all six threshold options at once")) | all' \
   "$(jq -n --arg create "$($abakus tally create --help)" --arg set "$($abakus tally set --help)" '[$create, $set]')"
+$abakus tally create marks-few --shared --at 1 --at 2 >/dev/null
+$abakus call tally_create "$(jq -nc '{name: "marks-many", shared: true, thresholds: [{at: [range(1; 2001)]}]}')" >/dev/null
+expect "cli: the shared-name error for a tally with 2000 marks is as small as for 2 (within 20 characters), no marks list" \
+  '.many.status == 1 and (.many.stderr | length) - (.few.stderr | length) < 20 and (.many.stderr | contains("\"marks\":") | not)
+     and (.many.stderr | contains("\"marks_total\":2000"))' \
+  "$(jq -n --argjson few "$(outcome $abakus tally create marks-few --shared)" \
+     --argjson many "$(outcome $abakus tally create marks-many --shared)" '{few: $few, many: $many}')"
 expect "cli: a sixth threshold is an error that says to pass fewer or use a second tally" \
   '.status == 1 and .stdout == "" and (.stderr | test("thresholds has 6 items, and a tally takes at most 5") and test("second tally"))' \
   "$(outcome $abakus tally create six --limit 1 --limit-count 2 --at 3 --at-count 4 --every 5 --every-count 6)"
