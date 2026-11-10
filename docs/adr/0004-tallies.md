@@ -6,7 +6,8 @@ suffix, `tally_set` and exactness, unknown names and arguments, thresholds that 
 (the advice for unknown names in `tally_drop`); amended 2026-11-10 (an `at` threshold by how many marks it has
 and the next ones, `at` crossings capped, at most 5 thresholds, `read` as a detail with a decimal note; see the
 end); amended 2026-11-10 (`tally_list` becomes `tallies_info`; over MCP the folder and how many tallies there are);
-amended 2026-11-10 (every mark of an `at` threshold on the command line)
+amended 2026-11-10 (every mark of an `at` threshold on the command line); amended 2026-11-10 (the old name's
+command and the rename hint dropped in 0.5.4; see the end)
 
 ## Context
 
@@ -276,7 +277,7 @@ name given, which serves an agent looking for its own tally better.
 - The command follows the tool's name, as `tally_create` is `abakus tally create`: `abakus tallies info [prefix]`,
   in a group `tallies` of its own. `abakus tally list` still works and is left out of the help. Over MCP and with
   `abakus call`, `tally_list` is an unknown tool whose error says it was renamed to `tallies_info` in abakus 0.5.1
-  (`Catalog.renamed`).
+  (`Catalog.renamed`). Both were dropped in abakus 0.5.4 (see the end).
 - What `tallies_info` is for over MCP: how many tallies there are, with a prefix or all, and where they are kept. To
   look up a lost name, the description points to `calc` with the name without its suffix (`{items}`): calc never
   writes, and its error for an unknown name shows the tallies named with it plus a suffix (up to 20, with when
@@ -335,3 +336,24 @@ shows everything" suggests.
 - The four tools get their `withoutDetails` from one place, the protocol `TallyStateTool`; a later tool that
   answers with a tally's state adopts it, or it would send every mark over MCP.
 - abakus 0.5.3 is the first version with this.
+
+## Amendment 2026-11-10: the old name's command and the rename hint dropped
+
+### Context
+
+The rename to `tallies_info` kept two paths for the old name: the hidden command `abakus tally list`, and a
+sentence in the unknown-tool error for `tally_list`, over MCP and with `abakus call`, that gave the new name
+(`Catalog.renamed`). No consumers of the old names are known, and no session that used them will be resumed.
+
+### Decision
+
+- `abakus tally list` is gone; the command line answers it as any unknown command, with a usage error.
+- `Catalog.renamed` is gone. `tally_list` gets the plain unknown-tool error, as every other name does: "Unknown
+  tool: tally_list. tools/list shows the available tools." over MCP, "abakus has no tool named tally_list.
+  `abakus tools` lists the tools." with `abakus call`.
+
+### Consequences
+
+- No path for the old names is left. A later rename starts from the plain error, and keeps an old name only for
+  consumers it knows of.
+- abakus 0.5.4 is the first version without them.
