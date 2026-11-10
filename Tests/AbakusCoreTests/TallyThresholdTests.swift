@@ -55,10 +55,26 @@ import Testing
         let six: JSONValue = .array((1...6).map { ["limit": .number(String($0))] })
         let error = try #require(throws: ToolError.self) { try parse(six) }
         #expect(error.message == """
-            thresholds has 6 items, and a tally takes at most 5. Pass at most 5: one at threshold takes any number of \
-            marks, so marks on the value (or on the count) fit in one, e.g. {"at": [10, 50, 100]}. To watch more, \
-            create a second tally with the others and add to both.
+            thresholds has 6 items, and a tally takes at most 5. Pass fewer, or watch some with a second tally and add \
+            to both.
             """)
+    }
+
+    /// Merging is advice only where it helps: two or more at thresholds on the same measure.
+    @Test func theCapErrorSuggestsMergingOnlyWhereItHelps() throws {
+        func message(_ items: [JSONValue]) throws -> String {
+            try #require(throws: ToolError.self) { try parse(.array(items)) }.message
+        }
+        let limits: [JSONValue] = (1...4).map { ["limit": .number(String($0))] }
+        let merge = #" (an at threshold takes any number of marks, e.g. {"at": [10, 50, 100]}), pass fewer, or watch some with a second tally and add to both."#
+        #expect(try message(limits + [["at": [1]], ["at": [2]]])
+            == "thresholds has 6 items, and a tally takes at most 5. Merge the at thresholds on the value into one" + merge)
+        #expect(try message(limits + [["at": [1], "of": "count"], ["at": [2], "of": "count"]])
+            == "thresholds has 6 items, and a tally takes at most 5. Merge the at thresholds on the count into one" + merge)
+        #expect(try message(Array(limits.prefix(2)) + [["at": [1]], ["at": [2]], ["at": [1], "of": "count"], ["at": [2], "of": "count"]])
+            == "thresholds has 6 items, and a tally takes at most 5. Merge the at thresholds on the value into one, and those on the count into another" + merge)
+        // One at on each measure: nothing to merge.
+        #expect(try message(limits + [["at": [1]], ["at": [2], "of": "count"]]).hasSuffix("Pass fewer, or watch some with a second tally and add to both."))
     }
 
     @Test(arguments: [

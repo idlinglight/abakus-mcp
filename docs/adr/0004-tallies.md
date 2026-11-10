@@ -180,11 +180,13 @@ marks. What the agent needs from a response is where the tally stands against th
   (`Threshold.listedMarks`, as for `every`); beyond that, how many with the first and the last:
   `{"marks_total": 400, "of": "value", "times": 250, "first": 150, "last": 399}`. Crossings of `limit` and `every`
   are unchanged.
-- `tally_create` and `tally_set` take at most 5 thresholds. A sixth is an error that says to pass at most 5, that
-  one `at` threshold takes any number of marks (so marks on the value, or on the count, fit in one), and that a
-  second tally can watch the rest. The schema says `maxItems: 5`. The number of marks is not limited: the status
-  shows at most 5 of them. Five covers the cases this ADR is for (a budget, a checkpoint, a few marks) with room to spare,
-  and keeps the thresholds of a response within a fixed size, as ADR-0008 asks of stored state.
+- `tally_create` and `tally_set` take at most 5 thresholds. A sixth is an error that says to pass fewer or to watch
+  some with a second tally. When two or more `at` thresholds watch the same measure, it first suggests merging
+  them, since one `at` threshold takes any number of marks; otherwise merging would not help, and the error does
+  not suggest it. The schema says `maxItems: 5`, and the command line's help says that its six threshold options
+  cannot all be given at once. The number of marks is not limited: the status shows at most 5 of them. Five covers
+  the cases this ADR is for (a budget, a checkpoint, a few marks) with room to spare, and keeps the thresholds of a
+  response within a fixed size, as ADR-0008 asks of stored state.
 - The cap applies to arguments, not to tally files: a file with more thresholds, which only abakus 0.4 and earlier
   could write, still loads and shows all of them, and `tally_set` can replace them with at most 5. This is a
   deliberate exception to [ADR-0003](0003-state-in-user-temp-folder.md)'s one validation for arguments and files.

@@ -152,7 +152,10 @@ expect "cli: tally create prints read, one entry per string" '.read | length == 
   "$($abakus call tally_create "$marks_args")"
 expect "cli: tally add prints read and the note" '.read == [{"input": "2,000", "value": 2000}] and (.notes | length == 1)' \
   "$($abakus tally add "$marks_name" 2,000)"
-expect "cli: a sixth threshold is an error that says to merge marks or use a second tally" \
+expect "cli: tally create's and tally set's help say that the six threshold options cannot all be given" \
+  'map(gsub("\\s+"; " ") | contains("At most 5 thresholds in all, so not all six threshold options at once")) | all' \
+  "$(jq -n --arg create "$($abakus tally create --help)" --arg set "$($abakus tally set --help)" '[$create, $set]')"
+expect "cli: a sixth threshold is an error that says to pass fewer or use a second tally" \
   '.status == 1 and .stdout == "" and (.stderr | test("thresholds has 6 items, and a tally takes at most 5") and test("second tally"))' \
   "$(outcome $abakus tally create six --limit 1 --limit-count 2 --at 3 --at-count 4 --every 5 --every-count 6)"
 

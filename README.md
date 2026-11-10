@@ -72,8 +72,9 @@ response: a limit says `reached` and `remaining` or `over`; `at` says how many m
 many are `passed` (reached) and the marks `ahead`, at most 5 (`[]` once all are passed), so an agent that lost its
 request to a context compaction still sees what comes next:
 `{"marks_total": 200, "of": "value", "passed": 18, "ahead": [19, 20, 21, 22, 23]}`; `every` says the `next` mark.
-A sixth threshold is an error: marks on the value (or on the count) fit in one `at` threshold, and a second tally
-can watch the rest. The tally's file keeps every mark.
+A sixth threshold is an error that says to pass fewer, to watch some with a second tally, or, when two `at`
+thresholds watch the same measure, to merge them (one takes any number of marks). The tally's file keeps every
+mark.
 
 **Number strings**: over MCP, a string that reads differently with the other decimal mark (`"1,234"` is 1234 with
 `.`, 1.234 with `,`), when no other string in the call rules that mark out, gets one note under `notes` that names

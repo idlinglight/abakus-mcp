@@ -65,13 +65,7 @@ extension Threshold {
         guard let items = value.arrayValue else {
             throw ToolError("thresholds must be a list, for example \(example). Pass [] for none.")
         }
-        do throws(ToolError) {
-            try checkCount(items.count)
-        } catch {
-            throw ToolError(
-                "\(error.message) Pass at most \(maximumPerTally): one at threshold takes any number of marks, so marks on the value (or on the count) fit in one, e.g. {\"at\": [10, 50, 100]}. To watch more, create a second tally with the others and add to both."
-            )
-        }
+        try checkCount(items)
         var result: [Threshold] = []
         for (index, item) in items.enumerated() {
             result.append(try parse(item, label: "thresholds[\(index)]", numbers: &numbers))
@@ -122,11 +116,26 @@ extension Threshold {
         return try checked(rule, of: of, label: label)
     }
 
-    /// The cap on how many thresholds an argument may give (`maximumPerTally`). Tally files are not held to it.
-    static func checkCount(_ count: Int) throws(ToolError) {
-        guard count <= maximumPerTally else {
-            throw ToolError("thresholds has \(count) items, and a tally takes at most \(maximumPerTally).")
+    /// The cap on how many thresholds an argument may give (`maximumPerTally`); tally files are not held to it.
+    /// Checked on the items as given, before their numbers are read. Merging is suggested only where it helps: when
+    /// two or more `at` thresholds watch the same measure, since one takes any number of marks.
+    private static func checkCount(_ items: [JSONValue]) throws(ToolError) {
+        guard items.count > maximumPerTally else { return }
+        let atMeasures = items.compactMap { item -> Measure? in
+            guard let object = item.objectValue, let at = object["at"], !at.isNull else { return nil }
+            return object["of"]?.stringValue.flatMap(Measure.init(rawValue:)) ?? .value
         }
+        let mergeable = Measure.allCases.filter { measure in atMeasures.count { $0 == measure } >= 2 }
+        var message = "thresholds has \(items.count) items, and a tally takes at most \(maximumPerTally)."
+        if let measure = mergeable.first {
+            let merge = mergeable.count > 1
+                ? "the at thresholds on the value into one, and those on the count into another"
+                : "the at thresholds on the \(measure.rawValue) into one"
+            message += " Merge \(merge) (an at threshold takes any number of marks, e.g. {\"at\": [10, 50, 100]}), pass fewer, or watch some with a second tally and add to both."
+        } else {
+            message += " Pass fewer, or watch some with a second tally and add to both."
+        }
+        throw ToolError(message)
     }
 
     /// The rules every threshold follows, whether it comes from an argument or from a tally file: `at` has at

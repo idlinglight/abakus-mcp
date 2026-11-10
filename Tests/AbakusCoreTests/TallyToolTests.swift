@@ -173,8 +173,8 @@ import Testing
         let state = TallyTestState()
         let six: JSONValue = [["limit": 20], ["every": 5, "of": "count"], ["at": [1]], ["at": [2]], ["at": [3]], ["at": [4]]]
         let error = try #require(state.failure("tally_create", ["name": "items", "thresholds": six]))
-        #expect(error.message.hasPrefix("thresholds has 6 items, and a tally takes at most 5. Pass at most 5"))
-        #expect(error.message.contains("create a second tally"))
+        #expect(error.message.hasPrefix("thresholds has 6 items, and a tally takes at most 5. Merge the at thresholds on the value into one"))
+        #expect(error.message.contains("second tally"))
         #expect(!FileManager.default.fileExists(atPath: state.url.path))
     }
 

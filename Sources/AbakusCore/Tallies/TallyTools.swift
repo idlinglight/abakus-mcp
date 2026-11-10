@@ -3,6 +3,9 @@ import Foundation
 /// Tally tools (ADR-0004): tally_create, tally_add, tally_set, tally_list, tally_drop.
 public enum TallyTools {
     public static let all: [any Tool] = [TallyCreate(), TallyAdd(), TallySet(), TallyList(), TallyDrop()]
+
+    /// How many thresholds tally_create and tally_set take, for the command line's help.
+    public static let maximumThresholds = Threshold.maximumPerTally
 }
 
 // MARK: - tally_create
