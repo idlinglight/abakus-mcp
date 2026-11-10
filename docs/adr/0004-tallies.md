@@ -159,18 +159,23 @@ name given, which serves an agent looking for its own tally better.
 
 ### Decision
 
-- Over MCP, `tally_list` returns `folder`, `tallies_found` (the number of readable tallies whose names start with
-  `prefix`, or of all readable tallies without one) and `unreadable_found` (the number of tallies whose file cannot
-  be read, only when there are any): `{"folder": "/var/folders/…/T/abakus/tallies", "tallies_found": 3}`.
+- Over MCP, `tally_list` returns `folder`, `tallies_found` (the number of readable tallies) and `unreadable_found`
+  (the number of tallies whose file cannot be read, only when there are any); with `prefix`, both count only
+  tallies whose names start with it: `{"folder": "/var/folders/…/T/abakus/tallies", "tallies_found": 3}`. Its
+  title is "Count tallies"; the name stays `tally_list`.
 - `tallies` (each tally's full state, sorted by name) and `unreadable` (each such name with what is wrong) are its
   detail keys (ADR-0008): the command line prints them, `abakus tally list [prefix]` and `abakus call tally_list`
   alike.
 - Not `count`: a tally's `count` is its number of additions, and on the command line both appear in one result.
   With a full name as `prefix`, `"count": 1` would read as that tally's count. `tallies_found` and
   `unreadable_found` each count the list of the same name.
-- What `tally_list` is for over MCP: how many tallies there are, with a prefix or all, and where they are kept. A
-  lost name shows up in the error for an unknown name; `calc` reads one tally's value or count without changing it
-  (`{name}`, `{name:count}`).
+- What `tally_list` is for over MCP: how many tallies there are, with a prefix or all, and where they are kept. To
+  look up a lost name, the description points to `calc` with the name without its suffix (`{items}`): calc never
+  writes, and its error for an unknown name shows the tallies named with it plus a suffix (up to 20, with when
+  each was created), as the other tally tools' error does. Those tools are not offered for a lookup: `tally_add`
+  or `tally_drop` with a guessed name would change or delete a shared tally of exactly that name. A partial name
+  (`item` for `items-k3f9`) finds nothing over MCP; the command line lists every tally. `calc` also reads one
+  tally's value or count (`{name}`, `{name:count}`).
 - The description says what an MCP result holds, that the command line lists every tally with its state, and that
   tallies change only through the tally tools, which hold the lock on the folder, never by changing files in it.
   It does not describe the files ([ADR-0003](0003-state-in-user-temp-folder.md), amendment of 2026-11-10). It

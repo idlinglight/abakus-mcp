@@ -109,12 +109,14 @@ or `{"every": 5, "of": "count", "at": [5]}`; past 10 multiples,
 `tally_set` `{name, value?, count?, thresholds?, decimal?}` corrects a tally, reports no crossings;
 `thresholds: []` removes them all.
 
-`tally_list` `{prefix?}` gives the folder the tallies are kept in and `tallies_found`, how many there are (with
-`prefix`, how many have a name that starts with it), plus `unreadable_found` when some tallies' files cannot be
-read. Over MCP that is all: names and states would grow with every session's tallies
-([ADR-0008](docs/adr/0008-small-mcp-results.md)). A lost name shows up in the error for an unknown name (below),
-and `calc` reads one tally's value or count. The command line also prints `tallies`, every tally with its full
-state, sorted by name, and `unreadable`, each unreadable one with what is wrong:
+`tally_list` `{prefix?}` gives the folder the tallies are kept in and `tallies_found`, how many there are, plus
+`unreadable_found`, how many tallies' files cannot be read, when there are any; with `prefix`, both count only
+names that start with it. Over MCP that is all: names and states would grow with every session's tallies
+([ADR-0008](docs/adr/0008-small-mcp-results.md)). To look up a lost name over MCP, `calc` with `{items}` never
+writes, and its error for an unknown name (below) shows the tallies named `items` plus a suffix; `tally_add` or
+`tally_drop` with a guessed name would change or delete a shared tally of exactly that name. The command line
+also prints `tallies`, every tally with its full state, sorted by name, and `unreadable`, each unreadable one with
+what is wrong:
 
 ```json
 {"prefix": "bytes"}

@@ -506,13 +506,37 @@ import Testing
         #expect(forty.count <= state.tallies.path.count + 40)
     }
 
+    /// What the description promises for a lost name: calc with the name without its suffix shows the tallies named
+    /// with it plus a suffix, and writes nothing. A partial name finds none, and unreadable_found follows the prefix.
+    @Test func calcLooksUpALostNameWithoutWriting() throws {
+        let state = TallyTestState()
+        let name = try #require(try state.call("tally_create", ["name": "items"])["name"]?.stringValue)
+        try state.plant("broken.json", "{ not json")
+        let before = try Data(contentsOf: state.file(name))
+        let calc = try #require(Catalog.tool(named: "calc"))
+        func lookup(_ expression: String) throws -> ToolError {
+            try #require(throws: ToolError.self) { try calc.call(["expression": .string(expression)], in: state.context) }
+        }
+        #expect(TallyTest.names(try lookup("{items}").details ?? [:], in: "matching") == [name])
+        #expect(try lookup("{item}").details?["matching"] == nil)
+        #expect(try Data(contentsOf: state.file(name)) == before)
+
+        #expect(tool.withoutDetails(try state.call("tally_list", ["prefix": "items"])) == ["folder": .string(state.tallies.path), "tallies_found": 1])
+        #expect(tool.withoutDetails(try state.call("tally_list", ["prefix": "b"])) == ["folder": .string(state.tallies.path), "tallies_found": 0, "unreadable_found": 1])
+    }
+
     /// The description says what an MCP result holds and that the command line lists the tallies, and keeps the
     /// files internal: it tells nothing about their format, and says tallies change only through the tally tools.
     @Test func theDescriptionKeepsTheFilesInternal() {
         let text = tool.description
         #expect(text.contains("returns folder and tallies_found"))
         #expect(text.contains("unreadable_found"))
+        #expect(text.contains("With prefix, both count only tallies whose names start with it."))
         #expect(text.contains("It lists no names or states"))
+        // A lookup by a guessed name goes through calc, which never writes: tally_add or tally_drop would change or
+        // delete a shared tally of exactly that name.
+        #expect(text.contains("call calc with {items}: calc never writes"))
+        #expect(!text.contains("tally_add") && !text.contains("tally_drop") && !text.contains("tally_set"))
         #expect(text.contains("abakus tally list"))
         #expect(text.contains("Tallies change only through the tally tools, which hold the lock on the folder, never by changing files in it."))
         for word in [".json", "JSON file", "format", " ls ", " cat ", "jq", "grep"] {
@@ -677,7 +701,7 @@ import Testing
 
     @Test func annotationsAreDeliberate() {
         let byName = Dictionary(uniqueKeysWithValues: TallyTools.all.map { ($0.name, $0.annotations) })
-        #expect(byName["tally_list"] == ToolAnnotations(title: "List tallies", readOnly: true, destructive: false, idempotent: true))
+        #expect(byName["tally_list"] == ToolAnnotations(title: "Count tallies", readOnly: true, destructive: false, idempotent: true))
         #expect(byName["tally_drop"]?.destructive == true)
         #expect(byName["tally_set"]?.destructive == true)
         #expect(byName["tally_add"]?.readOnly == false)

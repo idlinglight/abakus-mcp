@@ -152,31 +152,40 @@ expect "cli: calc with an unknown tally fails with exit 1 and computes nothing" 
 expect "cli: calc without an expression is a usage error, with calc's usage" \
   '.status == 64 and .stdout == "" and (.stderr | test("quoted") and test("Usage: abakus calc "))' "$(outcome $abakus calc)"
 
-# tally_list with 30 more tallies, each with thresholds, and a file that cannot be read. Over MCP (measured with
-# call --without-details, exactly the text an MCP client gets) the result is the folder and the counts: the 30
-# tallies add one digit, and the result stays within 200 characters (ADR-0008). The command line lists them all.
-mcp_list_before=$($abakus call --without-details tally_list '{}')
+# tally_list in a state folder of its own, so that its counts do not depend on the checks above: 30 tallies with
+# thresholds, one more, and a file that cannot be read. Over MCP (measured with call --without-details, exactly the
+# text an MCP client gets) the result is the folder and the counts: 30 tallies add one digit to an empty folder's
+# result and no names, and it stays within 200 characters (ADR-0008). The command line lists them all. The folder
+# is below the scratch folder, so the EXIT trap removes it in any case.
+scratch_state=$ABAKUS_STATE_DIR
+export ABAKUS_STATE_DIR=$scratch_state/tally-list
+list_folder=$ABAKUS_STATE_DIR/tallies
+mcp_list_empty=$($abakus call --without-details tally_list '{}')
 for i in {1..30}; do
   $abakus tally create bulk --limit 20 --at 5 --at 10 --at 15 --every-count 5 >/dev/null
 done
 mcp_list=$($abakus call --without-details tally_list '{}')
-expect "tally_list over MCP: 30 more tallies add one digit to the count and nothing else" \
-  '.after.tallies_found == .before.tallies_found + 30 and .before.tallies_found < 10
-     and (.after_text | length) == (.before_text | length) + 1' \
-  "$(jq -n --arg before_text "$mcp_list_before" --arg after_text "$mcp_list" \
-     '{before_text: $before_text, after_text: $after_text, before: ($before_text | fromjson), after: ($after_text | fromjson)}')"
-print -r -- '{ not json' > $ABAKUS_STATE_DIR/tallies/broken.json
+expect "tally_list over MCP: 30 tallies add one digit to an empty folder's result, and no names" \
+  ".empty == {\"folder\": \"$list_folder\", \"tallies_found\": 0} and .full == {\"folder\": \"$list_folder\", \"tallies_found\": 30}
+     and (.full_text | length) == (.empty_text | length) + 1 and (.full_text | contains(\"bulk\") | not)" \
+  "$(jq -n --arg empty_text "$mcp_list_empty" --arg full_text "$mcp_list" \
+     '{empty_text: $empty_text, full_text: $full_text, empty: ($empty_text | fromjson), full: ($full_text | fromjson)}')"
+$abakus tally create other --shared >/dev/null
+print -r -- '{ not json' > $list_folder/broken.json
 mcp_list=$($abakus call --without-details tally_list '{}')
 expect "tally_list over MCP: the folder and the counts, unreadable_found for the broken file" \
   "keys_unsorted == [\"folder\", \"tallies_found\", \"unreadable_found\"]
-     and .folder == \"$ABAKUS_STATE_DIR/tallies\" and .tallies_found >= 30 and .unreadable_found == 1" "$mcp_list"
-expect "tally_list over MCP stays within 200 characters with $(print -r -- "$mcp_list" | jq .tallies_found) tallies" \
+     and . == {\"folder\": \"$list_folder\", \"tallies_found\": 31, \"unreadable_found\": 1}" "$mcp_list"
+expect "tally_list over MCP stays within 200 characters with 31 tallies" \
   '. <= 200' "$(print -rn -- "$mcp_list" | jq -Rs length)"
 expect "tally_list over MCP with a prefix counts only the tallies whose names start with it" \
-  ". == {\"folder\": \"$ABAKUS_STATE_DIR/tallies\", \"tallies_found\": 30}" \
+  ". == {\"folder\": \"$list_folder\", \"tallies_found\": 30}" \
   "$($abakus call --without-details tally_list '{"prefix": "bulk"}')"
+expect "tally_list over MCP with a prefix counts only the unreadable files whose names start with it" \
+  ". == {\"folder\": \"$list_folder\", \"tallies_found\": 0, \"unreadable_found\": 1}" \
+  "$($abakus call --without-details tally_list '{"prefix": "br"}')"
 expect "cli: tally list prints every tally with its state, and the unreadable file with what is wrong" \
-  '(.tallies | length) == .tallies_found and .tallies_found >= 30 and .unreadable_found == 1
+  '.tallies_found == 31 and (.tallies | length) == 31 and .unreadable_found == 1
      and ([.tallies[] | select(.name | test("^bulk-[a-z0-9]{4}$"))] | length) == 30
      and all(.tallies[]; has("value") and has("count") and has("thresholds") and has("created") and has("updated"))
      and ([.tallies[] | select(.name | startswith("bulk-")) | .thresholds | length] | unique) == [3]
@@ -187,6 +196,7 @@ expect "cli: tally list with a prefix lists only those, sorted by name" \
   "$($abakus tally list bulk)"
 expect "cli: tally drop removes the file that cannot be read" '.dropped == true and .name == "broken"' \
   "$($abakus tally drop broken)"
+export ABAKUS_STATE_DIR=$scratch_state
 
 # CLI: sum from arguments (number strings, a negative number) and from stdin
 expect "cli: sum reads 410k and 1,234.5, and prints read" \

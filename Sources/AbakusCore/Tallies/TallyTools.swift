@@ -219,15 +219,16 @@ struct TallyList: Tool {
 
     let description = """
         Count tallies and get the folder they are kept in: returns folder and tallies_found, the number of \
-        tallies (with prefix, of those whose names start with it), plus unreadable_found, the number of tallies \
-        whose file cannot be read, when there are any. It lists no names or states, so the result stays small \
-        however many tallies other sessions keep. A name you lost, such as one with the suffix tally_create gave \
-        it, shows up in the error for an unknown name in the other tally tools and in calc: it lists the tallies \
-        whose names start with the name given, with when each was created. calc also reads one tally's value or \
-        count without changing it: {name} or {name:count}. The abakus command line (abakus tally list, the same \
-        program as this server) prints the same JSON plus every tally with its full state (tallies) and each \
-        unreadable one with what is wrong (unreadable). Tallies change only through the tally tools, which hold \
-        the lock on the folder, never by changing files in it.
+        tallies, plus unreadable_found, the number of tallies whose file cannot be read, when there are any. With \
+        prefix, both count only tallies whose names start with it. It lists no names or states, so the result \
+        stays small however many tallies other sessions keep. To look up a name you lost, such as items-k3f9 when \
+        you remember items, call calc with {items}: calc never writes, and its error for an unknown name shows the \
+        tallies named items plus a suffix (up to 20), with when each was created. If a tally is named exactly \
+        items, calc returns its value instead, and it may be another session's. calc also reads one tally's value \
+        or count: {name} or {name:count}. The abakus command line (abakus tally list, the same program as this \
+        server) prints the same JSON plus every tally with its full state (tallies) and each unreadable one with \
+        what is wrong (unreadable). Tallies change only through the tally tools, which hold the lock on the \
+        folder, never by changing files in it.
         """
 
     let inputSchema: JSONValue = [
@@ -241,7 +242,8 @@ struct TallyList: Tool {
         "additionalProperties": false,
     ]
 
-    let annotations = ToolAnnotations(title: "List tallies", readOnly: true, destructive: false, idempotent: true)
+    // Over MCP it counts; the command line, which lists, has its own help text.
+    let annotations = ToolAnnotations(title: "Count tallies", readOnly: true, destructive: false, idempotent: true)
 
     func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
         let args = try TallyArguments(arguments, for: self)
