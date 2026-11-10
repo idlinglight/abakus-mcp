@@ -3,7 +3,8 @@
 Status: accepted, 2026-11-08; amended 2026-11-08 (threshold argument shape, crossing rule and "once", unique
 suffix, `tally_set` and exactness, unknown names and arguments, thresholds that cannot be computed); amended
 2026-11-08 (a random suffix by default, `shared: true` for an exact name; see the end); amended 2026-11-08
-(the advice for unknown names in `tally_drop`)
+(the advice for unknown names in `tally_drop`); amended 2026-11-10 (`tally_list` over MCP: the folder and how many
+tallies there are)
 
 ## Context
 
@@ -60,8 +61,8 @@ does not reliably know an identifier that is unique to its session.
 - Unknown arguments are errors: a typo such as `amout` would otherwise be ignored and add 1.
 - Every response carries the tally's full state, each threshold with its status.
 - Tools: `tally_create`, `tally_add`, `tally_set` (value, count or thresholds of an existing tally),
-  `tally_list` (all tallies or those with a name prefix, and the folder they are in), `tally_drop` (returns
-  the final state).
+  `tally_list` (all tallies or those with a name prefix, and the folder they are in; over MCP only the folder and
+  how many there are, by the amendment of 2026-11-10), `tally_drop` (returns the final state).
 
 ## Consequences
 
@@ -122,9 +123,9 @@ consumers relying on `unique`.
 - Tally names in responses and in `tally_list` carry suffixes; an agent that loses the name finds it with
   `tally_list` and a prefix, or in the unknown-name error, and tells its own from others' by when it was
   created. An agent that cannot tell starts a new tally and loses its earlier count, which is better than
-  adding to another session's.
+  adding to another session's. (Since the amendment of 2026-11-10, over MCP only in the unknown-name error.)
 - Agents still see every tally of the user in `tally_list`; leaving other sessions' tallies alone is guidance
-  in the descriptions, not enforced.
+  in the descriptions, not enforced. (Since the amendment of 2026-11-10, only on the command line.)
 
 ## Amendment 2026-11-08: the advice for unknown names in `tally_drop`
 
@@ -135,3 +136,52 @@ to expire; without such tallies, that nothing was dropped. `tally_add` and `tall
 new tally. `tally_add`'s description no longer points to `tally_list` for finding a name, which steered agents
 towards other sessions' tallies; it and `tally_set`'s description say that the error shows the tallies whose
 names start with the name given, with when each was created.
+
+## Amendment 2026-11-10: `tally_list` over MCP: the folder and how many tallies there are
+
+### Context
+
+`tally_list` returned every tally of the user, other sessions' included, each with its full state and every
+threshold. Its size depended on what other sessions did, which the caller does not control, and
+[ADR-0008](0008-small-mcp-results.md) listed it as a known exception to the rule that MCP results stay small (issue
+#15). Since the amendments above, an agent that lost a name finds it in the error for an unknown name, which shows
+the tallies with that name plus a suffix and when each was created; `tally_add`'s description stopped pointing to
+`tally_list` for that, because the list steered agents towards other sessions' tallies.
+
+The issue proposed returning the folder, a count and what to expect in it, so that agents would read the files
+with `ls`, `jq` or `grep`. That would make the file format an interface: the descriptions would have to document
+it and say that only the tally tools write, and every later format version would have to consider agents reading
+files. Not chosen.
+
+Also considered: a list of at most a fixed number of tallies plus a count, which ADR-0008 allows. Its entries would
+be whichever tallies sort first, as often other sessions' as one's own. The unknown-name error picks tallies by the
+name given, which serves an agent looking for its own tally better.
+
+### Decision
+
+- Over MCP, `tally_list` returns `folder`, `tallies_found` (the number of readable tallies whose names start with
+  `prefix`, or of all readable tallies without one) and `unreadable_found` (the number of tallies whose file cannot
+  be read, only when there are any): `{"folder": "/var/folders/…/T/abakus/tallies", "tallies_found": 3}`.
+- `tallies` (each tally's full state, sorted by name) and `unreadable` (each such name with what is wrong) are its
+  detail keys (ADR-0008): the command line prints them, `abakus tally list [prefix]` and `abakus call tally_list`
+  alike.
+- Not `count`: a tally's `count` is its number of additions, and on the command line both appear in one result.
+  With a full name as `prefix`, `"count": 1` would read as that tally's count. `tallies_found` and
+  `unreadable_found` each count the list of the same name.
+- What `tally_list` is for over MCP: how many tallies there are, with a prefix or all, and where they are kept. A
+  lost name shows up in the error for an unknown name; `calc` reads one tally's value or count without changing it
+  (`{name}`, `{name:count}`).
+- The description says what an MCP result holds, that the command line lists every tally with its state, and that
+  tallies change only through the tally tools, which hold the lock on the folder, never by changing files in it.
+  It does not describe the files ([ADR-0003](0003-state-in-user-temp-folder.md), amendment of 2026-11-10). It
+  informs about the command line and does not tell the agent to run it (ADR-0008).
+- `calc`'s errors for a malformed tally reference say to write the full name "as tally_create returned it", no
+  longer "or tally_list".
+
+### Consequences
+
+- `tally_list` is within ADR-0008's rule: its MCP result grows only by the digits of its counts.
+- An agent that read names or states from `tally_list` over MCP gets counts from abakus 0.5.0 on, a change of the
+  result's shape, hence a minor version. The command line prints what `tally_list` returned before, plus the counts.
+- Over MCP, only the unknown-name error still names other sessions' tallies: `details.existing` up to 20 names,
+  `details.matching` those that start with the name given and `-`, with when each was created.

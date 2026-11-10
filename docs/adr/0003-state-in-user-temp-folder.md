@@ -1,7 +1,8 @@
 # ADR-0003: State: one file per tally in the per-user temporary folder
 
 Status: accepted, 2026-11-08; amended 2026-11-08 (tally files in `tallies/`, file format, one lock on the
-folder itself for all tallies, what creates folders, unreadable files)
+folder itself for all tallies, what creates folders, unreadable files); amended 2026-11-10 (unreadable files in
+`tally_list`; the files are not an interface for agents; see the end)
 
 ## Context
 
@@ -50,14 +51,46 @@ folder whatever the environment says.
 - A file must meet the rules arguments meet (one validation for thresholds and counts, whichever way they
   come in). A file that cannot be read (damaged, written by a newer version, or breaking those rules) makes
   calls on that tally fail with an error naming the file. `tally_drop` deletes it all the same, and `tally_list` reports it under `unreadable`
-  instead of failing.
+  instead of failing (over MCP only as a count since 2026-11-10, see the end).
 
 ## Consequences
 
-- Nothing to start, stop or clean up. State can be inspected with `ls` and `cat`.
+- Nothing to start, stop or clean up. State can be inspected with `ls` and `cat` (by people; for agents the files
+  are not an interface, see the end).
 - One lock for all tallies serialises every tally call of the user. Each holds it for one small read and
   write, which is negligible at the pace agents call tools; per-tally locks would be the next step if not.
 - Tallies that must survive days of idleness or a reboot are out of scope; a persistent location would be a
   new decision.
 - A process sandboxed away from the per-user temporary folder cannot use tallies unless `ABAKUS_STATE_DIR`
   points it somewhere it may write. MCP servers started by a client normally run unsandboxed.
+
+## Amendment 2026-11-10: unreadable files in `tally_list`; the files are not an interface for agents
+
+### Context
+
+Over MCP, `tally_list` no longer lists tallies: it returns the folder and how many tallies there are
+([ADR-0004](0004-tallies.md), amendment of 2026-11-10; [ADR-0008](0008-small-mcp-results.md)). The decision above
+says that it reports an unreadable file under `unreadable` instead of failing, and the consequences say that state
+can be inspected with `ls` and `cat`. Issue #15 proposed to build on the latter: agents would read the files with
+`ls`, `jq` or `grep`, and the description would say what to expect in them. That was not chosen.
+
+### Decision
+
+- `tally_list` still never fails on an unreadable file. Over MCP it counts such files in `unreadable_found`; the
+  command line lists them under `unreadable`, each name with what is wrong (a detail, ADR-0008). Calls on such a
+  tally still fail with an error that names its file, and `tally_drop` deletes it.
+- The files, their names and their format are internal to abakus. No tool description documents them, and a later
+  `format` version has to consider other versions of abakus only, not agents that read files.
+- Tools name the folder (`folder` in `tally_list`'s result) and a file that cannot be read (in the error), so that a
+  person can find them. That state can be inspected with `ls` and `cat` stays true for people, such as someone
+  looking into a problem. For agents it is not an interface: the tool texts point to the tally tools and to the
+  command line, and `tally_list`'s description says that tallies change only through the tally tools, which hold
+  the lock on the folder, never by changing files in it.
+
+### Consequences
+
+- A file changed past the lock can undo a concurrent call's change or be undone by it, and a file in a shape the
+  tools refuse makes its tally unreadable. The sentence in `tally_list`'s description is there for agents that
+  would otherwise take the folder in its result as an invitation.
+- Every tally with its state is on the command line (`abakus tally list`); the descriptions only say that it exists
+  (ADR-0008).
