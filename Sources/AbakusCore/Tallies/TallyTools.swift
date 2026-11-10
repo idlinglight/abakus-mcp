@@ -209,13 +209,25 @@ struct TallySet: Tool {
 
 // MARK: - tally_list
 
+/// Over MCP, the folder and how many tallies there are; the command line also prints every tally with its state.
+/// The lists grow with the number of tallies, other sessions' included, so they are details (ADR-0008). The files
+/// are no interface for agents: the description does not document them (ADR-0003, ADR-0004).
 struct TallyList: Tool {
     let name = "tally_list"
 
+    let detailKeys = ["tallies", "unreadable"]
+
     let description = """
-        List tallies sorted by name, each with its full state; with prefix, only names starting with it. Also \
-        returns the folder they are kept in. Use it to see what exists or to find a name you lost, such as the \
-        suffix tally_create gave it.
+        Count tallies and get the folder they are kept in: returns folder and tallies_found, the number of \
+        tallies (with prefix, of those whose names start with it), plus unreadable_found, the number of tallies \
+        whose file cannot be read, when there are any. It lists no names or states, so the result stays small \
+        however many tallies other sessions keep. A name you lost, such as one with the suffix tally_create gave \
+        it, shows up in the error for an unknown name in the other tally tools and in calc: it lists the tallies \
+        whose names start with the name given, with when each was created. calc also reads one tally's value or \
+        count without changing it: {name} or {name:count}. The abakus command line (abakus tally list, the same \
+        program as this server) prints the same JSON plus every tally with its full state (tallies) and each \
+        unreadable one with what is wrong (unreadable). Tallies change only through the tally tools, which hold \
+        the lock on the folder, never by changing files in it.
         """
 
     let inputSchema: JSONValue = [
@@ -223,7 +235,7 @@ struct TallyList: Tool {
         "properties": [
             "prefix": [
                 "type": "string",
-                "description": "Only tallies whose names start with this, e.g. \"items\" for items-k3f9.",
+                "description": "Count only tallies whose names start with this, e.g. \"items\" for items-k3f9.",
             ],
         ],
         "additionalProperties": false,
@@ -258,7 +270,12 @@ struct TallyList: Tool {
                     break
                 }
             }
-            var response: JSONObject = ["folder": .string(store.folder.url.path), "tallies": .array(tallies)]
+            // The counts first, then the lists: without the details, what remains is the start of the full result.
+            var response: JSONObject = [
+                "folder": .string(store.folder.url.path), "tallies_found": .number(String(tallies.count)),
+            ]
+            if !unreadable.isEmpty { response["unreadable_found"] = .number(String(unreadable.count)) }
+            response["tallies"] = .array(tallies)
             if !unreadable.isEmpty { response["unreadable"] = .array(unreadable) }
             return response
         }

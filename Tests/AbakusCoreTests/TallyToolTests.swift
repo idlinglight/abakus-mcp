@@ -430,25 +430,33 @@ import Testing
 }
 
 @Suite struct TallyListTests {
-    @Test func listsSortedWithFullStateAndTheFolder() throws {
+    private let tool = TallyList()
+
+    @Test func countsAndListsSortedWithFullStateAndTheFolder() throws {
         let state = TallyTestState()
         for name in ["b", "a-2", "a"] {
             try state.call("tally_create", ["name": .string(name), "shared": true, "thresholds": [["limit": 3]]])
         }
         let response = try state.call("tally_list")
-        #expect(response.keys == ["folder", "tallies"])
+        #expect(response.keys == ["folder", "tallies_found", "tallies"])
         #expect(response["folder"] == .string(state.tallies.path))
+        #expect(response["tallies_found"] == 3)
         #expect(TallyTest.names(response, in: "tallies") == ["a", "a-2", "b"])
         let first = try #require(response["tallies"]?.arrayValue?.first?.objectValue)
         #expect(first["thresholds"] == [["limit": 3, "of": "value", "reached": false, "remaining": 3]])
 
-        #expect(TallyTest.names(try state.call("tally_list", ["prefix": "a"]), in: "tallies") == ["a", "a-2"])
-        #expect(TallyTest.names(try state.call("tally_list", ["prefix": "zz"]), in: "tallies") == [])
+        let prefixed = try state.call("tally_list", ["prefix": "a"])
+        #expect(prefixed["tallies_found"] == 2)
+        #expect(TallyTest.names(prefixed, in: "tallies") == ["a", "a-2"])
+        let none = try state.call("tally_list", ["prefix": "zz"])
+        #expect(none["tallies_found"] == 0)
+        #expect(none["tallies"] == [])
     }
 
     @Test func emptyWithoutCreatingTheFolder() throws {
         let state = TallyTestState()
-        #expect(try state.call("tally_list")["tallies"] == [])
+        let response = try state.call("tally_list")
+        #expect(response == ["folder": .string(state.tallies.path), "tallies_found": 0, "tallies": []])
         #expect(!FileManager.default.fileExists(atPath: state.url.path))
     }
 
@@ -459,8 +467,57 @@ import Testing
         try state.plant("Notes.json", "{}")  // not a tally name
         try state.plant("readme.txt", "hello")
         let response = try state.call("tally_list")
+        #expect(response.keys == ["folder", "tallies_found", "unreadable_found", "tallies", "unreadable"])
+        #expect(response["tallies_found"] == 1)
+        #expect(response["unreadable_found"] == 1)
         #expect(TallyTest.names(response, in: "tallies") == ["good"])
         #expect(TallyTest.names(response, in: "unreadable") == ["broken"])
+        let problem = response["unreadable"]?.arrayValue?.first?.objectValue?["problem"]?.stringValue
+        #expect(problem?.contains("not a tally file") == true)
+    }
+
+    /// The lists grow with the number of tallies, other sessions' included, so they are details: over MCP the
+    /// result is the folder and the counts (ADR-0008).
+    @Test func overMCPOnlyTheFolderAndTheCounts() throws {
+        #expect(tool.detailKeys == ["tallies", "unreadable"])
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "items", "thresholds": [["at": [1, 2, 3]]]])
+        #expect(tool.withoutDetails(try state.call("tally_list")) == ["folder": .string(state.tallies.path), "tallies_found": 1])
+
+        try state.plant("broken.json", "{ not json")
+        let withUnreadable = tool.withoutDetails(try state.call("tally_list"))
+        #expect(withUnreadable.keys == ["folder", "tallies_found", "unreadable_found"])
+        #expect(withUnreadable["unreadable_found"] == 1)
+    }
+
+    /// 40 times as many tallies, each with more thresholds and marks, add one digit to the MCP result and nothing
+    /// else.
+    @Test func theMCPResultGrowsOnlyByTheDigitsOfTheCount() throws {
+        let state = TallyTestState()
+        func written() throws -> String { JSONWriter.write(tool.withoutDetails(try state.call("tally_list"))) }
+        try state.call("tally_create", ["name": "items"])
+        let one = try written()
+        let marks: [JSONValue] = (1...20).map { .number(String($0)) }
+        for _ in 1..<40 {
+            try state.call("tally_create", ["name": "items", "thresholds": [["limit": 20], ["at": .array(marks)], ["every": 5, "of": "count"]]])
+        }
+        let forty = try written()
+        #expect(forty.count == one.count + 1)
+        #expect(forty.count <= state.tallies.path.count + 40)
+    }
+
+    /// The description says what an MCP result holds and that the command line lists the tallies, and keeps the
+    /// files internal: it tells nothing about their format, and says tallies change only through the tally tools.
+    @Test func theDescriptionKeepsTheFilesInternal() {
+        let text = tool.description
+        #expect(text.contains("returns folder and tallies_found"))
+        #expect(text.contains("unreadable_found"))
+        #expect(text.contains("It lists no names or states"))
+        #expect(text.contains("abakus tally list"))
+        #expect(text.contains("Tallies change only through the tally tools, which hold the lock on the folder, never by changing files in it."))
+        for word in [".json", "JSON file", "format", " ls ", " cat ", "jq", "grep"] {
+            #expect(!text.contains(word), "\(word)")
+        }
     }
 }
 
