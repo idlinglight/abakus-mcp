@@ -3,12 +3,13 @@ import ArgumentParser
 import Foundation
 
 /// Runs a catalog tool for a CLI command: the same tool and arguments as over MCP, and the full result, with the
-/// detail keys an MCP result leaves out (ADR-0008).
+/// detail keys an MCP result leaves out (ADR-0008). With `withoutDetails`, the output is exactly the text an MCP
+/// client gets.
 ///
 /// Exit status: 0 with the result on stdout; 1 for a tool error ("Error: <message>" on stderr, the same text an
 /// agent reads); 64 for a usage mistake, with the command's usage.
 enum ToolRunner {
-    static func run(_ name: String, _ arguments: JSONObject) throws {
+    static func run(_ name: String, _ arguments: JSONObject, withoutDetails: Bool = false) throws {
         let tool = try tool(named: name)
         let context: ToolContext
         do {
@@ -17,7 +18,8 @@ enum ToolRunner {
             throw Failure(error.text)
         }
         do {
-            print(JSONWriter.write(try tool.call(arguments, in: context)))
+            let result = try tool.call(arguments, in: context)
+            print(JSONWriter.write(withoutDetails ? tool.withoutDetails(result) : result))
         } catch {
             throw Failure(error.text)
         }

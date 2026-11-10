@@ -287,6 +287,7 @@ abakus calc -2^2                                 # -4; a leading minus is part o
 abakus date-diff 2026-11-08 now
 abakus tools                                     # the tools and what they do
 abakus call sum '{"numbers": ["0.1", 0.2]}'      # any tool with JSON arguments, as an MCP client sends them
+abakus call --without-details sum '{"numbers": ["0.1"]}'  # exactly the text an MCP client gets
 ```
 
 `--help` on any command says the rest.

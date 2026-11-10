@@ -146,7 +146,10 @@ the practical check; the growth rule says what does not belong in a result at al
 
 - This amends ADR-0005's "Responses show how each string was read": over MCP, a reading shows in a note when it was
   a choice; the command line shows every reading.
-- `abakus call` prints the full result, not exactly what an MCP client gets.
+- `abakus call` prints the full result, not exactly what an MCP client gets. Amended 2026-11-10: `abakus call
+  --without-details` leaves out the detail keys as the server does (`Tool.withoutDetails`), so the size of an MCP
+  result can be checked without speaking JSON-RPC. It is a flag of the command line, not a tool argument, so the
+  reasoning against a `verbose` argument above does not apply; the other commands print everything, as decided.
 - `dev/check.zsh` checks both sides: no `read` over MCP, `read` on the command line.
 - Claude Code's session transcripts record every abakus call, so calls per session can be compared before and
   after this change.

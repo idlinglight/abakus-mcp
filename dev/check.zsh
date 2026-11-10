@@ -150,6 +150,10 @@ expect "cli: date-diff across an offset" '.totals.hours == 1738.5' \
   "$($abakus date-diff 2026-11-08T14:30:00+01:00 2027-01-20)"
 expect "cli: call passes JSON arguments through" '.total == 0.3' \
   "$($abakus call sum '{"numbers": ["0.1", 0.2]}')"
+expect "cli: call prints the details an MCP result leaves out" '.read == [{"index": 0, "input": "0.1", "value": 0.1}]' \
+  "$($abakus call sum '{"numbers": ["0.1", 0.2]}')"
+expect "cli: call --without-details prints what an MCP client gets" '. == {"total": 0.3, "count": 2, "mean": 0.15}' \
+  "$($abakus call --without-details sum '{"numbers": ["0.1", 0.2]}')"
 
 if (( failures )); then
   if [[ -s $stderr_log ]]; then

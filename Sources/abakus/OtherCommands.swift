@@ -98,12 +98,17 @@ struct Tools: ParsableCommand {
 
 struct Call: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Call a tool with JSON arguments, as an MCP client would; prints the result as JSON.",
-        discussion: #"Example: abakus call sum '{"numbers": ["410k", 0.5]}'"#
+        abstract: "Call a tool with JSON arguments, as an MCP client sends them; prints the full result as JSON.",
+        discussion: #"""
+            The result includes the detail keys an MCP result leaves out, such as sum's read; --without-details \#
+            prints exactly what an MCP client gets. Example: abakus call sum '{"numbers": ["410k", 0.5]}'
+            """#
     )
 
     @Argument(help: "The tool's name, e.g. tally_add (see `abakus tools`).") var tool: String
     @Argument(help: "The arguments as a JSON object, or - to read them from stdin (default: {}).") var arguments: String?
+    @Flag(help: "Leave out the result's detail keys, as the MCP server does, so the output is exactly the text an MCP client gets. Errors are the same either way.")
+    var withoutDetails = false
 
     func run() throws {
         var text = arguments ?? "{}"
@@ -119,6 +124,6 @@ struct Call: ParsableCommand {
         guard case .object(let object) = value else {
             throw ToolRunner.Failure(#"The arguments must be a JSON object, e.g. '{"name": "items"}'."#)
         }
-        try ToolRunner.run(tool, object)
+        try ToolRunner.run(tool, object, withoutDetails: withoutDetails)
     }
 }
