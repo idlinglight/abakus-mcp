@@ -63,17 +63,15 @@ enum ToolRunner {
         return result
     }
 
-    /// For commands that take numbers from a pipe when given none: a terminal on stdin is a usage mistake, since
-    /// nobody is going to type the numbers and press ctrl-D. Call it from `validate()`, so that the usage shown is
-    /// the command's.
-    static func requireStandardInputNotTerminal(command: String) throws {
-        if isatty(STDIN_FILENO) != 0 {
-            throw ValidationError("Give the numbers as arguments, or pipe them in: printf '1\\n2\\n' | abakus \(command)")
-        }
-    }
-
-    /// Whitespace-separated words from stdin; see `requireStandardInputNotTerminal(command:)`.
+    /// Whitespace-separated words from stdin, for commands that take numbers from a pipe when given none. On a
+    /// terminal it first says on stderr what it is waiting for: a command silently waiting for typed input looks
+    /// like a hang. Typing or pasting numbers there is a fine way to use it, though.
     static func wordsFromStandardInput() -> [String] {
+        if isatty(STDIN_FILENO) != 0 {
+            FileHandle.standardError.write(
+                Data("Type or paste the numbers, then press ctrl-D on an empty line (ctrl-C cancels).\n".utf8)
+            )
+        }
         let data = FileHandle.standardInput.readDataToEndOfFile()
         return String(decoding: data, as: UTF8.self).split(whereSeparator: \.isWhitespace).map(String.init)
     }

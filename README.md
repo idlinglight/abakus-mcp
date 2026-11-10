@@ -282,6 +282,7 @@ abakus tally create build-errors --shared        # exactly this name, for severa
 abakus tally list
 abakus sum 410k 1,234.5 -3
 grep -oE '[0-9][0-9.]*k' build.log | abakus sum  # numbers from stdin
+abakus sum                                       # in a terminal: type or paste numbers, then ctrl-D
 abakus sum --decimal , 1.234,5
 abakus calc '{errors-k3f9} / {requests-p2x7} * 100'  # quote it: * ( { ^ mean something to the shell
 abakus calc -2^2                                 # -4; a leading minus is part of the expression

@@ -161,22 +161,26 @@ expect "cli: a mistyped option is a usage error, not a number, with sum's usage"
   "$(outcome $abakus sum 1 --decmal , 2)"
 expect "cli: sum reads stdin" '.total == 6 and .count == 3' "$(print -l 1 2 3 | $abakus sum)"
 expect "cli: sum with a decimal comma" '.total == 1234.5' "$($abakus sum --decimal , 1.234,5)"
-# A terminal on stdin, through a pseudo-terminal. A sum that reads the terminal anyway would wait for ever, so
-# the loop keeps writing ctrl-D (which ends that read), never blocks on reading, and gives up after about 5 s:
-# a broken check fails instead of hanging. zpty runs the command in a fork of this shell: `trap - EXIT` keeps
-# that fork from removing the state folder when it ends.
+# Numbers typed into a terminal, through a pseudo-terminal: once sum says it is waiting, type "1 2", then
+# ctrl-D until it ends. The loop never blocks on reading and gives up after about 5 s, so a broken sum fails the
+# check instead of hanging it. zpty runs the command in a fork of this shell: `trap - EXIT` keeps that fork
+# from removing the state folder when it ends.
 zmodload zsh/zpty
 zpty terminal "trap - EXIT; ${(q)abakus} sum 2>&1; print -r -- \"exit status \$?\""
-terminal_output=
+terminal_output= typed=
 for attempt in {1..50}; do
-  zpty -w -n terminal $'\x04' 2>/dev/null
   while zpty -r -t terminal line; do terminal_output+=${line//$'\r'/}; done
   [[ $terminal_output == *"exit status "* ]] && break
+  if [[ -z $typed && $terminal_output == *ctrl-D* ]]; then
+    zpty -w terminal '1 2'
+    typed=yes
+  fi
+  [[ -n $typed ]] && zpty -w -n terminal $'\x04' 2>/dev/null
   sleep 0.1
 done
 zpty -d terminal
-expect "cli: sum with a terminal on stdin is a usage error, with sum's usage" \
-  '.output | test("pipe them in") and test("Usage: abakus sum ") and test("exit status 64")' \
+expect "cli: sum in a terminal says what it waits for, then adds the numbers typed until ctrl-D" \
+  '.output | test("Type or paste the numbers") and test("\"total\":3,") and test("exit status 0")' \
   "$(jq -n --arg output "$terminal_output" '{output: $output}')"
 
 # CLI: date-diff, and the raw call command

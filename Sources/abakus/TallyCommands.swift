@@ -47,6 +47,8 @@ struct TallyCommand: ParsableCommand {
         var amount: [String] = []
         @OptionGroup var decimal: DecimalOption
 
+        // As in sum: replaces the captured words with the checked ones for run(), and a usage mistake thrown here
+        // shows tally add's usage.
         mutating func validate() throws {
             amount = try ToolRunner.numberWords(amount)
             if amount.count > 1 {

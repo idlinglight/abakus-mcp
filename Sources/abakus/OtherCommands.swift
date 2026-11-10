@@ -5,7 +5,10 @@ import Foundation
 struct Sum: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Add numbers exactly (sum).",
-        discussion: "Without numbers, reads them from stdin, separated by whitespace or line breaks: grep -oE '[0-9][0-9.]*k' build.log | abakus sum"
+        discussion: """
+            Without numbers, reads them from stdin, separated by whitespace or line breaks: grep -oE \
+            '[0-9][0-9.]*k' build.log | abakus sum. In a terminal, type or paste them and end with ctrl-D.
+            """
     )
 
     // Captures negative numbers too, which would otherwise be taken for options.
@@ -13,12 +16,11 @@ struct Sum: ParsableCommand {
     var numbers: [String] = []
     @OptionGroup var decimal: DecimalOption
 
-    // Usage mistakes in validate() rather than run(), so that the usage shown is sum's.
+    // ArgumentParser calls validate() on the parsed command before run(), on the same value, so it can replace
+    // the captured words with the checked ones (no `--`, no mistyped option) for run() to use. A usage mistake
+    // thrown here shows sum's usage; thrown from run(), it would show the root's.
     mutating func validate() throws {
         numbers = try ToolRunner.numberWords(numbers)
-        if numbers.isEmpty {
-            try ToolRunner.requireStandardInputNotTerminal(command: "sum")
-        }
     }
 
     func run() throws {
