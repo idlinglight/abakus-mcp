@@ -36,10 +36,10 @@ Other MCP clients: the command is `abakus mcp` (stdio).
 ./install.zsh --skill
 ```
 
-also installs the skill `abakus-cli` for Claude Code, as a user-level skill in `~/.claude/skills/abakus-cli/`
-(`$CLAUDE_CONFIG_DIR/skills/abakus-cli/` when that is set, which must then be an absolute path), so agents have
+also installs the skill `abakus` for Claude Code, as a user-level skill in `~/.claude/skills/abakus/`
+(`$CLAUDE_CONFIG_DIR/skills/abakus/` when that is set, which must then be an absolute path), so agents have
 it in every project. The folder is replaced as a whole, so nothing of an earlier install stays. Its source is
-[`skills/abakus-cli/SKILL.md`](skills/abakus-cli/SKILL.md); see [Command line](#command-line).
+[`skills/abakus/SKILL.md`](skills/abakus/SKILL.md); see [Command line](#command-line).
 
 ## Tools
 
@@ -369,7 +369,7 @@ abakus call --without-details sum '{"numbers": ["0.1"]}'  # exactly the text an 
 
 The tool descriptions say that the command line exists and what it adds, but not when or how to run it: text
 from a tool server that asks for shell commands reads like the instructions careful agents distrust. That is the
-job of the skill `abakus-cli` (`./install.zsh --skill`), the user's own channel: when the command line is the
+job of the skill `abakus` (`./install.zsh --skill`), the user's own channel: when the command line is the
 better way and when not, the commands and options, quoting, stdin, exit codes, and how notes written in MCP terms
 map to options ([ADR-0008](docs/adr/0008-small-mcp-results.md)). `dev/check.zsh` fails when the skill names a
 command the help does not list, an option its command lacks or a tool that does not exist, or misses a command.

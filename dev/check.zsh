@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 # check: run a built abakus end to end, through the MCP server (both protocol eras) and through the CLI, in a
-# scratch state folder that is removed afterwards. Real tallies are never touched. Also checks the abakus-cli
+# scratch state folder that is removed afterwards. Real tallies are never touched. Also checks the abakus
 # skill against the CLI's help, and that install.zsh refuses an unknown argument (it installs nothing).
 # usage: [ABAKUS=<binary>] dev/check.zsh     (default: .build/debug/abakus)
 # exit status: 0 all checks passed, 1 a check failed
@@ -389,11 +389,11 @@ expect "cli: --help lists the commands" '.status == 0 and (.stdout | test("SUBCO
 expect "cli: a command's --help shows its usage" '.status == 0 and (.stdout | test("USAGE: abakus sum "))' \
   "$(outcome $abakus sum --help)"
 
-# The abakus-cli skill (skills/abakus-cli/SKILL.md) against this binary, so that the two cannot drift apart.
+# The abakus skill (skills/abakus/SKILL.md) against this binary, so that the two cannot drift apart.
 # help_for maps each command the help lists, one level of groups deep, to its --help text: "abakus", "abakus sum",
 # "abakus tally create". In ArgumentParser's help, a command is a line under SUBCOMMANDS: that starts with two
 # spaces and a name; a hidden command, such as the old name `abakus tally list`, is not listed, so not in the map.
-skill_file=${0:A:h:h}/skills/abakus-cli/SKILL.md
+skill_file=${0:A:h:h}/skills/abakus/SKILL.md
 typeset -A help_for
 subcommands() { print -r -- $1 | awk '/^SUBCOMMANDS:/ { s = 1; next } s && /^  [a-z]/ { print $1 }' }
 is_group() { [[ ${help_for[$1]-} == *SUBCOMMANDS:* ]] }

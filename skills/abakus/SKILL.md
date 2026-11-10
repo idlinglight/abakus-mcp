@@ -1,5 +1,5 @@
 ---
-name: abakus-cli
+name: abakus
 description: >-
   How and when to run the abakus command line, the shell side of the abakus MCP tools (needs the `abakus`
   binary on PATH). Use it to add numbers that sit in a file, a log or the output of another command
