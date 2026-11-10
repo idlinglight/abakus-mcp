@@ -19,9 +19,9 @@ tallies, and print the JSON an MCP client gets plus what an MCP result leaves ou
 
 Each file stands on its own; read the one you need.
 
-- [tallies.md](tallies.md), for working through a list with tallies, or a tally result that needs explaining:
-  what tallies are for, thresholds, shapes (budgets, checkpoints, milestones), finding a tally after a
-  compaction, correcting one, over MCP and on the command line.
+- [tallies.md](tallies.md), for working through a list with tallies, designing such a workflow, or to understand
+  how tallies behave: what they are for, thresholds, shapes (budgets, checkpoints, milestones), finding a tally
+  after a compaction, correcting one, over MCP and on the command line.
 - [calc-sum.md](calc-sum.md), for adding numbers from a file, a log or a pipeline, or calc in a shell: recipes,
   `count` as the check, decimal commas, quoting, grouping, notes where conventions differ, tallies in a formula.
 
@@ -29,8 +29,9 @@ Each file stands on its own; read the one you need.
 
 - **Numbers in a file or from a pipeline**: a command over the source data, instead of copying them into an MCP
   call.
-- **What an MCP result leaves out**: how each number string was read and how calc grouped (`read`), all the
-  marks of an `at` threshold, every tally a calc used, every tally with its state (`abakus tallies info`).
+- **What an MCP result leaves out**: how each number string was read and how calc grouped (`read`), every tally
+  a calc used, and every tally with its state and all the marks of an `at` threshold:
+  `abakus tallies info <name>` (the tally commands print the marks too, but `add`, `set` and `drop` change it).
 - **Shaping output** with `jq` or `head`, or into a file in a scratch folder, before you read it.
 - **Exactly what an MCP client gets**: `abakus call --without-details <tool> '<json>'`.
 - **No abakus MCP tools in this session**: the command line does everything they do.
@@ -81,4 +82,5 @@ They are the same text on both sides. Rows for tallies and `sum` are in the topi
 ## State
 
 The command line sees the same tallies as the MCP server. Tallies change only through abakus, which holds the
-lock on their folder: never edit, create or delete files there. More in [tallies.md](tallies.md).
+lock on their folder: never edit, create or delete files there. Don't set `ABAKUS_STATE_DIR` except in tests:
+tallies in another folder are invisible to the MCP server and to other sessions. More in [tallies.md](tallies.md).

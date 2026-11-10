@@ -26,6 +26,7 @@ abakus sum 410k 1,234.5 -3                  # as arguments; stdin is then ignore
 - `--decimal ,` for numbers like `1.234,5`. When a word reads differently with the other mark (`1,234`) and no
   other word rules that mark out, `notes` gives both readings; if the source writes a decimal comma, run the
   command again with `--decimal ,`. The rules in full: `abakus tools --show sum`.
+- To add a sum to a tally as one addition (the count goes up by 1), see [tallies.md](tallies.md#on-the-command-line).
 
 ## calc
 

@@ -20,8 +20,9 @@ copied wrong or lost in a compaction; a tally keeps it.
 At most 5, each with one of `limit` (a ceiling), `at` (marks, any number) or `every` (each multiple), on the value
 or, with `"of": "count"`, the count: `[{"limit": 20}, {"every": 5, "of": "count"}]`.
 
-- An addition crosses a mark when it takes the tally from below the mark to it or past it: upward only, and
-  again after the tally went back down.
+- An addition crosses a mark, or a `limit`, when it takes the tally from below it to it or past it: upward only.
+  After the tally went back below it, by `tally_set` or a negative amount, the next addition that reaches it
+  reports it again.
 - `crossed`, in `tally_add`'s response, lists what the addition crossed (`[]` if nothing):
   `{"limit": 20, "of": "value"}`, `{"every": 5, "of": "count", "at": [5]}`; past 10 marks of one threshold,
   `times`, `first` and `last`.
@@ -29,8 +30,7 @@ or, with `"of": "count"`, the count: `[{"limit": 20}, {"every": 5, "of": "count"
   `at`: `marks_total`, how many are `passed`, the marks `ahead` (at most 5), and on the command line all of them
   (`marks`).
 - Thresholds inform and never block an addition.
-- A sixth threshold is an error: one `at` takes any number of marks, and a second tally can watch more. A tally
-  from abakus 0.4 or earlier with more still loads.
+- A sixth threshold is an error: one `at` takes any number of marks, and a second tally can watch more.
 
 ## Shapes for working through a list
 
@@ -79,7 +79,19 @@ abakus tallies info review                  # tallies whose names start with rev
 abakus calc '{review-k3f9:count}'           # its count; {review-k3f9} is its value
 ```
 
-Repeated `--at` make one threshold. For many numbers, `… | abakus sum`, check its `count`, add the `total`.
+Repeated `--at` make one threshold. The tally commands take `--decimal ,` for numbers with a decimal comma. For
+many numbers, `… | abakus sum`, check its `count`, and add the `total`: one addition, so the count goes up by 1.
+
+Every command prints one line of JSON; `abakus tallies info review`, wrapped and shortened:
+
+```json
+{"folder": "/var/folders/…/T/abakus/tallies", "tallies_found": 1,
+ "tallies": [{"name": "review-f9q3", "value": 24, "count": 12,
+              "thresholds": [{"limit": 40, "of": "value", "reached": false, "remaining": 16},
+                             {"marks_total": 7, "of": "count", "passed": 1, "ahead": [20, 30, 40, 50, 60],
+                              "marks": [10, 20, 30, 40, 50, 60, 70]}, …],
+              "created": "2026-11-10T18:27:07Z", "updated": "2026-11-10T18:27:07Z"}]}
+```
 
 | In a note or an error | On the command line |
 |---|---|
@@ -97,5 +109,4 @@ Repeated `--at` make one threshold. For many numbers, `… | abakus sum`, check 
 - abakus locks the tallies' folder for every read and change. The files and their format are internal: never
   edit, create or delete them, and don't rely on what is in them.
 - `tallies_info` over MCP gives the folder and how many tallies there are; `abakus tallies info` adds every
-  tally with its state and each unreadable one with what is wrong.
-- `ABAKUS_STATE_DIR` is for tests: tallies in another folder are invisible to the MCP server and other sessions.
+  tally with its state (`tallies`) and each unreadable one with what is wrong (`unreadable`).
