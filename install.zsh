@@ -1,7 +1,8 @@
 #!/usr/bin/env zsh
 # install: build abakus for release, check the build end to end (dev/check.zsh), copy it to ~/.local/bin, with
 # its zsh tab completion. The installed abakus is always a build that passed its checks. With --skill, also the
-# abakus-cli skill for Claude Code (skills/abakus-cli): when and how agents use the command line (ADR-0008).
+# abakus skill for Claude Code (skills/abakus): tallies in depth, and when and how agents use the command line
+# (ADR-0008).
 # usage: ./install.zsh [--skill]
 set -euo pipefail
 
@@ -25,12 +26,13 @@ if [[ $skill == true ]]; then
       "unset it to install the skill into ~/.claude."
     exit 1
   fi
-  skill_folder=$config_folder/skills/abakus-cli
+  skill_folder=$config_folder/skills/abakus
+  old_skill_folder=$config_folder/skills/abakus-cli  # the skill's name until 2026-11-10
 fi
 
 cd ${0:A:h}
-if [[ $skill == true && ! -f skills/abakus-cli/SKILL.md ]]; then
-  print -u2 -- "not installed: skills/abakus-cli/SKILL.md is missing"
+if [[ $skill == true && ! -f skills/abakus/SKILL.md ]]; then
+  print -u2 -- "not installed: skills/abakus/SKILL.md is missing"
   exit 1
 fi
 
@@ -56,8 +58,8 @@ print -- "installed ~/.local/share/zsh/site-functions/_abakus"
 # temporary folder first, so that a failed copy leaves no half skill among the user's skills.
 if [[ $skill == true ]]; then
   staging=$(mktemp -d)
-  cp -R skills/abakus-cli $staging/abakus-cli
-  chmod -R u=rwX,go=rX $staging/abakus-cli
+  cp -R skills/abakus $staging/abakus
+  chmod -R u=rwX,go=rX $staging/abakus
   replaced=
   if [[ -e $skill_folder || -L $skill_folder ]]; then
     replaced=$( (cd $skill_folder 2>/dev/null && find . -type f | sed 's|^\./||' | sort | paste -s -d ' ' -) || true)
@@ -65,9 +67,15 @@ if [[ $skill == true ]]; then
     replaced="replaced the folder that was there (${replaced:-no files})"
   fi
   mkdir -p ${skill_folder:h}
-  mv $staging/abakus-cli $skill_folder
+  mv $staging/abakus $skill_folder
   rmdir $staging
-  print -- "installed ${skill_folder/#$HOME/~}/, the skill abakus-cli for Claude Code${replaced:+; $replaced}"
+  print -- "installed ${skill_folder/#$HOME/~}/, the skill abakus for Claude Code${replaced:+; $replaced}"
+  # the skill's earlier name: no longer this install's folder, so it is left alone; it is named, since agents
+  # would see both skills
+  if [[ -e $old_skill_folder || -L $old_skill_folder ]]; then
+    print -- "left ${old_skill_folder/#$HOME/~}/ alone, the skill's earlier name: agents see both skills until" \
+      "you remove it."
+  fi
 fi
 
 # MCP clients start `abakus mcp` themselves; registering is a one-time step, left to the user

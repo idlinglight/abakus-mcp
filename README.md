@@ -14,7 +14,7 @@ Some small tasks are done better by a small program than by a language model, ye
 ad-hoc tooling for. abakus is the pocket calculator for those. Its arithmetic is exact decimal arithmetic:
 `0.1 + 0.2` is `0.3`, and a result that had to be rounded says so.
 
-macOS only. Status: early, version 0.5.4.
+macOS only. Status: early, version 0.5.5.
 
 ## Install
 
@@ -36,10 +36,12 @@ Other MCP clients: the command is `abakus mcp` (stdio).
 ./install.zsh --skill
 ```
 
-also installs the skill `abakus-cli` for Claude Code, as a user-level skill in `~/.claude/skills/abakus-cli/`
-(`$CLAUDE_CONFIG_DIR/skills/abakus-cli/` when that is set, which must then be an absolute path), so agents have
-it in every project. The folder is replaced as a whole, so nothing of an earlier install stays. Its source is
-[`skills/abakus-cli/SKILL.md`](skills/abakus-cli/SKILL.md); see [Command line](#command-line).
+also installs the skill `abakus` for Claude Code, as a user-level skill in `~/.claude/skills/abakus/`
+(`$CLAUDE_CONFIG_DIR/skills/abakus/` when that is set, which must then be an absolute path), so agents have
+it in every project. The folder is replaced as a whole, so nothing of an earlier install stays. A folder
+`abakus-cli` there, the skill's name until 2026-11-10, is left alone; the install names it, since agents would
+see both. The source is [`skills/abakus/`](skills/abakus/SKILL.md): tallies in depth, and when and how agents use
+the command line; see [Command line](#command-line).
 
 ## Tools
 
@@ -368,10 +370,15 @@ abakus call --without-details sum '{"numbers": ["0.1"]}'  # exactly the text an 
 
 The tool descriptions say that the command line exists and what it adds, but not when or how to run it: text
 from a tool server that asks for shell commands reads like the instructions careful agents distrust. That is the
-job of the skill `abakus-cli` (`./install.zsh --skill`), the user's own channel: when the command line is the
-better way and when not, the commands and options, quoting, stdin, exit codes, and how notes written in MCP terms
-map to options ([ADR-0008](docs/adr/0008-small-mcp-results.md)). `dev/check.zsh` fails when the skill names a
-command the help does not list, an option its command lacks or a tool that does not exist, or misses a command.
+job of the skill `abakus` (`./install.zsh --skill`), the user's own channel
+([ADR-0008](docs/adr/0008-small-mcp-results.md)). Its `SKILL.md`, loaded whenever the skill is used, is short:
+when the command line is the better way and when not, quoting, exit codes, and how notes written in MCP terms map
+to options. It points to topic files, read only when needed: [`tallies.md`](skills/abakus/tallies.md), tallies in
+depth, over MCP too (thresholds, shapes for working through a list with budgets and checkpoints, finding a tally
+after a compaction, correcting one, the tally commands), and [`calc-sum.md`](skills/abakus/calc-sum.md), sums from
+files and pipelines and calc in a shell. `dev/check.zsh` fails when one of its files names a command the help does
+not list, an option its command lacks or a tool that does not exist, when together they miss a command, or when
+`SKILL.md` links a file that does not exist or misses a topic file.
 
 ## MCP protocol support
 
@@ -417,7 +424,7 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/):
 - [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only; by ADR-0008: how readings show over MCP)
 - [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC (amended: whole seconds in `text`)
 - [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name (amended: underflow and the readable policy in full, when `fraction` is left out, rounded tallies in the response, unknown names, flat chains of + and * in `read`, errors while evaluating, parser details; `read` a detail, notes where conventions differ, at most 5 tallies over MCP)
-- [ADR-0008](docs/adr/0008-small-mcp-results.md): MCP results stay small; the command line shows everything (amended: `call --without-details`; the tools that work on one tally within the rule; `tallies_info` within the rule; calc within the rule; a tool may shorten a list over MCP, as calc and the tally tools do; the skill for the command line)
+- [ADR-0008](docs/adr/0008-small-mcp-results.md): MCP results stay small; the command line shows everything (amended: `call --without-details`; the tools that work on one tally within the rule; `tallies_info` within the rule; calc within the rule; a tool may shorten a list over MCP, as calc and the tally tools do; the skill for the command line, renamed `abakus` and split by topic)
 
 ## License
 

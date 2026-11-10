@@ -2,8 +2,8 @@
 
 Status: accepted, 2026-11-09; amended 2026-11-10 (`abakus call --without-details`; the tools that work on one
 tally within the rule; `tallies_info`, formerly `tally_list`, within the rule; calc within the rule, and a tool may
-shorten a list over MCP, as the tally tools do with an `at` threshold's marks; the skill for the command line; see
-Scope and the end)
+shorten a list over MCP, as the tally tools do with an `at` threshold's marks; the skill for the command line, then
+renamed `abakus` and split by topic; see Scope and the end)
 
 ## Context
 
@@ -149,11 +149,17 @@ the practical check; the growth rule says what does not belong in a result at al
 - `calc` is within the rule since abakus 0.5.2 (amended 2026-11-10; see the end, and ADR-0007's amendment of that
   day). With it, no known exception is left.
 - A skill for the command line, user-level and installed on request, with its source in this repository: done
-  (amended 2026-11-10). `skills/abakus-cli/SKILL.md`, installed by `./install.zsh --skill` into Claude Code's
-  user-level skills, carries what the tool descriptions leave out on purpose: when the command line is the better
-  way and when not, the commands and options, quoting, stdin, exit codes, and how notes written in MCP terms map to
-  options. The line stays where the Decision draws it: the descriptions inform, the skill, the user's own channel,
-  instructs. `dev/check.zsh` checks the commands and options it names against the command line's help.
+  (amended 2026-11-10). `skills/abakus-cli/SKILL.md` (since 2026-11-10 `skills/abakus/`, see below), installed
+  by `./install.zsh --skill` into Claude Code's user-level skills, carries what the tool descriptions leave out on
+  purpose: when the command line is the better way and when not, the commands and options, quoting, stdin, exit
+  codes, and how notes written in MCP terms map to options. The line stays where the Decision draws it: the
+  descriptions inform, the skill, the user's own channel, instructs. `dev/check.zsh` checks the commands and
+  options it names against the command line's help. Amended again 2026-11-10: the skill is now `abakus`
+  (`skills/abakus/`), since it also covers tallies over MCP. Its `SKILL.md`, loaded whenever the skill is used,
+  keeps the command line's when and how short and points to topic files read only when needed: `tallies.md`
+  (tallies in depth: thresholds, shapes for working through a list, finding a tally after a compaction, correcting
+  one) and `calc-sum.md` (sums from files and pipelines, calc). `dev/check.zsh` checks all of its files, their
+  links, and that `SKILL.md` links each topic file.
 
 ## Consequences
 

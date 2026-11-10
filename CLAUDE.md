@@ -5,10 +5,12 @@
 - The CLI is tested in `dev/check.zsh`, not in a test target: it only maps options to tool arguments, and the
   script also checks the release binary that `install.zsh` installs (#17). A new option or usage error gets a
   check there; a usage error checks that the usage shown is the command's own.
-- The skill `skills/abakus-cli/SKILL.md` (installed by `install.zsh --skill`) tells agents when and how to use
-  the CLI; the tool descriptions only say that it exists (ADR-0008). A new or changed command, option or detail
-  key goes into the skill too; `dev/check.zsh` fails when the skill names a command the help does not list, an
-  option its command lacks or a tool that does not exist, or misses a command.
+- The skill `skills/abakus/` (installed by `install.zsh --skill`): a short `SKILL.md` (when and how to use the
+  CLI; the tool descriptions only say that it exists, ADR-0008) that links the topic files `tallies.md` (tallies
+  in depth, over MCP too) and `calc-sum.md`, each readable on its own. A new or changed command, option, detail
+  key or tally behaviour goes into the file for its topic; `dev/check.zsh` fails when a file names a command the
+  help does not list, an option its command lacks or a tool that does not exist, when the files together miss a
+  command, or when a link points to a missing file or heading.
 - Targets: `AbakusCore` (all tool behaviour), `AbakusMCP` (the MCP server), `abakus` (the executable:
   `abakus mcp` and the CLI). A tool is defined once in the core as a `Tool` and listed in its area's `all`
   (`TallyTools`, `ArithmeticTools`, `DateTools`), which `Catalog` concatenates. CLI commands only build a
