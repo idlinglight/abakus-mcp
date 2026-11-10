@@ -195,7 +195,7 @@ extension Threshold {
             if !distance.exact { object["exact"] = false }
         case .at(let marks):
             // Ascending, so the marks passed come first and the next one follows them.
-            let passed = marks.prefix { $0 <= current }.count
+            let passed = Self.marksReached(by: current, in: marks)
             object["passed"] = .number(String(passed))
             if passed < marks.count {
                 object["next"] = .decimal(marks[passed])
@@ -224,15 +224,16 @@ extension Threshold {
         case .limit(let limit):
             return old < limit && limit <= new ? spec : nil
         case .at(let marks):
-            let crossed = marks.filter { old < $0 && $0 <= new }
-            guard let first = crossed.first, let last = crossed.last else { return nil }
+            // The marks crossed are the ones in (old, new]: a range of the ascending marks, found by two searches.
+            let crossed = Self.marksReached(by: old, in: marks)..<Self.marksReached(by: new, in: marks)
+            guard !crossed.isEmpty else { return nil }
             var object = spec
             if crossed.count <= Self.listedMarks {
-                object["at"] = .array(crossed.map(JSONValue.decimal))
+                object["at"] = .array(marks[crossed].map(JSONValue.decimal))
             } else {
                 object["times"] = .number(String(crossed.count))
-                object["first"] = .decimal(first)
-                object["last"] = .decimal(last)
+                object["first"] = .decimal(marks[crossed.lowerBound])
+                object["last"] = .decimal(marks[crossed.upperBound - 1])
             }
             return object
         case .every(let period):
@@ -273,6 +274,21 @@ extension Threshold {
             marks.append(mark.value)
         }
         return marks
+    }
+
+    /// How many of the ascending `marks` are at or below `x`, which is also the index of the first mark above it.
+    /// A binary search: an `at` threshold may have any number of marks.
+    static func marksReached(by x: Decimal, in marks: [Decimal]) -> Int {
+        var low = 0, high = marks.count
+        while low < high {
+            let middle = low + (high - low) / 2
+            if marks[middle] <= x {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+        return low
     }
 
     /// How many of the marks `period`, 2·`period`, ... are at most `x`: floor(x / period), and 0 below `period`.

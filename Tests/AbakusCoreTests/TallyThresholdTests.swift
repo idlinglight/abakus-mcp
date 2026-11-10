@@ -156,6 +156,24 @@ extension String {
         #expect(Threshold.listedMarks == 10)
     }
 
+    /// The binary searches give what a scan of the marks gives, at the marks themselves and between them.
+    @Test func atAgreesWithAScanOfTheMarks() throws {
+        let marks = ["-5", "0", "2.5", "10", "15", "20"].map(TallyTest.decimal)
+        let threshold = Threshold(.at(marks))
+        let values = (-14...44).map { TallyTest.decimal("\($0 * 5)e-1") }  // -7 to 22 in steps of 0.5
+        for old in values {
+            let passed = marks.filter { $0 <= old }.count
+            #expect(Threshold.marksReached(by: old, in: marks) == passed, "\(old)")
+            #expect(try threshold.status(of: tally(value: old.description))["passed"] == .number(String(passed)))
+            for new in values where new > old {
+                let crossed = marks.filter { old < $0 && $0 <= new }
+                let expected: JSONObject? = crossed.isEmpty ? nil : ["marks": 6, "of": "value", "at": .array(crossed.map(JSONValue.decimal))]
+                #expect(try threshold.crossing(from: tally(value: old.description), to: tally(value: new.description)) == expected, "\(old) to \(new)")
+            }
+        }
+        #expect(Threshold.marksReached(by: 1, in: []) == 0)
+    }
+
     @Test func everyMarksArePositiveMultiples() throws {
         let period = Threshold(.every(5))
         #expect(try crossing(period, "-12", "-1") == nil)
