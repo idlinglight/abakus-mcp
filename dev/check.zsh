@@ -38,7 +38,8 @@ outcome() {
 }
 
 # MCP, legacy era: initialize, then the tools, as a client that negotiated 2025-11-25 sees them; a shared tally
-# "requests" for calc to read, here and in the modern era
+# "requests" for calc to read, here and in the modern era; a shared tally "amounts" with marks, added to with a JSON
+# number, the common case for MCP clients
 responses=$(printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"check","version":"0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
@@ -48,9 +49,11 @@ responses=$(printf '%s\n' \
   '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"tally_create","arguments":{"name":"requests","shared":true}}}' \
   '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"tally_add","arguments":{"name":"requests","amount":"1250"}}}' \
   '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"calc","arguments":{"expression":"37 / {requests} * 100"}}}' \
+  '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"tally_create","arguments":{"name":"amounts","shared":true,"thresholds":[{"at":[10,20,30,40,50,60,70]}]}}}' \
+  '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"tally_add","arguments":{"name":"amounts","amount":12.50}}}' \
   | $abakus mcp 2>>$stderr_log)
-expect "mcp legacy: seven responses, none for the notification" '. == null' \
-  "$(print -r -- "$responses" | jq -s 'if length == 7 then null else length end')"
+expect "mcp legacy: nine responses, none for the notification" '. == null' \
+  "$(print -r -- "$responses" | jq -s 'if length == 9 then null else length end')"
 expect "mcp legacy: initialize negotiates 2025-11-25 and sends instructions" \
   '.result.protocolVersion == "2025-11-25" and (.result.instructions | contains("shared: true") and contains("calc") and (contains("unique") | not))' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 1)')"
@@ -65,6 +68,11 @@ mcp_sum_text=$(print -r -- "$responses" | jq -r 'select(.id == 3) | .result.cont
 expect "mcp legacy: tally_add takes a number string and leaves out read (a detail, ADR-0008)" \
   '.result.structuredContent | .value == 1250 and .added == 1250 and (has("read") | not) and (has("notes") | not)' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 6)')"
+expect "mcp legacy: tally_add takes a JSON number exactly, and shows the crossing and the marks ahead" \
+  '.result.structuredContent | .value == 12.5 and .added == 12.5 and .count == 1 and .crossed == [{"marks_total": 7, "of": "value", "at": [10]}]
+     and .thresholds == [{"marks_total": 7, "of": "value", "passed": 1, "ahead": [20, 30, 40, 50, 60]}]
+     and (has("read") | not) and (has("notes") | not)' \
+  "$(print -r -- "$responses" | jq -c 'select(.id == 9)')"
 expect "mcp legacy: a tool error is a result with isError" \
   '.result.isError == true and (.result.content[0].text | test("missing"))' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 4)')"
