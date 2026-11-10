@@ -47,16 +47,18 @@ struct TallyCommand: ParsableCommand {
         var amount: [String] = []
         @OptionGroup var decimal: DecimalOption
 
-        func validate() throws {
-            let amounts = try ToolRunner.numberWords(amount)
-            if amounts.count > 1 {
-                throw ValidationError("Give one amount, not \(amounts.count). Add them up first with `abakus sum`.")
+        // As in sum: replaces the captured words with the checked ones for run(), and a usage mistake thrown here
+        // shows tally add's usage.
+        mutating func validate() throws {
+            amount = try ToolRunner.numberWords(amount)
+            if amount.count > 1 {
+                throw ValidationError("Give one amount, not \(amount.count). Add them up first with `abakus sum`.")
             }
         }
 
         func run() throws {
             var arguments: JSONObject = ["name": .string(name)]
-            if let first = try ToolRunner.numberWords(amount).first {
+            if let first = amount.first {
                 arguments["amount"] = .string(first)
             }
             decimal.apply(to: &arguments)

@@ -5,7 +5,10 @@ import Foundation
 struct Sum: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Add numbers exactly (sum).",
-        discussion: "Without numbers, reads them from stdin, separated by whitespace or line breaks: grep -oE '[0-9][0-9.]*k' build.log | abakus sum"
+        discussion: """
+            Without numbers, reads them from stdin, separated by whitespace or line breaks: grep -oE \
+            '[0-9][0-9.]*k' build.log | abakus sum. In a terminal, type or paste them and end with ctrl-D.
+            """
     )
 
     // Captures negative numbers too, which would otherwise be taken for options.
@@ -13,9 +16,15 @@ struct Sum: ParsableCommand {
     var numbers: [String] = []
     @OptionGroup var decimal: DecimalOption
 
+    // ArgumentParser calls validate() on the parsed command before run(), on the same value, so it can replace
+    // the captured words with the checked ones (no `--`, no mistyped option) for run() to use. A usage mistake
+    // thrown here shows sum's usage; thrown from run(), it would show the root's.
+    mutating func validate() throws {
+        numbers = try ToolRunner.numberWords(numbers)
+    }
+
     func run() throws {
-        let given = try ToolRunner.numberWords(numbers)
-        let words = given.isEmpty ? try ToolRunner.wordsFromStandardInput(command: "sum") : given
+        let words = numbers.isEmpty ? ToolRunner.wordsFromStandardInput() : numbers
         var arguments: JSONObject = ["numbers": .array(words.map { .string($0) })]
         decimal.apply(to: &arguments)
         try ToolRunner.run("sum", arguments)
@@ -75,7 +84,7 @@ struct DateDiff: ParsableCommand {
 }
 
 struct Tools: ParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "List the tools, with the first line of each description.")
+    static let configuration = CommandConfiguration(abstract: "List the tools, each with its title.")
 
     @Option(help: ArgumentHelp("Print one tool's full description and input schema instead.", valueName: "name"))
     var show: String?
@@ -88,10 +97,11 @@ struct Tools: ParsableCommand {
             print(JSONWriter.write(tool.inputSchema))
             return
         }
+        // The titles, not the descriptions: a description is a paragraph written for an agent, a line each would
+        // be a wall of text.
         let width = Catalog.tools.map(\.name.count).max() ?? 0
         for tool in Catalog.tools {
-            let firstLine = tool.description.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
-            print(tool.name.padding(toLength: width, withPad: " ", startingAt: 0) + "  " + firstLine)
+            print(tool.name.padding(toLength: width, withPad: " ", startingAt: 0) + "  " + (tool.annotations.title ?? ""))
         }
     }
 }

@@ -2,6 +2,9 @@
 
 - SwiftPM package, macOS only. `swift build`, `swift test`, then `dev/check.zsh` (end to end against the
   debug binary: both MCP eras and the CLI, in a scratch state folder). Tests use Swift Testing.
+- The CLI is tested in `dev/check.zsh`, not in a test target: it only maps options to tool arguments, and the
+  script also checks the release binary that `install.zsh` installs (#17). A new option or usage error gets a
+  check there; a usage error checks that the usage shown is the command's own.
 - Targets: `AbakusCore` (all tool behaviour), `AbakusMCP` (the MCP server), `abakus` (the executable:
   `abakus mcp` and the CLI). A tool is defined once in the core as a `Tool` and listed in its area's `all`
   (`TallyTools`, `ArithmeticTools`, `DateTools`), which `Catalog` concatenates. CLI commands only build a

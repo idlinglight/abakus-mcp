@@ -27,6 +27,15 @@ expect() {
     failures=$(( failures + 1 ))
   fi
 }
+# outcome <command> [<argument>...]: the command's exit status and what it printed, as JSON {status, stdout,
+# stderr}. Results and help go to stdout; errors and usage mistakes to stderr, with nothing on stdout.
+outcome() {
+  local stdout exit_status errors=$ABAKUS_STATE_DIR/outcome-stderr
+  stdout=$("$@" 2>$errors)
+  exit_status=$?
+  jq -n --argjson status $exit_status --arg stdout "$stdout" --arg stderr "$(<$errors)" \
+    '{status: $status, stdout: $stdout, stderr: $stderr}'
+}
 
 # MCP, legacy era: initialize, then the tools, as a client that negotiated 2025-11-25 sees them; a shared tally
 # "requests" for calc to read, here and in the modern era
@@ -97,21 +106,31 @@ $abakus tally add "$name" >/dev/null
 added=$($abakus tally add "$name" 4)
 expect "cli: tally add reports the checkpoint and the limit" \
   '.value == 5 and .count == 2 and (.crossed | length) == 2' "$added"
+expect "cli: tally add takes a negative amount after a -- terminator" '.value == 2 and .added == -3' \
+  "$($abakus tally add "$name" -- -3)"
+expect "cli: tally add with two amounts is a usage error, with tally add's usage" \
+  '.status == 64 and .stdout == "" and (.stderr | test("Give one amount, not 2") and test("Usage: abakus tally add "))' \
+  "$(outcome $abakus tally add "$name" 1 2)"
 expect "cli: tally set takes a negative value" '.value == -1.5' "$($abakus tally set "$name" --value -1.5)"
+expect "cli: tally set replaces the thresholds, from repeated --at and --at-count" \
+  '.thresholds | map({at, of}) == [{"at": [1, 2], "of": "value"}, {"at": [5], "of": "count"}]' \
+  "$($abakus tally set "$name" --at 1 --at 2 --at-count 5)"
+expect "cli: tally set refuses --clear-thresholds with threshold options, with tally set's usage" \
+  '.status == 64 and .stdout == "" and (.stderr | test("either --clear-thresholds or threshold options") and test("Usage: abakus tally set "))' \
+  "$(outcome $abakus tally set "$name" --clear-thresholds --limit 3)"
+expect "cli: tally set --clear-thresholds removes them" '.thresholds == []' \
+  "$($abakus tally set "$name" --clear-thresholds)"
 expect "cli: tally list shows it" ".tallies | map(.name) | index(\"$name\") != null" "$($abakus tally list items)"
 expect "cli: tally drop returns the final state" '.dropped == true and .value == -1.5' "$($abakus tally drop "$name")"
-message=$($abakus tally add "$name" 2>&1)
 expect "cli: adding to a dropped tally fails with exit 1 and says why" \
-  '.status == 1 and (.message | test("no tally named"))' \
-  "$(jq -n --argjson status $? --arg message "$message" '{status: $status, message: $message}')"
+  '.status == 1 and .stdout == "" and (.stderr | test("no tally named"))' "$(outcome $abakus tally add "$name")"
 
 # CLI: a shared tally keeps its name, and creating it twice is refused
 expect "cli: tally create --shared uses the name exactly" '.name == "build-errors"' \
   "$($abakus tally create build-errors --shared)"
-message=$($abakus tally create build-errors --shared 2>&1)
 expect "cli: creating an existing shared tally fails with exit 1 and shows it" \
-  '.status == 1 and (.message | test("already exists")) and (.message | test("coordinating"))' \
-  "$(jq -n --argjson status $? --arg message "$message" '{status: $status, message: $message}')"
+  '.status == 1 and .stdout == "" and (.stderr | test("already exists") and test("coordinating"))' \
+  "$(outcome $abakus tally create build-errors --shared)"
 
 # CLI: calc, over this tally and the one from the MCP checks
 $abakus tally add build-errors 18 >/dev/null
@@ -121,14 +140,12 @@ expect "cli: calc reads tallies in a quoted expression" \
   "$($abakus calc '{build-errors} / {requests} * 100')"
 expect "cli: calc takes a leading minus as part of the expression" '.result == -4 and .read == "-(2 ^ 2)"' \
   "$($abakus calc -2^2)"
-message=$($abakus calc '{nope} + 1' 2>&1)
+expect "cli: calc drops a leading -- terminator" '.result == 3 and .read == "1 + 2"' "$($abakus calc -- 1 + 2)"
 expect "cli: calc with an unknown tally fails with exit 1 and computes nothing" \
-  '.status == 1 and (.message | test("no tally named \"nope\"")) and (.message | test("Nothing was computed"))' \
-  "$(jq -n --argjson status $? --arg message "$message" '{status: $status, message: $message}')"
-message=$($abakus calc 2>&1)
-expect "cli: calc without an expression is a usage error" \
-  '.status == 64 and (.message | test("quoted"))' \
-  "$(jq -n --argjson status $? --arg message "$message" '{status: $status, message: $message}')"
+  '.status == 1 and .stdout == "" and (.stderr | test("no tally named \"nope\"") and test("Nothing was computed"))' \
+  "$(outcome $abakus calc '{nope} + 1')"
+expect "cli: calc without an expression is a usage error, with calc's usage" \
+  '.status == 64 and .stdout == "" and (.stderr | test("quoted") and test("Usage: abakus calc "))' "$(outcome $abakus calc)"
 
 # CLI: sum from arguments (number strings, a negative number) and from stdin
 expect "cli: sum reads 410k and 1,234.5, and prints read" \
@@ -139,23 +156,67 @@ expect "cli: sum notes a string the other decimal mark reads differently" \
   "$($abakus sum 1,234 5)"
 expect "cli: sum takes negative numbers" '.total == 2' "$($abakus sum 1 -2 3)"
 expect "cli: sum after a -- terminator" '.total == -4' "$($abakus sum 1 -- -5)"
-message=$($abakus sum 1 --decmal , 2 2>&1)
-expect "cli: a mistyped option is a usage error, not a number" \
-  '.status == 64 and (.message | test("Unknown option"))' \
-  "$(jq -n --argjson status $? --arg message "$message" '{status: $status, message: $message}')"
+expect "cli: a mistyped option is a usage error, not a number, with sum's usage" \
+  '.status == 64 and .stdout == "" and (.stderr | test("Unknown option") and test("Usage: abakus sum "))' \
+  "$(outcome $abakus sum 1 --decmal , 2)"
 expect "cli: sum reads stdin" '.total == 6 and .count == 3' "$(print -l 1 2 3 | $abakus sum)"
 expect "cli: sum with a decimal comma" '.total == 1234.5' "$($abakus sum --decimal , 1.234,5)"
+# Numbers typed into a terminal, through a pseudo-terminal: once sum says it is waiting, type "1 2", then
+# ctrl-D until it ends. The loop never blocks on reading and gives up after about 5 s, so a broken sum fails the
+# check instead of hanging it. zpty runs the command in a fork of this shell: `trap - EXIT` keeps that fork
+# from removing the state folder when it ends.
+zmodload zsh/zpty
+zpty terminal "trap - EXIT; ${(q)abakus} sum 2>&1; print -r -- \"exit status \$?\""
+terminal_output= typed=
+for attempt in {1..50}; do
+  while zpty -r -t terminal line; do terminal_output+=${line//$'\r'/}; done
+  [[ $terminal_output == *"exit status "* ]] && break
+  if [[ -z $typed && $terminal_output == *ctrl-D* ]]; then
+    zpty -w terminal '1 2'
+    typed=yes
+  fi
+  [[ -n $typed ]] && zpty -w -n terminal $'\x04' 2>/dev/null
+  sleep 0.1
+done
+zpty -d terminal
+expect "cli: sum in a terminal says what it waits for, then adds the numbers typed until ctrl-D" \
+  '.output | test("Type or paste the numbers") and test("\"total\":3,") and test("exit status 0")' \
+  "$(jq -n --arg output "$terminal_output" '{output: $output}')"
 
-# CLI: date-diff with an offset, and the raw call command
+# CLI: date-diff, and the raw call command
 expect "cli: date-diff across an offset" '.totals.hours == 1738.5' \
   "$($abakus date-diff 2026-11-08T14:30:00+01:00 2027-01-20)"
+expect "cli: date-diff without a second date measures to now" '.to_is_now == true' "$($abakus date-diff 2026-01-01)"
 expect "cli: call passes JSON arguments through" '.total == 0.3' \
   "$($abakus call sum '{"numbers": ["0.1", 0.2]}')"
+expect "cli: call - reads the arguments from stdin" '.total == 3' \
+  "$(print -r -- '{"numbers": [1, 2]}' | $abakus call sum -)"
+expect "cli: call with invalid JSON fails with exit 1 and says so" \
+  '.status == 1 and .stdout == "" and (.stderr | test("not valid JSON"))' "$(outcome $abakus call sum '{"numbers":')"
+expect "cli: call with arguments that are not an object fails with exit 1" \
+  '.status == 1 and .stdout == "" and (.stderr | test("must be a JSON object"))' "$(outcome $abakus call sum '[1, 2]')"
+expect "cli: call with an unknown tool fails with exit 1 and points to abakus tools" \
+  '.status == 1 and .stdout == "" and (.stderr | test("no tool named nosuch") and test("abakus tools"))' "$(outcome $abakus call nosuch)"
 expect "cli: call prints the details an MCP result leaves out" '.read == [{"index": 0, "input": "0.1", "value": 0.1}]' \
   "$($abakus call sum '{"numbers": ["0.1", 0.2]}')"
 expect "cli: call --without-details prints the text of the MCP result above, character for character" '.cli == .mcp' \
   "$(jq -n --arg cli "$($abakus call --without-details sum '{"numbers": ["0.1", 0.2]}')" \
      --arg mcp "$mcp_sum_text" '{cli: $cli, mcp: $mcp}')"
+
+# CLI: the tool list, help and version
+expect "cli: tools lists the eight tools by name and title, a short line each and nothing else" \
+  '.status == 0 and (.stdout | split("\n") | all(length <= 80 and test("^[a-z_]+ +[A-Z]")) and any(test("^sum +Exact sum$"))
+     and ([.[] | split(" ")[0]] | sort)
+       == ["calc","date_diff","sum","tally_add","tally_create","tally_drop","tally_list","tally_set"])' \
+  "$(outcome $abakus tools)"
+expect "cli: tools --show prints a tool's description and input schema" \
+  '.status == 0 and (.stdout | test("Adds numbers exactly") and test("\"numbers\""))' "$(outcome $abakus tools --show sum)"
+expect "cli: --version prints the version" '.status == 0 and (.stdout | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' \
+  "$(outcome $abakus --version)"
+expect "cli: --help lists the commands" '.status == 0 and (.stdout | test("SUBCOMMANDS:") and test("date-diff"))' \
+  "$(outcome $abakus --help)"
+expect "cli: a command's --help shows its usage" '.status == 0 and (.stdout | test("USAGE: abakus sum "))' \
+  "$(outcome $abakus sum --help)"
 
 if (( failures )); then
   if [[ -s $stderr_log ]]; then
