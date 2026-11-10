@@ -1,7 +1,8 @@
 # ADR-0008: MCP results stay small; the command line shows everything
 
 Status: accepted, 2026-11-09; amended 2026-11-10 (`abakus call --without-details`; the tools that work on one
-tally within the rule; `tallies_info`, formerly `tally_list`, within the rule; see Scope)
+tally within the rule; `tallies_info`, formerly `tally_list`, within the rule; the skill for the command line;
+see Scope)
 
 ## Context
 
@@ -146,7 +147,12 @@ the practical check; the growth rule says what does not belong in a result at al
   - `calc`: `read` grows with the expression and `tallies` with the tallies it names. ADR-0007's reasoning about
     `-2^2` relies on `read` being visible; the replacement would be notes for the known traps, and `tallies` could
     become a list of a fixed length plus a count.
-- A skill for the command line, user-level and installed on request, with its source in this repository: open.
+- A skill for the command line, user-level and installed on request, with its source in this repository: done
+  (amended 2026-11-10). `skills/abakus-cli/SKILL.md`, installed by `./install.zsh --skill` into Claude Code's
+  user-level skills, carries what the tool descriptions leave out on purpose: when the command line is the better
+  way and when not, the commands and options, quoting, stdin, exit codes, and how notes written in MCP terms map to
+  options. The line stays where the Decision draws it: the descriptions inform, the skill, the user's own channel,
+  instructs. `dev/check.zsh` checks the commands and options it names against the command line's help.
 
 ## Consequences
 
