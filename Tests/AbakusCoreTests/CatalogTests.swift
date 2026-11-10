@@ -12,7 +12,7 @@ import Testing
 
     /// An old name points to a tool that exists and is itself no tool any more.
     @Test func renamedToolsPointToTheirNewNames() {
-        #expect(Catalog.renameNote(for: "tally_list") == "It was renamed to tallies_info in abakus 0.5.0.")
+        #expect(Catalog.renameNote(for: "tally_list") == "It was renamed to tallies_info in abakus 0.5.1.")
         #expect(Catalog.renameNote(for: "nope") == nil)
         for (old, new) in Catalog.renamed {
             #expect(Catalog.tool(named: old) == nil, "\(old)")

@@ -38,7 +38,8 @@ outcome() {
 }
 
 # MCP, legacy era: initialize, then the tools, as a client that negotiated 2025-11-25 sees them; a shared tally
-# "requests" for calc to read, here and in the modern era; tallies_info, which counts it, and its old name
+# "requests" for calc to read, here and in the modern era; a shared tally "amounts" with marks, added to with a JSON
+# number, the common case for MCP clients; tallies_info, which counts the two, and its old name
 responses=$(printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"check","version":"0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
@@ -46,13 +47,15 @@ responses=$(printf '%s\n' \
   '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"sum","arguments":{"numbers":["0.1",0.2]}}}' \
   '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"tally_add","arguments":{"name":"missing"}}}' \
   '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"tally_create","arguments":{"name":"requests","shared":true}}}' \
-  '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"tally_add","arguments":{"name":"requests","amount":1250}}}' \
+  '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"tally_add","arguments":{"name":"requests","amount":"1250"}}}' \
   '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"calc","arguments":{"expression":"37 / {requests} * 100"}}}' \
-  '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"tallies_info","arguments":{}}}' \
-  '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"tally_list","arguments":{}}}' \
+  '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"tally_create","arguments":{"name":"amounts","shared":true,"thresholds":[{"at":[10,20,30,40,50,60,70]}]}}}' \
+  '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"tally_add","arguments":{"name":"amounts","amount":12.50}}}' \
+  '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"tallies_info","arguments":{}}}' \
+  '{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"tally_list","arguments":{}}}' \
   | $abakus mcp 2>>$stderr_log)
-expect "mcp legacy: nine responses, none for the notification" '. == null' \
-  "$(print -r -- "$responses" | jq -s 'if length == 9 then null else length end')"
+expect "mcp legacy: eleven responses, none for the notification" '. == null' \
+  "$(print -r -- "$responses" | jq -s 'if length == 11 then null else length end')"
 expect "mcp legacy: initialize negotiates 2025-11-25 and sends instructions" \
   '.result.protocolVersion == "2025-11-25" and (.result.instructions | contains("shared: true") and contains("calc") and (contains("unique") | not))' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 1)')"
@@ -64,6 +67,14 @@ expect "mcp legacy: sum of 0.1 and 0.2 is exactly 0.3, without read (a detail, A
      and (.result.content[0].text | contains("\"total\":0.3") and (contains("read") | not))' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 3)')"
 mcp_sum_text=$(print -r -- "$responses" | jq -r 'select(.id == 3) | .result.content[0].text')  # for call --without-details
+expect "mcp legacy: tally_add takes a number string and leaves out read (a detail, ADR-0008)" \
+  '.result.structuredContent | .value == 1250 and .added == 1250 and (has("read") | not) and (has("notes") | not)' \
+  "$(print -r -- "$responses" | jq -c 'select(.id == 6)')"
+expect "mcp legacy: tally_add takes a JSON number exactly, and shows the crossing and the marks ahead" \
+  '.result.structuredContent | .value == 12.5 and .added == 12.5 and .count == 1 and .crossed == [{"marks_total": 7, "of": "value", "at": [10]}]
+     and .thresholds == [{"marks_total": 7, "of": "value", "passed": 1, "ahead": [20, 30, 40, 50, 60]}]
+     and (has("read") | not) and (has("notes") | not)' \
+  "$(print -r -- "$responses" | jq -c 'select(.id == 9)')"
 expect "mcp legacy: a tool error is a result with isError" \
   '.result.isError == true and (.result.content[0].text | test("missing"))' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 4)')"
@@ -72,12 +83,12 @@ expect "mcp legacy: calc reads a tally by name" \
      "tallies": [{"name": "requests", "of": "value", "value": 1250}]}' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 7)')"
 expect "mcp legacy: tallies_info gives the folder and the count, without the list (a detail, ADR-0008)" \
-  ".result.structuredContent == {\"folder\": \"$ABAKUS_STATE_DIR/tallies\", \"tallies_found\": 1}
+  ".result.structuredContent == {\"folder\": \"$ABAKUS_STATE_DIR/tallies\", \"tallies_found\": 2}
      and (.result.content[0].text | contains(\"\\\"tallies\\\"\") | not)" \
-  "$(print -r -- "$responses" | jq -c 'select(.id == 8)')"
+  "$(print -r -- "$responses" | jq -c 'select(.id == 10)')"
 expect "mcp legacy: the old name tally_list is an unknown tool whose error gives the new name" \
-  '.error.code == -32602 and (.error.message | test("^Unknown tool: tally_list\\. It was renamed to tallies_info in abakus 0\\.5\\.0\\."))' \
-  "$(print -r -- "$responses" | jq -c 'select(.id == 9)')"
+  '.error.code == -32602 and (.error.message | test("^Unknown tool: tally_list\\. It was renamed to tallies_info in abakus 0\\.5\\.1\\."))' \
+  "$(print -r -- "$responses" | jq -c 'select(.id == 11)')"
 
 # MCP, modern era: stateless, version and capabilities in every request's _meta
 meta='"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}'
@@ -121,8 +132,9 @@ expect "cli: tally add with two amounts is a usage error, with tally add's usage
   '.status == 64 and .stdout == "" and (.stderr | test("Give one amount, not 2") and test("Usage: abakus tally add "))' \
   "$(outcome $abakus tally add "$name" 1 2)"
 expect "cli: tally set takes a negative value" '.value == -1.5' "$($abakus tally set "$name" --value -1.5)"
-expect "cli: tally set replaces the thresholds, from repeated --at and --at-count" \
-  '.thresholds | map({at, of}) == [{"at": [1, 2], "of": "value"}, {"at": [5], "of": "count"}]' \
+expect "cli: tally set replaces the thresholds, from repeated --at and --at-count, each at with the marks ahead" \
+  '.thresholds == [{"marks_total": 2, "of": "value", "passed": 0, "ahead": [1, 2]},
+                   {"marks_total": 1, "of": "count", "passed": 0, "ahead": [5]}]' \
   "$($abakus tally set "$name" --at 1 --at 2 --at-count 5)"
 expect "cli: tally set refuses --clear-thresholds with threshold options, with tally set's usage" \
   '.status == 64 and .stdout == "" and (.stderr | test("either --clear-thresholds or threshold options") and test("Usage: abakus tally set "))' \
@@ -133,6 +145,36 @@ expect "cli: tallies info shows it" ".tallies | map(.name) | index(\"$name\") !=
 expect "cli: tally drop returns the final state" '.dropped == true and .value == -1.5' "$($abakus tally drop "$name")"
 expect "cli: adding to a dropped tally fails with exit 1 and says why" \
   '.status == 1 and .stdout == "" and (.stderr | test("no tally named"))' "$(outcome $abakus tally add "$name")"
+
+# Tallies within ADR-0008: an at threshold of 200 marks, given as strings that also read with a decimal comma.
+# call --without-details prints exactly the MCP text (checked for sum below); over MCP, tally_create and tally_add
+# stay within a budget of 700 characters each: marks counted, at most 5 of those ahead listed, one note for all the
+# strings. The command line prints read.
+marks_args=$(jq -nc '{name: "bytes", thresholds: [{at: [range(1; 201) | "\(.),000"]}]}')
+mcp_text=$($abakus call --without-details tally_create "$marks_args")
+marks_name=$(print -r -- "$mcp_text" | jq -r .name)
+expect "mcp text: tally_create with 200 marks as strings stays within 700 characters: 5 marks ahead, one note, no read" \
+  '.length <= 700 and (.json | .thresholds == [{"marks_total": 200, "of": "value", "passed": 0, "ahead": [1000, 2000, 3000, 4000, 5000]}]
+     and (has("read") | not) and (.notes | length == 1) and (.notes[0] | startswith("200 strings read differently")
+     and contains("tally_set")))' \
+  "$(jq -n --arg text "$mcp_text" '{length: ($text | length), json: ($text | fromjson)}')"
+mcp_text=$($abakus call --without-details tally_add "{\"name\": \"$marks_name\", \"amount\": \"150,500\"}")
+expect "mcp text: tally_add crossing 150 of the marks stays within 700 characters: a count with the first and the last" \
+  '.length <= 700 and (.json | .crossed == [{"marks_total": 200, "of": "value", "times": 150, "first": 1000, "last": 150000}]
+     and .thresholds == [{"marks_total": 200, "of": "value", "passed": 150, "ahead": [151000, 152000, 153000, 154000, 155000]}]
+     and (has("read") | not)
+     and (.notes[0] | contains("crossed above follows 150500") and contains("\"value\": 150.5")))' \
+  "$(jq -n --arg text "$mcp_text" '{length: ($text | length), json: ($text | fromjson)}')"
+expect "cli: tally create prints read, one entry per string" '.read | length == 200 and .[0] == {"input": "1,000", "value": 1000}' \
+  "$($abakus call tally_create "$marks_args")"
+expect "cli: tally add prints read and the note" '.read == [{"input": "2,000", "value": 2000}] and (.notes | length == 1)' \
+  "$($abakus tally add "$marks_name" 2,000)"
+expect "cli: tally create's and tally set's help say that the six threshold options cannot all be given" \
+  'map(gsub("\\s+"; " ") | contains("At most 5 thresholds in all, so not all six threshold options at once")) | all' \
+  "$(jq -n --arg create "$($abakus tally create --help)" --arg set "$($abakus tally set --help)" '[$create, $set]')"
+expect "cli: a sixth threshold is an error that says to pass fewer or use a second tally" \
+  '.status == 1 and .stdout == "" and (.stderr | test("thresholds has 6 items, and a tally takes at most 5") and test("second tally"))' \
+  "$(outcome $abakus tally create six --limit 1 --limit-count 2 --at 3 --at-count 4 --every 5 --every-count 6)"
 
 # CLI: a shared tally keeps its name, and creating it twice is refused
 expect "cli: tally create --shared uses the name exactly" '.name == "build-errors"' \
@@ -255,7 +297,7 @@ expect "cli: call with arguments that are not an object fails with exit 1" \
 expect "cli: call with an unknown tool fails with exit 1 and points to abakus tools" \
   '.status == 1 and .stdout == "" and (.stderr | test("no tool named nosuch") and test("abakus tools"))' "$(outcome $abakus call nosuch)"
 expect "cli: call with the old name tally_list fails with exit 1 and gives the new name" \
-  '.status == 1 and .stdout == "" and (.stderr | test("no tool named tally_list\\. It was renamed to tallies_info in abakus 0\\.5\\.0\\."))' \
+  '.status == 1 and .stdout == "" and (.stderr | test("no tool named tally_list\\. It was renamed to tallies_info in abakus 0\\.5\\.1\\."))' \
   "$(outcome $abakus call tally_list)"
 expect "cli: call prints the details an MCP result leaves out" '.read == [{"index": 0, "input": "0.1", "value": 0.1}]' \
   "$($abakus call sum '{"numbers": ["0.1", 0.2]}')"

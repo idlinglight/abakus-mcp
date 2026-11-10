@@ -305,7 +305,7 @@ import Testing
         var server = makeServer()
         let failure = try error(&server, request(1, "tools/call", ["name": "tally_list"]))
         #expect(failure["code"] == -32602)
-        #expect(failure["message"] == "Unknown tool: tally_list. It was renamed to tallies_info in abakus 0.5.0. tools/list shows the available tools.")
+        #expect(failure["message"] == "Unknown tool: tally_list. It was renamed to tallies_info in abakus 0.5.1. tools/list shows the available tools.")
         #expect(try error(&server, request(2, "tools/call", ["name": "nope"]))["message"] == "Unknown tool: nope. tools/list shows the available tools.")
     }
 

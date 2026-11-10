@@ -17,7 +17,10 @@ struct TallyCommand: ParsableCommand {
     struct Create: ParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Create a tally (tally_create).",
-            discussion: "Prints the new tally; its name has a random suffix (items → items-k3f9) unless --shared is given."
+            discussion: """
+                Prints the new tally; its name has a random suffix (items → items-k3f9) unless --shared is given. \
+                \(ThresholdOptions.cap)
+                """
         )
 
         @Argument(help: "The name, at most 59 characters (64 with --shared).") var name: String
@@ -69,7 +72,7 @@ struct TallyCommand: ParsableCommand {
     struct Set: ParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Change a tally's value, count or thresholds (tally_set).",
-            discussion: "Threshold options replace all thresholds; --clear-thresholds removes them."
+            discussion: "Threshold options replace all thresholds; --clear-thresholds removes them. \(ThresholdOptions.cap)"
         )
 
         @Argument(help: "The name of an existing tally.") var name: String
@@ -103,7 +106,7 @@ struct TallyCommand: ParsableCommand {
         }
     }
 
-    /// The command's name before 0.5.0, when the tool was tally_list (now tallies_info). Kept so that scripts keep
+    /// The command's name before 0.5.1, when the tool was tally_list (now tallies_info). Kept so that scripts keep
     /// working, and left out of the help, which shows `abakus tallies info`.
     struct List: ParsableCommand {
         static let configuration = CommandConfiguration(
@@ -166,6 +169,12 @@ struct TallyPrefix: ParsableArguments {
 /// Threshold options, turned into tally_create's and tally_set's `thresholds` list. Each watches the value,
 /// or the count with the `-count` variant.
 struct ThresholdOptions: ParsableArguments {
+    /// The core takes fewer thresholds than there are options, so the help says so.
+    static let cap = """
+        At most \(TallyTools.maximumThresholds) thresholds in all, so not all six threshold options at once; repeated \
+        --at (or --at-count) make one threshold.
+        """
+
     // `.unconditional`: the next word is the value even when it starts with "-" (a negative mark).
     @Option(parsing: .unconditional, help: ArgumentHelp("A ceiling on the value.", valueName: "n"))
     var limit: String?

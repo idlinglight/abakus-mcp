@@ -152,11 +152,14 @@ import Testing
         #expect(state.failure("tally_create", ["name": "items", "shared": "yes"])?.message.contains("true or false") == true)
     }
 
-    @Test func showsHowThresholdStringsWereRead() throws {
+    /// How each string was read grows with the input: a detail, which the command line prints and an MCP result
+    /// leaves out (ADR-0008).
+    @Test func readIsADetail() throws {
         let state = TallyTestState()
         let response = try state.call("tally_create", ["name": "budget", "thresholds": [["limit": "20"]]])
         #expect(response["read"] == [["input": "20", "value": 20]])
         #expect(response["thresholds"] == [["limit": 20, "of": "value", "reached": false, "remaining": 20]])
+        #expect(TallyTest.tool("tally_create").withoutDetails(response).keys == ["name", "value", "count", "thresholds", "created", "updated"])
     }
 
     @Test func refusesInvalidThresholdsWithoutCreatingAnything() throws {
@@ -164,6 +167,32 @@ import Testing
         let error = try #require(state.failure("tally_create", ["name": "items", "thresholds": [["limit": 20, "at": [5]]]]))
         #expect(error.message.contains("thresholds[0]"))
         #expect(!FileManager.default.fileExists(atPath: state.url.path))
+    }
+
+    @Test func refusesASixthThresholdWithoutCreatingAnything() throws {
+        let state = TallyTestState()
+        let six: JSONValue = [["limit": 20], ["every": 5, "of": "count"], ["at": [1]], ["at": [2]], ["at": [3]], ["at": [4]]]
+        let error = try #require(state.failure("tally_create", ["name": "items", "thresholds": six]))
+        #expect(error.message.hasPrefix("thresholds has 6 items, and a tally takes at most 5. Merge the at thresholds on the value into one"))
+        #expect(error.message.contains("second tally"))
+        #expect(!FileManager.default.fileExists(atPath: state.url.path))
+    }
+
+    /// The error shows the existing tally's state, which is as compact as any response: an at threshold by the
+    /// number of its marks.
+    @Test func theSharedNameErrorShowsTheCompactState() throws {
+        let state = TallyTestState()
+        let marks: JSONValue = .array((1...200).map { .string(String($0 * 1000)) })
+        try state.call("tally_create", ["name": "bytes", "shared": true, "thresholds": [["at": marks], ["limit": "1M"]]])
+        try state.call("tally_add", ["name": "bytes", "amount": 2500])
+        let error = try #require(state.failure("tally_create", ["name": "bytes", "shared": true]))
+        let existing = try #require(error.details?["existing"]?.objectValue)
+        #expect(existing["thresholds"] == [
+            ["marks_total": 200, "of": "value", "passed": 2, "ahead": [3000, 4000, 5000, 6000, 7000]],
+            ["limit": 1000000, "of": "value", "reached": false, "remaining": 997500],
+        ])
+        #expect(existing["read"] == nil)
+        #expect(error.text.count < 700, "\(error.text.count) characters")
     }
 }
 
@@ -188,6 +217,7 @@ import Testing
         #expect(response["value"] == .number("0.3"))
         #expect(response["added"] == .number("0.2"))
         #expect(response["read"] == [["input": "0.2", "value": .number("0.2")]])
+        #expect(TallyTest.tool("tally_add").withoutDetails(response)["read"] == nil)
     }
 
     @Test func negativeAmountsSubtract() throws {
@@ -402,7 +432,8 @@ import Testing
         #expect(response["count"] == 4)
         #expect(response["crossed"] == nil)
         #expect(response["read"] == [["input": "10", "value": 10]])
-        #expect(response["thresholds"] == [["at": [5], "of": "value"]])
+        #expect(TallyTest.tool("tally_set").withoutDetails(response)["read"] == nil)
+        #expect(response["thresholds"] == [["marks_total": 1, "of": "value", "passed": 1, "ahead": []]])
 
         let cleared = try state.call("tally_set", ["name": "items", "thresholds": []])
         #expect(cleared["thresholds"] == [])
@@ -426,6 +457,138 @@ import Testing
         #expect(state.failure("tally_set", ["name": "items", "count": .number("1e30")])?.message.contains("whole number") == true)
         #expect(state.failure("tally_set", ["name": "nope", "value": 1])?.message.contains("no tally named") == true)
         #expect(try state.call("tally_set", ["name": "items", "count": "3"])["count"] == 3)
+    }
+
+    @Test func refusesASixthThresholdAndChangesNothing() throws {
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "items", "shared": true, "thresholds": [["limit": 20]]])
+        let before = try Data(contentsOf: state.file("items"))
+        let six: JSONValue = .array((1...6).map { ["at": [.number(String($0))]] })
+        let error = try #require(state.failure("tally_set", ["name": "items", "value": 3, "thresholds": six]))
+        #expect(error.message.hasPrefix("thresholds has 6 items, and a tally takes at most 5."))
+        #expect(try Data(contentsOf: state.file("items")) == before)
+        let five: JSONValue = .array((1...5).map { ["at": [.number(String($0))]] })
+        #expect(try state.call("tally_set", ["name": "items", "thresholds": five])["thresholds"]?.arrayValue?.count == 5)
+    }
+}
+
+/// sum's decimal note (ADR-0008) in the tally tools: a string that reads differently with the other decimal mark,
+/// when no other string in the call rules that mark out. By the time the agent reads it, the call has changed the
+/// tally, so the advice depends on the tool.
+@Suite struct TallyDecimalNoteTests {
+    /// The tally exists with its thresholds read one way: correct them with tally_set, not a second tally_create.
+    @Test func createSaysToReplaceTheThresholdsWithTallySet() throws {
+        let state = TallyTestState()
+        let response = try state.call("tally_create", ["name": "budget", "thresholds": [["limit": 20], ["at": [5000, "1.000"]]]])
+        let name = try #require(response["name"]?.stringValue)
+        #expect(response["notes"] == [.string("""
+            "1.000" (thresholds[1].at[1]) was read as 1; with decimal: "," it would be 1000. If the numbers use a \
+            decimal comma, replace the thresholds with tally_set on "\(name)", passing them again with decimal: ","; \
+            calling tally_create again would make a second tally.
+            """)])
+        #expect(TallyTest.tool("tally_create").withoutDetails(response).keys == ["name", "value", "count", "thresholds", "created", "updated", "notes"])
+
+        let comma = try state.call("tally_create", ["name": "budget", "thresholds": [["limit": "2.500"]], "decimal": ","])
+        let other = try #require(comma["name"]?.stringValue)
+        #expect(comma["notes"] == [.string("""
+            "2.500" (thresholds[0].limit) was read as 2500; with decimal: "." (the default) it would be 2.5. If the \
+            numbers use a decimal point, replace the thresholds with tally_set on "\(other)", passing them again \
+            without decimal; calling tally_create again would make a second tally.
+            """)])
+    }
+
+    /// Adding again would count twice: the note gives the tally_set call that corrects the value and keeps the
+    /// count, since it was one addition either way. crossed was worked out with the reading used.
+    @Test func addSaysToCorrectTheValueWithTallySetNotToAddAgain() throws {
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "bytes", "shared": true, "thresholds": [["at": [100]]]])
+        try state.call("tally_add", ["name": "bytes", "amount": 25])
+        let response = try state.call("tally_add", ["name": "bytes", "amount": "1,234"])
+        #expect(response["value"] == 1259)  // the addition counted as read
+        #expect(response["count"] == 2)
+        #expect(response["crossed"] == [["marks_total": 1, "of": "value", "at": [100]]])  // as read, not as perhaps meant
+        #expect(response["notes"] == [.string("""
+            "1,234" (amount) was read as 1234; with decimal: "," it would be 1.234. If you meant 1.234, correct the \
+            value with tally_set {"name": "bytes", "value": 26.234}, which keeps the count and reports no crossings \
+            (crossed above follows 1234); adding again would count a second time.
+            """)])
+        #expect(TallyTest.tool("tally_add").withoutDetails(response).keys == ["name", "value", "count", "added", "crossed", "thresholds", "created", "updated", "notes"])
+        // The correction the note gives does what it says.
+        let corrected = try state.call("tally_set", ["name": "bytes", "value": .number("26.234")])
+        #expect(corrected["value"] == .number("26.234"))
+        #expect(corrected["count"] == 2)
+
+        let comma = try state.call("tally_add", ["name": "bytes", "amount": "1.234", "decimal": ","])
+        #expect(comma["notes"] == [.string("""
+            "1.234" (amount) was read as 1234; with decimal: "." (the default) it would be 1.234. If you meant 1.234, \
+            correct the value with tally_set {"name": "bytes", "value": 27.468}, which keeps the count and reports no \
+            crossings (crossed above follows 1234); adding again would count a second time.
+            """)])
+    }
+
+    /// When the value the other reading gives cannot be written exactly in 38 digits, the note says how to get it.
+    @Test func addWithoutAnExactCorrectionSaysHowToGetIt() throws {
+        let state = TallyTestState()
+        try state.plantTally(TallyTest.tally("long", value: "1234567890123456789012345678901234567"))
+        let note = try state.call("tally_add", ["name": "long", "amount": "1,234"])["notes"]?.arrayValue?.first?.stringValue
+        #expect(note?.hasSuffix("If you meant 1.234, set the value with tally_set to the value before this addition plus 1.234, which keeps the count and reports no crossings (crossed above follows 1234); adding again would count a second time.") == true)
+    }
+
+    /// tally_set is idempotent: calling again with the other mark is the correction, as in sum.
+    @Test func setSaysToCallAgain() throws {
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "items", "shared": true])
+        let response = try state.call("tally_set", ["name": "items", "value": "2.500"])
+        #expect(response["notes"] == [#""2.500" (value) was read as 2.5; with decimal: "," it would be 2500. If the numbers use a decimal comma, call again with decimal: ","."#])
+        #expect(try state.call("tally_set", ["name": "items", "value": "2.500", "decimal": ","])["value"] == 2500)
+        let several = try state.call("tally_set", ["name": "items", "value": "1,000", "thresholds": [["at": ["2,000", "3,000"]]]])
+        #expect(several["notes"] == [#"3 strings read differently with the other decimal mark. The first, "1,000" (value), was read as 1000; with decimal: "," it would be 1. If the numbers use a decimal comma, call again with decimal: ","."#])
+    }
+
+    @Test func noNoteWhenThereIsOnlyOneReading() throws {
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "items", "shared": true])
+        // JSON numbers, strings without a mark, both marks, a leading 0.
+        for amount: JSONValue in [.number("1.234"), "410k", "12", "1,234.5", "0.123"] {
+            #expect(try state.call("tally_add", ["name": "items", "amount": amount])["notes"] == nil, "\(amount)")
+        }
+        // Another string in the call rules the other mark out: it reads only with ".", so calling again with ","
+        // would fail on it.
+        #expect(try state.call("tally_set", ["name": "items", "value": "1,234", "thresholds": [["limit": "12.50"]]])["notes"] == nil)
+        #expect(try state.call("tally_create", ["name": "b", "thresholds": [["limit": "12.50"], ["at": ["1,000"]]]])["notes"] == nil)
+    }
+
+    /// A count is a whole number: "1,234" cannot mean 1.234 there, so it is no second reading, and it rules the
+    /// other mark out for the rest of the call. "1.000" can mean 1000.
+    @Test func aCountsSecondReadingMustBeWhole() throws {
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "items", "shared": true])
+        #expect(try state.call("tally_set", ["name": "items", "count": "1,234"])["notes"] == nil)
+        #expect(try state.call("tally_set", ["name": "items", "count": "1,234", "value": "2,500"])["notes"] == nil)
+        #expect(try state.call("tally_set", ["name": "items", "count": "1.000"])["notes"] == [#""1.000" (count) was read as 1; with decimal: "," it would be 1000. If the numbers use a decimal comma, call again with decimal: ","."#])
+    }
+}
+
+/// ADR-0008: a successful MCP result stays within a few hundred characters, however many marks a tally has. The
+/// budget is the one dev/check.zsh states: 700 characters.
+@Suite struct TallySmallResultTests {
+    @Test func manyMarksGivenAsStringsKeepTheResultSmall() throws {
+        let state = TallyTestState()
+        // 200 marks, each a string that reads differently with a decimal comma: one note for all of them.
+        let marks: JSONValue = .array((1...200).map { .string("\($0),000") })
+        let created = try state.call("tally_create", ["name": "bytes", "thresholds": [["at": marks]]])
+        let name = try #require(created["name"]?.stringValue)
+        let createText = JSONWriter.write(TallyTest.tool("tally_create").withoutDetails(created))
+        #expect(createText.count <= 700, "\(createText.count): \(createText)")
+        #expect(created["notes"]?.arrayValue?.first?.stringValue?.hasPrefix("200 strings read differently") == true)
+
+        let added = try state.call("tally_add", ["name": .string(name), "amount": "150,500"])
+        #expect(added["crossed"] == [["marks_total": 200, "of": "value", "times": 150, "first": 1000, "last": 150000]])
+        #expect(added["thresholds"] == [["marks_total": 200, "of": "value", "passed": 150, "ahead": [151000, 152000, 153000, 154000, 155000]]])
+        let addText = JSONWriter.write(TallyTest.tool("tally_add").withoutDetails(added))
+        #expect(addText.count <= 700, "\(addText.count): \(addText)")
+        // The command line still gets every reading.
+        #expect(created["read"]?.arrayValue?.count == 200)
     }
 }
 
@@ -682,6 +845,34 @@ import Testing
         #expect(!error.message.hasSuffix("."))  // it is embedded as a clause
     }
 
+    /// A file keeps every mark; responses only count them.
+    @Test func aFileKeepsAllMarks() throws {
+        let marks = (1...500).map { TallyTest.decimal("\($0).5") }
+        let tally = TallyTest.tally("bytes", thresholds: [Threshold(.at(marks))])
+        let read = try Tally(fileData: tally.fileData(), name: "bytes")
+        #expect(read.thresholds == [Threshold(.at(marks))])
+    }
+
+    /// The cap is on arguments, not on files (ADR-0004, amendment of 2026-11-10): a file written before it, with more
+    /// than 5 thresholds, still loads and shows them all, and tally_set can bring it under the cap. tally_drop would
+    /// lose the value and the count.
+    @Test func aFileWithMoreThanFiveThresholdsStillLoads() throws {
+        let state = TallyTestState()
+        let six = "[" + (1...6).map { #"{"limit": "\#($0)", "of": "value"}"# }.joined(separator: ", ") + "]"
+        try state.plant("old.json", Self.file(thresholds: six))
+        let added = try state.call("tally_add", ["name": "old", "amount": 2])
+        #expect(added["value"] == 3)
+        #expect(added["thresholds"]?.arrayValue?.count == 6)
+        #expect(added["crossed"]?.arrayValue?.count == 2)  // the limits 2 and 3
+        #expect(try state.call("tally_set", ["name": "old", "value": 4])["thresholds"]?.arrayValue?.count == 6)
+        let sixThresholds = JSONValue.array((1...6).map { ["limit": .number(String($0))] })
+        #expect(state.failure("tally_set", ["name": "old", "thresholds": sixThresholds])?.message.hasPrefix("thresholds has 6 items") == true)
+        let replaced = try state.call("tally_set", ["name": "old", "thresholds": [["at": [1, 2, 3, 4, 5, 6]]]])
+        #expect(replaced["thresholds"] == [["marks_total": 6, "of": "value", "passed": 4, "ahead": [5, 6]]])
+        #expect(replaced["value"] == 4)
+        #expect(replaced["count"] == 1)
+    }
+
     @Test func toolsTreatAFileBreakingTheRulesAsUnreadable() throws {
         let state = TallyTestState()
         try state.plant("checks.json", Self.file(thresholds: #"[{"every": "2.5", "of": "count"}]"#))
@@ -726,12 +917,28 @@ import Testing
         }
     }
 
-    /// In brief: the full rules are in sum's description, once.
+    /// In brief: the full rules are in sum's description, once. read is a detail, the note is said once per tool.
     @Test func toolsThatTakeNumbersSayHowTheyAreRead() {
         for tool in TallyTools.all where ["tally_create", "tally_add", "tally_set"].contains(tool.name) {
             #expect(tool.description.contains(NumberReader.rulesInBrief), "\(tool.name)")
             #expect(!tool.description.contains(NumberReader.rulesSummary), "\(tool.name)")
+            #expect(tool.description.contains(TallySchema.readingsInBrief), "\(tool.name)")
+            #expect(!tool.description.contains("shown under read"), "\(tool.name)")
+            #expect(tool.detailKeys == ["read"], "\(tool.name)")
             #expect(tool.inputSchema.objectValue?["properties"]?.objectValue?["decimal"] == DecimalMark.schema, "\(tool.name)")
+        }
+        #expect(TallyTest.tool("tally_drop").detailKeys == [])
+    }
+
+    /// The cap is in the schema, so a client can check it, and in the descriptions, so an agent knows it.
+    @Test func theThresholdCapIsStated() throws {
+        let schema = try #require(TallySchema.thresholds.objectValue)
+        #expect(schema["maxItems"] == 5)
+        #expect(schema["description"]?.stringValue?.hasPrefix("What to watch, at most 5 thresholds.") == true)
+        #expect(TallyTest.tool("tally_create").description.contains("Optional thresholds, at most 5,"))
+        #expect(TallyTest.tool("tally_set").description.contains("replace its thresholds (at most 5;"))
+        for name in ["tally_create", "tally_set"] {
+            #expect(TallyTest.tool(name).inputSchema.objectValue?["properties"]?.objectValue?["thresholds"] == TallySchema.thresholds)
         }
     }
 
@@ -745,6 +952,12 @@ import Testing
         #expect(properties.keys == ["name", "shared", "thresholds", "decimal"])
         #expect(properties["shared"]?.objectValue?["default"] == false)
         #expect(TallyTools.all.allSatisfy { !$0.description.contains("unique") })
+    }
+}
+
+extension TallyTest {
+    static func tool(_ name: String) -> any Tool {
+        TallyTools.all.first { $0.name == name }!
     }
 }
 
