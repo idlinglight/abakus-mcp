@@ -103,7 +103,7 @@ the practical check; the growth rule says what does not belong in a result at al
   stays in the core; each side chooses what it shows. One exception, amended 2026-11-10: `abakus call
   --without-details` prints a result as the server sends it (see Consequences). Also amended 2026-11-10: a tool
   may shorten a list over MCP to a fixed number of entries plus a count, while the command line prints every
-  entry (`Tool.withoutDetails`; see the end).
+  entry of a successful result (`Tool.withoutDetails`; see the end). Errors are bounded on both sides.
 - The command line takes numbers as arguments or from stdin, so a check can be a command that runs again over the
   source data (`grep -oE '…' build.log | abakus sum`), and its output can go through `jq` or `head` or into a file.
 - The tool descriptions say that the command line exists and what it adds. They do not tell an agent to run it: a
@@ -179,15 +179,16 @@ be wrong; an expression rarely names more than five tallies; and the command lin
 ### Decision
 
 - A tool may also shorten a list over MCP: at most a fixed number of entries, in a stated order, then a count of
-  all, named after the list (`tallies_total`, as `existing_total` in the tally errors). The result in the core
-  keeps every entry, and the command line prints them; the count appears only in the shortened list, where it
-  says something.
+  all, named after the list (`tallies_total`, as `existing_total` in the tally errors). A successful result in
+  the core keeps every entry, and the command line prints them; the count appears only in the shortened list,
+  where it says something.
 - The mechanism is `Tool.withoutDetails(_:)`, now a requirement of the protocol rather than only an extension
   method, so that the server and `abakus call --without-details`, which hold `any Tool`, call the tool's own
   version. The default leaves out the detail keys, as before, and `abakus call --without-details` still prints
   exactly the text an MCP client gets.
 - Errors do not go through `withoutDetails`: an error that carries such a list shortens it itself, the same way
-  (calc's `details.tallies`).
+  (calc's `details.tallies`), and since an error is the same text on both sides, the command line shows the
+  shortened list too.
 - calc is within the rule (ADR-0007, amendment 2026-11-10): `read` is a detail, notes show the two readings where
   conventions differ (a leading minus before a power, a chain of powers), and `tallies` lists at most 5 over MCP,
   then `tallies_total`. Its bullet under Known exceptions is removed.

@@ -263,10 +263,11 @@ from zero to 15 significant digits (to whole units when the integer part is long
 denominator has more than 100 digits. A tally whose value had to be rounded (`exact: false` in its state) makes the
 result `exact: false` too, and its entry in `tallies` says `"exact": false`.
 
-The command line also prints `read`, the expression as it was understood (numbers written out, parentheses around
-every operation but the outermost, except along a chain of `+` or of `*`: `1 + 2 + 3`), and every tally. Over MCP
-`read` is left out: it grows with the expression, and an MCP result stays small
-([ADR-0008](docs/adr/0008-small-mcp-results.md)).
+In a successful result, the command line also prints `read`, the expression as it was understood (numbers written
+out, parentheses around every operation but the outermost, except along a chain of `+` or of `*`: `1 + 2 + 3`), and
+every tally. Over MCP `read` is left out: it grows with the expression, and an MCP result stays small
+([ADR-0008](docs/adr/0008-small-mcp-results.md)). An error is the same text on both sides, and lists at most 5
+tallies.
 
 ```json
 {"expression": "{errors-k3f9} / {requests-p2x7} * 100"}
@@ -291,7 +292,7 @@ An error gives the position (characters counted from 1) and the expression, says
 write or do instead. An unknown tally is the tally tools' error (`details.existing`, `details.matching`) after
 where the reference is, without any advice to create one, and nothing is computed. A result out of range says
 by which power of ten to scale the expression. Errors found after the tallies were read show them, at most 5 and
-then `tallies_total`; for a division by zero, the divisor's tallies come first:
+then `tallies_total`, on the command line too; for a division by zero, the divisor's tallies come first:
 
 ```text
 calc {"expression": "{errors-k3f9} / {queued}"}
@@ -301,6 +302,9 @@ is 0, the result has no value: report that, or calculate again once something ha
 Details: {"tallies": [{"name": "queued", "of": "value", "value": 0},
                       {"name": "errors-k3f9", "of": "value", "value": 37}]}
 ```
+
+An error found while working the expression out also carries its notes, under `details.notes`, and says so: the
+reading a note names may be what made it fail (`1/(-2^2+4)` is a division by zero; Excel would read it as 1/8).
 
 ## date_diff
 

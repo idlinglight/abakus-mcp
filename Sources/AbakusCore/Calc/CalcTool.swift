@@ -62,9 +62,9 @@ public struct CalcTool: Tool {
         appear, then tallies_total, the number of all, when there are more than 5. exact: false appears only when \
         the result was rounded or uses a rounded tally, fraction only when the result itself was rounded.
 
-        The abakus command line (abakus calc, or abakus call calc; the same program as this server) prints the \
-        same JSON with every tally, plus read: the expression as calc understood it, with parentheses that show \
-        the grouping.
+        The abakus command line (abakus calc, or abakus call calc; the same program as this server) prints a \
+        successful result with every tally, plus read: the expression as calc understood it, with parentheses that \
+        show the grouping. An error is the same text on both sides and lists at most 5 tallies.
         """
 
     public let inputSchema: JSONValue = [
