@@ -756,8 +756,6 @@ import Testing
         (file(thresholds: #"[{"at": [], "of": "value"}]"#), "invalid threshold (thresholds[0].at must be a non-empty list"),
         (file(thresholds: #"[{"limit": "3", "of": "value"}, {"every": "2.5", "of": "count"}]"#), "invalid threshold (thresholds[1] watches the count"),
         (file(thresholds: #"[{"at": ["1", "1.5"], "of": "count"}]"#), "whole numbers"),
-        (file(thresholds: "[" + Array(repeating: #"{"limit": "1", "of": "value"}"#, count: 6).joined(separator: ", ") + "]"),
-         "too many thresholds (thresholds has 6 items, and a tally takes at most 5)"),
     ])
     func invalidFilesAreUnreadable(text: String, expected: String) throws {
         let error = try #require(throws: ToolError.self) { try Tally(fileData: Data(text.utf8), name: "x") }
@@ -773,16 +771,24 @@ import Testing
         #expect(read.thresholds == [Threshold(.at(marks))])
     }
 
-    /// A file written before the cap, with more than 5 thresholds, is unreadable like any file that breaks the
-    /// rules: the error names the file, and tally_drop removes it.
-    @Test func aFileWithMoreThanFiveThresholdsIsUnreadable() throws {
+    /// The cap is on arguments, not on files (ADR-0004, amendment of 2026-11-10): a file written before it, with more
+    /// than 5 thresholds, still loads and shows them all, and tally_set can bring it under the cap. tally_drop would
+    /// lose the value and the count.
+    @Test func aFileWithMoreThanFiveThresholdsStillLoads() throws {
         let state = TallyTestState()
         let six = "[" + (1...6).map { #"{"limit": "\#($0)", "of": "value"}"# }.joined(separator: ", ") + "]"
         try state.plant("old.json", Self.file(thresholds: six))
-        let error = try #require(state.failure("tally_add", ["name": "old"]))
-        #expect(error.message.hasPrefix("The tally \"old\" cannot be read: it has too many thresholds (thresholds has 6 items, and a tally takes at most 5). Its file is "))
-        #expect(error.message.hasSuffix("tally_drop deletes it, after which tally_create can start it again."))
-        #expect(try state.call("tally_drop", ["name": "old"])["unreadable"] != nil)
+        let added = try state.call("tally_add", ["name": "old", "amount": 2])
+        #expect(added["value"] == 3)
+        #expect(added["thresholds"]?.arrayValue?.count == 6)
+        #expect(added["crossed"]?.arrayValue?.count == 2)  // the limits 2 and 3
+        #expect(try state.call("tally_set", ["name": "old", "value": 4])["thresholds"]?.arrayValue?.count == 6)
+        let sixThresholds = JSONValue.array((1...6).map { ["limit": .number(String($0))] })
+        #expect(state.failure("tally_set", ["name": "old", "thresholds": sixThresholds])?.message.hasPrefix("thresholds has 6 items") == true)
+        let replaced = try state.call("tally_set", ["name": "old", "thresholds": [["at": [1, 2, 3, 4, 5, 6]]]])
+        #expect(replaced["thresholds"] == [["marks": 6, "of": "value", "passed": 4, "next": 5]])
+        #expect(replaced["value"] == 4)
+        #expect(replaced["count"] == 1)
     }
 
     @Test func toolsTreatAFileBreakingTheRulesAsUnreadable() throws {

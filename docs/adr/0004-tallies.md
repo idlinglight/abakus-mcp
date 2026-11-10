@@ -165,11 +165,16 @@ stands against them.
   (`Threshold.listedMarks`, as for `every`); beyond that, how many with the first and the last:
   `{"marks": 400, "of": "value", "times": 250, "first": 150, "last": 399}`. Crossings of `limit` and `every` are
   unchanged.
-- A tally keeps at most 5 thresholds, in `tally_create` and in `tally_set`. A sixth is an error that says to pass
-  at most 5, that one `at` threshold takes any number of marks (so marks on the value, or on the count, fit in one),
-  and that a second tally can watch the rest. The schema says `maxItems: 5`. The number of marks is not limited:
-  the status no longer shows them. Five covers the cases this ADR is for (a budget, a checkpoint, a few marks) with
-  room to spare, and keeps the thresholds of a response within a fixed size, as ADR-0008 asks of stored state.
+- `tally_create` and `tally_set` take at most 5 thresholds. A sixth is an error that says to pass at most 5, that
+  one `at` threshold takes any number of marks (so marks on the value, or on the count, fit in one), and that a
+  second tally can watch the rest. The schema says `maxItems: 5`. The number of marks is not limited: the status no
+  longer shows them. Five covers the cases this ADR is for (a budget, a checkpoint, a few marks) with room to spare,
+  and keeps the thresholds of a response within a fixed size, as ADR-0008 asks of stored state.
+- The cap applies to arguments, not to tally files: a file with more thresholds, which only abakus 0.4 and earlier
+  could write, still loads and shows all of them, and `tally_set` can replace them with at most 5. This is a
+  deliberate exception to [ADR-0003](0003-state-in-user-temp-folder.md)'s one validation for arguments and files.
+  The cap is about the size of responses, not about what makes a threshold valid; and a file refused for it could
+  only be deleted with `tally_drop`, which loses its value and count, a shared tally's included.
 - `read` is a detail of `tally_create`, `tally_add` and `tally_set` (ADR-0008): the command line prints it, an MCP
   result leaves it out. In its place, `sum`'s decimal note (ADR-0008, section "sum"), from the same code: when a
   number string in the call reads differently with the other decimal mark, and no other string in the call rules
@@ -196,15 +201,16 @@ stands against them.
 
 ### Consequences
 
-- A tally tool's MCP result has a fixed size: at most 5 threshold statuses, at most 10 marks per crossing, at most
-  one decimal note, whatever was passed to `tally_create`. With an `at` threshold of 200 marks given as strings,
+- A tally tool's MCP result has a fixed size: at most 5 threshold statuses (more only for a tally file from abakus
+  0.4 or earlier, until `tally_set` replaces them), at most 10 marks per crossing, at most one decimal note,
+  whatever was passed to `tally_create`. With an `at` threshold of 200 marks given as strings,
   `tally_create` and `tally_add` stay within 700 characters (`dev/check.zsh` checks it); the same call gave about
   7,400 before.
 - The marks of an `at` threshold show in no response, on the command line neither. The agent has them in its
   request, and the tally's file keeps them (ADR-0003: state can be inspected with `cat`).
-- Tally files follow the rules arguments follow ([ADR-0003](0003-state-in-user-temp-folder.md): one validation for
-  both), so an existing file with more than 5 thresholds is now unreadable: calls on that tally fail with the usual
-  error naming the file, `tally_drop` deletes it, and `tally_list` reports it under `unreadable`. Only abakus 0.4
-  and earlier could write such a file, and a tally expires after about three days unchanged.
+- A tally file with more than 5 thresholds keeps working: every tool reads it, its responses show all its
+  thresholds, and `tally_set` with `thresholds` brings it under the cap without touching its value or count. Every
+  other rule of ADR-0003 still holds for files. Such files are rare: only abakus 0.4 and earlier could write one,
+  and a tally expires after about three days unchanged.
 - abakus 0.5.0 is the first version with this. An agent that read the marks of an `at` threshold, or `read`, from
   a tally response over MCP no longer gets them; a crossing of an `at` threshold now starts with `marks`.

@@ -36,9 +36,9 @@ struct Threshold: Sendable, Equatable {
     /// crossing gives a count with the first and the last (ADR-0008: a list of a fixed length, then a count).
     static let listedMarks = 10
 
-    /// A tally keeps at most this many thresholds, whether they come from an argument or from a tally file. An `at`
-    /// threshold takes any number of marks: its status shows how many, not the marks (ADR-0004, amendment of
-    /// 2026-11-10).
+    /// tally_create and tally_set take at most this many thresholds. An `at` threshold takes any number of marks:
+    /// its status shows how many, not the marks (ADR-0004, amendment of 2026-11-10). The cap keeps responses small;
+    /// it does not make a threshold invalid, so a tally file written before it, with more, still loads.
     static let maximumPerTally = 5
 
     static let example = #"[{"limit": 20}, {"every": 5, "of": "count"}]"#
@@ -118,7 +118,7 @@ extension Threshold {
         return try checked(rule, of: of, label: label)
     }
 
-    /// The rule for how many thresholds a tally keeps, whether they come from an argument or from a tally file.
+    /// The cap on how many thresholds an argument may give (`maximumPerTally`). Tally files are not held to it.
     static func checkCount(_ count: Int) throws(ToolError) {
         guard count <= maximumPerTally else {
             throw ToolError("thresholds has \(count) items, and a tally takes at most \(maximumPerTally).")

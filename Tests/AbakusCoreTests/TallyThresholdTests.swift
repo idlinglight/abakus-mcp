@@ -45,7 +45,7 @@ import Testing
         #expect(refused.otherReadings.ruledOut)
     }
 
-    /// At most five thresholds, from an argument as from a file (ADR-0003: one rule for both); any number of marks.
+    /// At most five thresholds in an argument (files are not held to it); any number of marks.
     @Test func atMostFiveThresholdsButAnyNumberOfMarks() throws {
         let five: JSONValue = .array((1...5).map { ["limit": .number(String($0))] })
         #expect(try parse(five).count == 5)
