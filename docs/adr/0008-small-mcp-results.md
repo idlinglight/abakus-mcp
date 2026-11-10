@@ -191,7 +191,10 @@ be wrong; an expression rarely names more than five tallies; and the command lin
 
 - The practical check holds for calc: over MCP, a 500-term chain gives `{"result":500}` instead of about 2000
   characters of `read`, and an expression with 7 tallies about 260 characters. `dev/check.zsh` measures both
-  against a budget of 400 characters.
+  against a budget of 400 characters, and a third with 20,000 combining marks in one character, since the limits
+  count Unicode scalars. The worst case is fixed but larger: an adversarial expression with five 64-character
+  tally names, 38-digit rounded values and both notes at their longest measured 1,658 characters, and a `fraction`
+  could add about 200 where the values allow one.
 - A tool that shortens a list says so in its description, with the name of the count, and that the command line
   prints the whole list.
 - abakus 0.5.0 is the first version with this.

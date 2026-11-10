@@ -198,8 +198,9 @@ abakus call sum '{"numbers": ["1.234,5", "410k", 8], "decimal": ","}'
   arguments are separated by a comma and a space.
 - `+`, `-`, `*` (or `×`), `/` (or `÷`), `^` (or `**`) with a whole-number exponent from -9999 to 9999,
   parentheses and a leading minus. `^` binds tighter than a leading minus and groups from the right: `-2^2` is
-  -4, `(-2)^2` is 4, `2^3^2` is 512. No implicit multiplication (`2(3+4)` is an error that shows where the `*`
-  goes), and no `%`: multiply by 100 for a percentage, or by 1.1 to add 10%.
+  -4, `(-2)^2` is 4, `2^3^2` is 512. `*` and `/` come before `+` and `-`, each pair from the left: `a / b * c`
+  is `(a / b) * c`. No implicit multiplication (`2(3+4)` is an error that shows where the `*` goes), and no `%`:
+  multiply by 100 for a percentage, or by 1.1 to add 10%.
 - `abs(x)`, `round(x, places)` (half away from zero), `min(a, b, …)`, `max(a, b, …)`. No roots, constants or
   units.
 - `{name}` is a tally's value, `{name:count}` its count: any tally, shared ones too, by its full name. All
@@ -209,17 +210,19 @@ abakus call sum '{"numbers": ["1.234,5", "410k", 8], "decimal": ","}'
 
 The response has `result` (a JSON number), `notes` and `tallies`. `notes` appears only for a reading on which
 conventions differ: a leading minus before a power (`-2^2` is -(2^2) here and in mathematics, (-2)^2 in Excel and
-`bc`) and a chain of powers (`2^3^2` is 2^(3^2), (2^3)^2 in Excel). One note per kind, however many there are: how
-many, the first one with its position, how it was read and how to write the other reading. Parentheses written
-in the expression settle the reading and get no note (`-(2^2)`, `(-2)^2`, `2^(3^2)`, `(2^3)^2`), and neither do
-mixed chains such as `a / b * c`, which every convention reads from the left. `tallies` lists each tally reference
-once with the number used (`{"name", "of", "value"}`; left out when there are none): over MCP at most 5, in the
-order of first appearance, then `tallies_total`, how many there are. A result that is a terminating decimal of at
-most 38 significant digits, with no digits below 10^-128, is exact. Otherwise it is rounded half away from zero to
-15 significant digits (to whole units when the integer part is longer), and `exact: false` and `fraction`, the
-exact value as `"numerator/denominator"`, are added; `fraction` is left out when its numerator or denominator has
-more than 100 digits. A tally whose value had to be rounded (`exact: false` in its state) makes the result
-`exact: false` too, and its entry in `tallies` says `"exact": false`.
+`bc`) and a chain of powers (`2^3^2` is 2^(3^2), (2^3)^2 in Excel), also one through a minus (`2^-3^2` is
+2^-(3^2), (2^-3)^2 in Excel; `-2^3^2` is -(2^(3^2)), ((-2)^3)^2 in Excel). One note per kind, however many there
+are: how many, the first one with its position, how it was read and how to write the other reading, and each
+rewrite gives the reading its note names. Parentheses written in the expression settle the reading and get no note
+(`-(2^2)`, `(-2)^2`, `2^(3^2)`, `(2^3)^2`), and neither do mixed chains such as `a / b * c`, which every convention
+reads from the left. `tallies` lists each tally reference once with the number used (`{"name", "of", "value"}`;
+`{t}` and `{t:count}` are two references; left out when there are none): over MCP at most 5, in the order of
+first appearance, then `tallies_total`, the number of all, when there are more. A result that is a terminating
+decimal of at most 38 significant digits, with no digits below 10^-128, is exact. Otherwise it is rounded half away
+from zero to 15 significant digits (to whole units when the integer part is longer), and `exact: false` and
+`fraction`, the exact value as `"numerator/denominator"`, are added; `fraction` is left out when its numerator or
+denominator has more than 100 digits. A tally whose value had to be rounded (`exact: false` in its state) makes the
+result `exact: false` too, and its entry in `tallies` says `"exact": false`.
 
 The command line also prints `read`, the expression as it was understood (numbers written out, parentheses around
 every operation but the outermost, except along a chain of `+` or of `*`: `1 + 2 + 3`), and every tally. Over MCP
@@ -248,15 +251,16 @@ abakus call calc '{"expression": "round(1000 * 1.045^10, 2)"}'
 An error gives the position (characters counted from 1) and the expression, says what happened and what to
 write or do instead. An unknown tally is the tally tools' error (`details.existing`, `details.matching`) after
 where the reference is, without any advice to create one, and nothing is computed. A result out of range says
-by which power of ten to scale the expression. Errors found after the tallies were read show them:
+by which power of ten to scale the expression. Errors found after the tallies were read show them, at most 5 and
+then `tallies_total`; for a division by zero, the divisor's tallies come first:
 
 ```text
 calc {"expression": "{errors-k3f9} / {queued}"}
 Division by zero at character 15 of "{errors-k3f9} / {queued}": the divisor {queued} is 0. While the divisor
 is 0, the result has no value: report that, or calculate again once something has been added to the tally
 "queued".
-Details: {"tallies": [{"name": "errors-k3f9", "of": "value", "value": 37},
-                      {"name": "queued", "of": "value", "value": 0}]}
+Details: {"tallies": [{"name": "queued", "of": "value", "value": 0},
+                      {"name": "errors-k3f9", "of": "value", "value": 37}]}
 ```
 
 ## date_diff

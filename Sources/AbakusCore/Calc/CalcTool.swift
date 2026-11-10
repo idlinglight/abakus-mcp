@@ -30,7 +30,8 @@ public struct CalcTool: Tool {
 
         Operators: + and -; * or × to multiply; / or ÷ to divide; ^ or ** for powers with a whole-number exponent \
         from -9999 to 9999 and any base (2^10, 1.045^10, 2^-1). Powers bind tighter than a leading minus and group \
-        from the right: -2^2 is -(2^2) = -4, (-2)^2 is 4, 2^3^2 is 2^9. Parentheses group. No implicit \
+        from the right: -2^2 is -(2^2) = -4, (-2)^2 is 4, 2^3^2 is 2^9. * and / come before + and -, each pair \
+        from the left: a / b * c is (a / b) * c, so 1 / 2*{n} is (1 / 2) * {n}. Parentheses group. No implicit \
         multiplication: write 2*(3+4), not 2(3+4).
 
         Functions: abs(x), round(x, places) (half away from zero; round(x, 0) for a whole number), min(a, b, ...), \
@@ -56,14 +57,14 @@ public struct CalcTool: Tool {
         Response: {"result", "notes", "tallies"}. notes appears only for a reading on which conventions differ, a \
         leading minus before a power (-2^2) or a chain of powers (2^3^2), unless you wrote the parentheses \
         yourself; it says how it was read and how to write the other reading. tallies (left out when there are \
-        none) lists each tally used with the number taken from it, as {"name", "of": "value" or "count", \
-        "value"}, plus "exact": false for a rounded one: at most 5, in the order they first appear, then \
-        tallies_total with the number of all. exact: false appears only when the result was rounded or uses a \
-        rounded tally, fraction only when the result itself was rounded.
+        none) lists each reference with the number taken from it ({t} and {t:count} are two), as {"name", "of": \
+        "value" or "count", "value"}, plus "exact": false for a rounded one: at most 5, in the order they first \
+        appear, then tallies_total, the number of all, when there are more than 5. exact: false appears only when \
+        the result was rounded or uses a rounded tally, fraction only when the result itself was rounded.
 
-        The abakus command line (abakus calc, or abakus call calc; the same program as this server) prints the \
-        same JSON with every tally, plus read: the expression as calc understood it, with parentheses that show \
-        the grouping.
+        The abakus command line (abakus calc '<expression>', in single quotes for the shell, or abakus call calc; \
+        the same program as this server) prints the same JSON with every tally, plus read: the expression as calc \
+        understood it, with parentheses that show the grouping.
         """
 
     public let inputSchema: JSONValue = [
