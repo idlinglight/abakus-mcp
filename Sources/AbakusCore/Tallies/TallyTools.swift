@@ -97,8 +97,9 @@ struct TallyAdd: TallyStateTool {
 
     let description = """
         Add an amount to a tally (default 1, so a plain call counts one item) and get its state back: value, \
-        count, added, crossed and thresholds. crossed lists what this addition reached or passed: a limit reached \
-        for the first time, marks of at and every (up to \(Threshold.listedMarks) per threshold; beyond that, how \
+        count, added, crossed and thresholds. crossed lists what this addition reached or passed going up: a \
+        limit reached from below (again after the tally went back below it), marks of at and every (up to \
+        \(Threshold.listedMarks) per threshold; beyond that, how \
         many as times, with the first and the last); [] if nothing. thresholds gives each one's status: a limit \
         says reached plus remaining or over; an at threshold says marks_total, passed (how many are reached) and \
         ahead (the next marks, up to \(Threshold.marksAhead)); every says next. Thresholds never block. Negative amounts subtract. \

@@ -124,6 +124,12 @@ extension String {
         let marks = Threshold(.at([10]))
         #expect(try crossing(marks, "12", "5") == nil)
         #expect(try crossing(marks, "5", "10") == ["marks_total": 1, "of": "value", "at": [10]])
+        // A limit too, as tally_add's description says: not only the first time.
+        let limit = Threshold(.limit(20))
+        #expect(try crossing(limit, "19", "20") == ["limit": 20, "of": "value"])
+        #expect(try crossing(limit, "20", "25") == nil)
+        #expect(try crossing(limit, "25", "15") == nil)
+        #expect(try crossing(limit, "15", "21") == ["limit": 20, "of": "value"])
     }
 
     @Test func everyListsTheMultiplesPassed() throws {

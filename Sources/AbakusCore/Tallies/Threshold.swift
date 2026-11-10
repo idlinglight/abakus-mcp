@@ -12,7 +12,8 @@ struct Threshold: Sendable, Equatable {
     }
 
     enum Rule: Sendable, Equatable {
-        /// A ceiling. Its crossing is reported once; the status of every response says whether it is reached.
+        /// A ceiling. Its crossing is reported once per upward crossing, as a mark's is; the status of every response
+        /// says whether it is reached.
         case limit(Decimal)
         /// Marks, ascending and without duplicates.
         case at([Decimal])
