@@ -45,8 +45,9 @@ struct Threshold: Sendable, Equatable {
     static let allMarksKey = "marks"
 
     /// tally_create and tally_set take at most this many thresholds. An `at` threshold takes any number of marks:
-    /// its status shows how many, not the marks (ADR-0004, amendment of 2026-11-10). The cap keeps responses small;
-    /// it does not make a threshold invalid, so a tally file written before it, with more, still loads.
+    /// its full status ends with every mark, for the command line, while an MCP result and errors use the compact
+    /// form, with how many there are and the next few (ADR-0004, amendments of 2026-11-10). The cap keeps responses
+    /// small; it does not make a threshold invalid, so a tally file written before it, with more, still loads.
     static let maximumPerTally = 5
 
     static let example = #"[{"limit": 20}, {"every": 5, "of": "count"}]"#

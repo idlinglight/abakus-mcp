@@ -915,7 +915,8 @@ import Testing
         #expect(!error.message.hasSuffix("."))  // it is embedded as a clause
     }
 
-    /// A file keeps every mark; responses only count them.
+    /// A file keeps every mark, as the command line's full status shows them; an MCP result counts them and lists
+    /// the next few.
     @Test func aFileKeepsAllMarks() throws {
         let marks = (1...500).map { TallyTest.decimal("\($0).5") }
         let tally = TallyTest.tally("bytes", thresholds: [Threshold(.at(marks))])
