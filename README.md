@@ -14,7 +14,7 @@ Some small tasks are done better by a small program than by a language model, ye
 ad-hoc tooling for. abakus is the pocket calculator for those. Its arithmetic is exact decimal arithmetic:
 `0.1 + 0.2` is `0.3`, and a result that had to be rounded says so.
 
-macOS only. Status: early, version 0.4.1.
+macOS only. Status: early, version 0.4.2.
 
 ## Install
 
@@ -286,7 +286,7 @@ abakus sum --decimal , 1.234,5
 abakus calc '{errors-k3f9} / {requests-p2x7} * 100'  # quote it: * ( { ^ mean something to the shell
 abakus calc -2^2                                 # -4; a leading minus is part of the expression
 abakus date-diff 2026-11-08 now
-abakus tools                                     # the tools and what they do
+abakus tools                                     # the tools by name, with --show <name> for one in full
 abakus call sum '{"numbers": ["0.1", 0.2]}'      # any tool with JSON arguments, as an MCP client sends them
 abakus call --without-details sum '{"numbers": ["0.1"]}'  # exactly the text an MCP client gets
 ```

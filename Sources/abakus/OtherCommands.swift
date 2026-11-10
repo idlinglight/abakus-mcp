@@ -82,7 +82,7 @@ struct DateDiff: ParsableCommand {
 }
 
 struct Tools: ParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "List the tools, with the first line of each description.")
+    static let configuration = CommandConfiguration(abstract: "List the tools, each with its title.")
 
     @Option(help: ArgumentHelp("Print one tool's full description and input schema instead.", valueName: "name"))
     var show: String?
@@ -95,11 +95,14 @@ struct Tools: ParsableCommand {
             print(JSONWriter.write(tool.inputSchema))
             return
         }
+        // The titles, not the descriptions: a description is a paragraph written for an agent, a line each would
+        // be a wall of text.
         let width = Catalog.tools.map(\.name.count).max() ?? 0
         for tool in Catalog.tools {
-            let firstLine = tool.description.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
-            print(tool.name.padding(toLength: width, withPad: " ", startingAt: 0) + "  " + firstLine)
+            print(tool.name.padding(toLength: width, withPad: " ", startingAt: 0) + "  " + (tool.annotations.title ?? ""))
         }
+        print()
+        print("abakus tools --show <name>: a tool's full description and input schema")
     }
 }
 

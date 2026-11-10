@@ -36,6 +36,7 @@ extension Tool {
 
 /// MCP tool annotations. Set every flag deliberately; clients show them and some decide on them.
 public struct ToolAnnotations: Sendable, Equatable {
+    /// A short name for people, a few words: "Exact sum". MCP clients may show it; `abakus tools` lists it.
     public var title: String?
     public var readOnly: Bool
     public var destructive: Bool
