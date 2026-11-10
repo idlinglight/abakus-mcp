@@ -92,8 +92,10 @@ extension Tally {
     /// Reads a tally file. Throws a plain description of what is wrong (a clause, no final period); the caller
     /// adds which file it was. The name comes from the file name, which is what the tally is found by.
     ///
-    /// A file has to meet the same rules as arguments (`Threshold.checked`, `Tally.checkedCount`): whatever
-    /// fails them is unreadable, not half-trusted.
+    /// A file has to meet the same rules as arguments (`Threshold.checked`, `Tally.checkedCount`): whatever fails
+    /// them is unreadable, not half-trusted. One exception: the cap on the number of thresholds
+    /// (`Threshold.maximumPerTally`) applies to arguments only, so a file written before it still loads and
+    /// tally_set can bring it under the cap (ADR-0004, amendment of 2026-11-10).
     init(fileData data: Data, name: String) throws(ToolError) {
         let decoder = JSONDecoder()
         guard let probe = try? decoder.decode(FormatProbe.self, from: data) else {

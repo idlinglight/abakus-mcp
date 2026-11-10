@@ -77,7 +77,7 @@ public struct SumTool: Tool {
             values.append(value)
             if case .string(let text) = item {
                 read.append(["index": .number(String(index)), "input": .string(text), "value": .decimal(value)])
-                otherReadings.check(text, index: index, value: value)
+                otherReadings.check(text, label: "numbers[\(index)]", value: value)
             }
         }
 
@@ -103,52 +103,8 @@ public struct SumTool: Tool {
             result["mean"] = .decimal(mean.value)
             if !mean.exact { result["mean_exact"] = false }
         }
-        if let note = otherReadings.note { result["notes"] = [.string(note)] }
+        if let note = otherReadings.note(advice: otherReadings.callAgain) { result["notes"] = [.string(note)] }
         if !read.isEmpty { result["read"] = .array(read) }
         return result
-    }
-}
-
-/// Strings that the other `decimal` setting reads as a different number: `"1,234"` is 1234 with ".", 1.234 with
-/// ",". Such a string contains "." or "," and the other setting reads it as well; the two values then always
-/// differ, since the mark is the decimal mark in one reading and groups thousands in the other (ADR-0008).
-///
-/// A string with a mark that only the current setting reads (`"12.50"`, `"1,234.5"` with ".") shows how the list
-/// is written: then there is no note, since calling again with the other mark would fail on that string.
-struct OtherDecimalReadings {
-    let decimal: DecimalMark
-    private(set) var count = 0
-    /// A string with a mark that the other setting cannot read was seen. Later strings need no second reading.
-    private(set) var ruledOut = false
-    private var first: (index: Int, text: String, value: Decimal, other: Decimal)?
-
-    init(decimal: DecimalMark) {
-        self.decimal = decimal
-    }
-
-    mutating func check(_ text: String, index: Int, value: Decimal) {
-        guard !ruledOut, text.contains(where: { $0 == "." || $0 == "," }) else { return }
-        guard let other = NumberReader.value(of: text, decimal: decimal.other) else {
-            ruledOut = true
-            return
-        }
-        count += 1
-        if first == nil { first = (index, text, value, other) }
-    }
-
-    /// A note of fixed size, however many such strings there are: how many, the first one with both readings, and
-    /// what to do. nil when there are none, or when a string rules the other mark out.
-    var note: String? {
-        guard !ruledOut, let first else { return nil }
-        let setting = decimal == .point ? #"decimal: ",""# : #"decimal: "." (the default)"#
-        let advice = decimal == .point
-            ? #"If the numbers use a decimal comma, call again with decimal: ","."#
-            : "If the numbers use a decimal point, call again without decimal."
-        let string = "\(first.text.quotedForMessage) (numbers[\(first.index)])"
-        let reading = "was read as \(first.value); with \(setting) it would be \(first.other)."
-        if count == 1 {
-            return "\(string) \(reading) \(advice)"
-        }
-        return "\(count) strings read differently with the other decimal mark. The first, \(string), \(reading) \(advice)"
     }
 }

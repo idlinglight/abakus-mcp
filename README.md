@@ -14,7 +14,7 @@ Some small tasks are done better by a small program than by a language model, ye
 ad-hoc tooling for. abakus is the pocket calculator for those. Its arithmetic is exact decimal arithmetic:
 `0.1 + 0.2` is `0.3`, and a result that had to be rounded says so.
 
-macOS only. Status: early, version 0.4.2.
+macOS only. Status: early, version 0.5.0.
 
 ## Install
 
@@ -36,7 +36,7 @@ Other MCP clients: the command is `abakus mcp` (stdio).
 
 | Tool | What it does |
 |---|---|
-| `tally_create` | Create a tally under a name with a random suffix (or exactly, with `shared`), optionally with thresholds |
+| `tally_create` | Create a tally under a name with a random suffix (or exactly, with `shared`), optionally with up to 5 thresholds |
 | `tally_add` | Add an amount (default 1); says when a threshold is crossed |
 | `tally_set` | Correct a tally's value, count or thresholds |
 | `tally_list` | List tallies with their state |
@@ -61,13 +61,28 @@ Names: lowercase letters, digits, `.`, `_`, `-`, starting with a letter or digit
 including the suffix (so 59 as given, 64 with `shared: true`); a longer name is refused with a suggestion cut
 to 59. Tallies untouched for about three days expire ([ADR-0003](docs/adr/0003-state-in-user-temp-folder.md)).
 
-Every response is the tally's full state; numbers that came as strings are listed under `read`.
+Every response is the tally's state, each threshold with its status. Its size does not depend on how many marks
+the thresholds have, so it stays small over MCP ([ADR-0008](docs/adr/0008-small-mcp-results.md)).
 
-**Thresholds** are a list; each item has exactly one of `limit` (a ceiling), `at` (a list of marks) or
-`every` (a period), and optionally `of: "value"` (default) or `"count"`. An addition crosses a mark when it
-takes the tally from below the mark to the mark or past it; a tally that goes back down and up again reports
-the mark again. Thresholds never block. Each threshold's status is in every response: a limit says
-`reached` and `remaining` or `over`; `at` and `every` say the `next` mark.
+**Thresholds** are a list of at most 5; each item has exactly one of `limit` (a ceiling), `at` (a list of
+marks, any number of them) or `every` (a period), and optionally `of: "value"` (default) or `"count"`. An
+addition crosses a mark when it takes the tally from below the mark to the mark or past it; a tally that goes
+back down and up again reports the mark again. Thresholds never block. Each threshold's status is in every
+response: a limit says `reached` and `remaining` or `over`; `at` says how many marks it has (`marks_total`), how
+many are `passed` (reached) and the marks `ahead`, at most 5 (`[]` once all are passed), so an agent that lost its
+request to a context compaction still sees what comes next:
+`{"marks_total": 200, "of": "value", "passed": 18, "ahead": [19, 20, 21, 22, 23]}`; `every` says the `next` mark.
+A sixth threshold is an error that says to pass fewer, to watch some with a second tally, or, when two `at`
+thresholds watch the same measure, to merge them (one takes any number of marks). The tally's file keeps every
+mark.
+
+**Number strings**: over MCP, a string that reads differently with the other decimal mark (`"1,234"` is 1234 with
+`.`, 1.234 with `,`), when no other string in the call rules that mark out, gets one note under `notes` that names
+the argument, gives both readings and says how to correct it. The call has changed the tally by then, so the
+advice depends on the tool: `tally_set` says to call again with the other mark; `tally_create` to replace the
+thresholds with `tally_set` (creating again would make a second tally); `tally_add` gives the `tally_set` call
+that corrects the value and keeps the count (adding again would count twice). The command line also prints
+`read`, how each string was read (`{"input", "value"}`).
 
 `tally_create` `{name, shared?, thresholds?, decimal?}`
 
@@ -90,24 +105,35 @@ with `tally_add` and drop the new one with `tally_drop`.
    "note": "A tally named \"review-k3f9\" already exists, and tally_create always makes a new tally: …"}
 ```
 
-`tally_add` `{name, amount? (default 1), decimal?}` adds `added`, `crossed` (`[]` if nothing) and `read`:
+`tally_add` `{name, amount? (default 1), decimal?}` adds `added` and `crossed` (`[]` if nothing):
 
 ```json
-{"name": "review-k3f9", "amount": "6"}
-→ {"name": "review-k3f9", "value": 21, "count": 6, "added": 6, "read": [{"input": "6", "value": 6}],
+{"name": "review-k3f9", "amount": 6}
+→ {"name": "review-k3f9", "value": 21, "count": 6, "added": 6,
    "crossed": [{"limit": 20, "of": "value"}],
    "thresholds": [{"limit": 20, "of": "value", "reached": true, "over": 1},
                   {"every": 5, "of": "count", "next": 10}],
    "created": "2026-11-08T09:30:00Z", "updated": "2026-11-08T09:36:00Z"}
+
+{"name": "bytes-p2x7", "amount": "1,234"}
+→ {"name": "bytes-p2x7", "value": 1259, "count": 2, "added": 1234,
+   "crossed": [{"marks_total": 200, "of": "value", "times": 12, "first": 100, "last": 1200}],
+   "thresholds": [{"marks_total": 200, "of": "value", "passed": 12, "ahead": [1300, 1400, 1500, 1600, 1700]}],
+   "created": "2026-11-08T09:40:00Z", "updated": "2026-11-08T09:41:00Z",
+   "notes": ["\"1,234\" (amount) was read as 1234; with decimal: \",\" it would be 1.234. If you meant 1.234,
+              correct the value with tally_set {\"name\": \"bytes-p2x7\", \"value\": 26.234}, which keeps the
+              count and reports no crossings (crossed above follows 1234); adding again would count a second
+              time."]}
 ```
 
-Crossings look like `{"limit": 20, "of": "value"}`, `{"at": [1000000], "of": "value"}` (the marks crossed)
-or `{"every": 5, "of": "count", "at": [5]}`; past 10 multiples,
-`{"every": 1, "of": "value", "times": 250, "first": 1, "last": 250}`. A tally that ever had to round says
-`"exact": false`.
+Crossings start like the threshold's status: `{"limit": 20, "of": "value"}`,
+`{"marks_total": 50, "of": "value", "at": [1000000]}` (the marks crossed) or
+`{"every": 5, "of": "count", "at": [5]}`. Past 10 marks of one threshold, how many with the first and the last:
+`{"every": 1, "of": "value", "times": 250, "first": 1, "last": 250}`, and the same after `"marks_total"` for
+`at`. A tally that ever had to round says `"exact": false`.
 
 `tally_set` `{name, value?, count?, thresholds?, decimal?}` corrects a tally, reports no crossings;
-`thresholds: []` removes them all.
+`thresholds` replaces them all (at most 5), `thresholds: []` removes them.
 
 `tally_list` `{prefix?}` lists tallies sorted by name, and the folder they are kept in:
 
@@ -115,7 +141,7 @@ or `{"every": 5, "of": "count", "at": [5]}`; past 10 multiples,
 {"prefix": "bytes"}
 → {"folder": "/var/folders/…/T/abakus/tallies",
    "tallies": [{"name": "bytes", "value": 2490123.5, "count": 1,
-                "thresholds": [{"at": [1000000, 5000000], "of": "value", "next": 5000000}],
+                "thresholds": [{"marks_total": 2, "of": "value", "passed": 1, "ahead": [5000000]}],
                 "created": "2026-11-08T09:36:00Z", "updated": "2026-11-08T09:36:00Z"}]}
 ```
 
@@ -139,7 +165,7 @@ Details: {"name": "review",
           "existing": ["review-k3f9", "bytes"]}
 ```
 
-Creating a shared tally under an existing name shows that tally and says to add to it only in coordination
+Creating a shared tally under an existing name shows that tally's state and says to add to it only in coordination
 with whoever created it, or to leave `shared` out to count one's own work. An invalid name comes with a
 suggestion (`"Review Items"` → `"review-items"`).
 
@@ -271,7 +297,7 @@ every number is negative.
 ## Command line
 
 Each command runs one tool and prints the JSON an agent would get, plus the details an MCP result leaves out,
-such as `sum`'s `read` ([ADR-0008](docs/adr/0008-small-mcp-results.md)); `abakus call --without-details` leaves them
+such as `read` of `sum` and the tally tools ([ADR-0008](docs/adr/0008-small-mcp-results.md)); `abakus call --without-details` leaves them
 out, so a successful result is exactly the text an MCP client gets. A tool's error goes to stderr with exit
 status 1 (the same text an agent reads); a usage mistake shows the usage with exit status 64.
 
@@ -332,11 +358,11 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/):
 - [ADR-0001](docs/adr/0001-one-package-one-binary.md): One Swift package, one binary, MCP first
 - [ADR-0002](docs/adr/0002-own-mcp-server.md): Own MCP server instead of the Swift SDK (amended: supported revisions, error mapping)
 - [ADR-0003](docs/adr/0003-state-in-user-temp-folder.md): State: one file per tally in the per-user temporary folder (amended: locking)
-- [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names; `tally_drop`'s advice for unknown names)
+- [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names; `tally_drop`'s advice for unknown names; an `at` threshold by how many marks it has, at most 5 thresholds, `read` as a detail with a decimal note)
 - [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only; by ADR-0008: how readings show over MCP)
 - [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC (amended: whole seconds in `text`)
 - [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name (amended: underflow and the readable policy in full, when `fraction` is left out, rounded tallies in the response, unknown names, flat chains of + and * in `read`, errors while evaluating, parser details)
-- [ADR-0008](docs/adr/0008-small-mcp-results.md): MCP results stay small; the command line shows everything
+- [ADR-0008](docs/adr/0008-small-mcp-results.md): MCP results stay small; the command line shows everything (amended: `call --without-details`; the tools that work on one tally within the rule)
 
 ## License
 

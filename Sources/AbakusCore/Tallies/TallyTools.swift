@@ -3,12 +3,17 @@ import Foundation
 /// Tally tools (ADR-0004): tally_create, tally_add, tally_set, tally_list, tally_drop.
 public enum TallyTools {
     public static let all: [any Tool] = [TallyCreate(), TallyAdd(), TallySet(), TallyList(), TallyDrop()]
+
+    /// How many thresholds tally_create and tally_set take, for the command line's help.
+    public static let maximumThresholds = Threshold.maximumPerTally
 }
 
 // MARK: - tally_create
 
 struct TallyCreate: Tool {
     let name = "tally_create"
+
+    let detailKeys = TallySchema.detailKeys
 
     let description = """
         Create a tally: an exact value plus a count of additions, kept outside your context so it survives long \
@@ -17,9 +22,11 @@ struct TallyCreate: Tool {
         counts its own; use the name in the response from then on, and tally_add to continue it: tally_create \
         always makes a new tally (with a note when the name given exists). Pass shared: true only for a tally \
         several sessions are meant to add to: the name is then used exactly, and creating fails if it exists. \
-        Leave other sessions' tallies alone unless you coordinate with them. Optional thresholds watch the value \
-        (default) or the count: limit (a ceiling), at (marks), every (a period); they inform and never block. \
-        Returns the new tally's state. \(NumberReader.rulesInBrief)
+        Leave other sessions' tallies alone unless you coordinate with them. Optional thresholds, at most \
+        \(Threshold.maximumPerTally), watch the value (default) or the count: limit (a ceiling), at (marks, any \
+        number of them), every (a period); they inform and never block. Returns the new tally's state, each \
+        threshold with its status; an at threshold shows marks_total, passed (how many are reached) and ahead \
+        (the next marks, up to \(Threshold.marksAhead)). \(NumberReader.rulesInBrief) \(TallySchema.readingsInBrief)
         """
 
     let inputSchema: JSONValue = [
@@ -58,6 +65,7 @@ struct TallyCreate: Tool {
         let thresholds = try args.thresholds() ?? []
         let now = Tally.timestamp(context.now())
         let reads = args.reads
+        let readings = args.otherReadings
 
         return try TallyStore(context).change(creatingFolder: true) { files throws(ToolError) in
             let name: String
@@ -73,9 +81,9 @@ struct TallyCreate: Tool {
             }
             let tally = Tally(name: name, thresholds: thresholds, created: now, updated: now)
             try files.save(tally)
-            var response = TallyResponse.state(tally, reads: reads)
-            if let note { response["note"] = .string(note) }
-            return response
+            return TallyResponse.state(
+                tally, reads: reads, note: note, decimalNote: TallyResponse.decimalNote(readings, created: name)
+            )
         }
     }
 }
@@ -85,15 +93,19 @@ struct TallyCreate: Tool {
 struct TallyAdd: Tool {
     let name = "tally_add"
 
+    let detailKeys = TallySchema.detailKeys
+
     let description = """
-        Add an amount to a tally (default 1, so a plain call counts one item) and get its full state back: value, \
-        count, added, crossed (what this addition reached or passed: marks of at and every, a limit reached for \
-        the first time; [] if nothing) and thresholds with their status (a limit says reached plus remaining or \
-        over, in every response). Thresholds never block. Negative amounts subtract. \
-        \(NumberReader.rulesInBrief) A string's reading is shown under read. An unknown name is an error, never a \
-        new tally: the name may be misspelled, lack the suffix tally_create gave it, or have expired (unchanged \
-        for about three days). If tallies whose names start with the name you gave exist, the error shows them with when \
-        each was created.
+        Add an amount to a tally (default 1, so a plain call counts one item) and get its state back: value, \
+        count, added, crossed and thresholds. crossed lists what this addition reached or passed: a limit reached \
+        for the first time, marks of at and every (up to \(Threshold.listedMarks) per threshold; beyond that, how \
+        many as times, with the first and the last); [] if nothing. thresholds gives each one's status: a limit \
+        says reached plus remaining or over; an at threshold says marks_total, passed (how many are reached) and \
+        ahead (the next marks, up to \(Threshold.marksAhead)); every says next. Thresholds never block. Negative amounts subtract. \
+        \(NumberReader.rulesInBrief) \(TallySchema.readingsInBrief) An unknown name is an error, never a new \
+        tally: the name may be misspelled, lack the suffix tally_create gave it, or have expired (unchanged for \
+        about three days). If tallies whose names start with the name you gave exist, the error shows them with \
+        when each was created.
         """
 
     let inputSchema: JSONValue = [
@@ -119,6 +131,7 @@ struct TallyAdd: Tool {
         let amount = try args.number("amount") ?? 1
         let now = Tally.timestamp(context.now())
         let reads = args.reads
+        let readings = args.otherReadings
 
         // Every error below is raised before the file is replaced, so a failed add never changed the tally.
         // Thresholds cannot make it fail: one that cannot be evaluated gets a `problem` note, and the addition
@@ -142,7 +155,8 @@ struct TallyAdd: Tool {
             after.updated = now
             try files.save(after)
             return TallyResponse.state(
-                after, added: amount, reads: reads, crossed: TallyResponse.crossings(from: before, to: after)
+                after, added: amount, reads: reads, crossed: TallyResponse.crossings(from: before, to: after),
+                decimalNote: TallyResponse.decimalNote(readings, addedTo: before)
             )
         }
     }
@@ -153,11 +167,15 @@ struct TallyAdd: Tool {
 struct TallySet: Tool {
     let name = "tally_set"
 
+    let detailKeys = TallySchema.detailKeys
+
     let description = """
-        Correct a tally: set its value and/or count, or replace its thresholds (an empty list removes them). For \
-        fixing a miscount or changing a budget; normal counting is tally_add. Reports no crossings; returns the \
-        full state. \(NumberReader.rulesInBrief) An unknown name is an error, never a new tally. If tallies \
-        whose names start with the name you gave exist, the error shows them with when each was created.
+        Correct a tally: set its value and/or count, or replace its thresholds (at most \
+        \(Threshold.maximumPerTally); an empty list removes them). For fixing a miscount or changing a budget; \
+        normal counting is tally_add. Reports no crossings; returns the state, each threshold with its status (an \
+        at threshold shows marks_total, passed and ahead, the next marks). \(NumberReader.rulesInBrief) \
+        \(TallySchema.readingsInBrief) An unknown name is an error, never a new tally. If tallies whose names \
+        start with the name you gave exist, the error shows them with when each was created.
         """
 
     let inputSchema: JSONValue = [
@@ -191,6 +209,7 @@ struct TallySet: Tool {
         }
         let now = Tally.timestamp(context.now())
         let reads = args.reads
+        let readings = args.otherReadings
 
         return try TallyStore(context).change { files throws(ToolError) in
             var tally = try files.existing(name)
@@ -202,7 +221,8 @@ struct TallySet: Tool {
             if let thresholds { tally.thresholds = thresholds }
             tally.updated = now
             try files.save(tally)
-            return TallyResponse.state(tally, reads: reads)
+            // Idempotent, so calling again with the other mark corrects it, as in sum.
+            return TallyResponse.state(tally, reads: reads, decimalNote: readings.note(advice: readings.callAgain))
         }
     }
 }
@@ -313,6 +333,17 @@ struct TallyDrop: Tool {
 /// Schema parts of the tally tools. Number strings and `decimal` use `NumberReader.rulesInBrief` and
 /// `DecimalMark.schema`, so every tool describes and reads them the same way.
 enum TallySchema {
+    /// The detail keys of the tools that take numbers (ADR-0008): how each string was read grows with the input,
+    /// so the command line prints it and an MCP result leaves it out.
+    static let detailKeys = ["read"]
+
+    /// What the tools that take numbers say about readings, in their descriptions.
+    static let readingsInBrief = """
+        A number string that also reads with the other decimal mark, as a different number ("1,234" is 1234 with \
+        ".", 1.234 with ","), gets a short note under notes on how to correct it. The abakus command line (the \
+        same program as this server) also prints read, how each string was read.
+        """
+
     static let namePattern = "^[a-z0-9][a-z0-9._-]{0,63}$"
 
     static let name: JSONValue = [
@@ -339,8 +370,9 @@ enum TallySchema {
     static let thresholds: JSONValue = [
         "type": "array",
         "description": .string(
-            "What to watch. Each item has exactly one of limit (a ceiling: every response says whether it is reached and what remains), at (a list of marks) or every (a period: marks at every multiple), and optionally of: \"value\" (default) or \"count\". An addition reports each mark it reaches or passes going up. E.g. \(Threshold.example)."
+            "What to watch, at most \(Threshold.maximumPerTally) thresholds. Each item has exactly one of limit (a ceiling: every response says whether it is reached and what remains), at (a list of marks, any number of them: every response gives marks_total, passed, how many are reached, and ahead, the next \(Threshold.marksAhead) at most) or every (a period: marks at every multiple), and optionally of: \"value\" (default) or \"count\". An addition reports each mark it reaches or passes going up, up to \(Threshold.listedMarks) per threshold; beyond that, how many as times, with the first and the last. E.g. \(Threshold.example)."
         ),
+        "maxItems": .number(String(Threshold.maximumPerTally)),
         "items": [
             "type": "object",
             "properties": [
