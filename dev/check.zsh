@@ -38,7 +38,7 @@ outcome() {
 }
 
 # MCP, legacy era: initialize, then the tools, as a client that negotiated 2025-11-25 sees them; a shared tally
-# "requests" for calc to read, here and in the modern era
+# "requests" for calc to read, here, in the modern era and on the command line
 responses=$(printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"check","version":"0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
@@ -48,9 +48,10 @@ responses=$(printf '%s\n' \
   '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"tally_create","arguments":{"name":"requests","shared":true}}}' \
   '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"tally_add","arguments":{"name":"requests","amount":1250}}}' \
   '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"calc","arguments":{"expression":"37 / {requests} * 100"}}}' \
+  '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"calc","arguments":{"expression":"-2^2"}}}' \
   | $abakus mcp 2>>$stderr_log)
-expect "mcp legacy: seven responses, none for the notification" '. == null' \
-  "$(print -r -- "$responses" | jq -s 'if length == 7 then null else length end')"
+expect "mcp legacy: eight responses, none for the notification" '. == null' \
+  "$(print -r -- "$responses" | jq -s 'if length == 8 then null else length end')"
 expect "mcp legacy: initialize negotiates 2025-11-25 and sends instructions" \
   '.result.protocolVersion == "2025-11-25" and (.result.instructions | contains("shared: true") and contains("calc") and (contains("unique") | not))' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 1)')"
@@ -65,10 +66,14 @@ mcp_sum_text=$(print -r -- "$responses" | jq -r 'select(.id == 3) | .result.cont
 expect "mcp legacy: a tool error is a result with isError" \
   '.result.isError == true and (.result.content[0].text | test("missing"))' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 4)')"
-expect "mcp legacy: calc reads a tally by name" \
-  '.result.structuredContent == {"result": 2.96, "read": "(37 / {requests}) * 100",
-     "tallies": [{"name": "requests", "of": "value", "value": 1250}]}' \
+expect "mcp legacy: calc reads a tally by name, without read (a detail, ADR-0008)" \
+  '.result.structuredContent == {"result": 2.96, "tallies": [{"name": "requests", "of": "value", "value": 1250}]}
+     and (.result.content[0].text | contains("read") | not)' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 7)')"
+expect "mcp legacy: calc notes how it read a leading minus before a power" \
+  '.result.structuredContent | .result == -4 and (has("read") | not) and (.notes | length) == 1
+     and (.notes[0] | startswith("\"-2^2\" at character 1 was read as -(2^2):") and contains("write (-2)^2."))' \
+  "$(print -r -- "$responses" | jq -c 'select(.id == 8)')"
 
 # MCP, modern era: stateless, version and capabilities in every request's _meta
 meta='"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}'
@@ -138,14 +143,46 @@ expect "cli: calc works out 1/3*3 exactly" '.result == 1 and (has("exact") | not
 expect "cli: calc reads tallies in a quoted expression" \
   '.result == 1.44 and (.tallies | map(.name)) == ["build-errors", "requests"]' \
   "$($abakus calc '{build-errors} / {requests} * 100')"
-expect "cli: calc takes a leading minus as part of the expression" '.result == -4 and .read == "-(2 ^ 2)"' \
+expect "cli: calc takes a leading minus as part of the expression, prints read and notes the reading" \
+  '.result == -4 and .read == "-(2 ^ 2)" and (.notes | length) == 1 and (.notes[0] | startswith("\"-2^2\" at"))' \
   "$($abakus calc -2^2)"
+expect "cli: calc writes no note where the parentheses settle the reading" \
+  '.result == 4 and (has("notes") | not)' "$($abakus calc '(-2)^2')"
 expect "cli: calc drops a leading -- terminator" '.result == 3 and .read == "1 + 2"' "$($abakus calc -- 1 + 2)"
 expect "cli: calc with an unknown tally fails with exit 1 and computes nothing" \
   '.status == 1 and .stdout == "" and (.stderr | test("no tally named \"nope\"") and test("Nothing was computed"))' \
   "$(outcome $abakus calc '{nope} + 1')"
 expect "cli: calc without an expression is a usage error, with calc's usage" \
   '.status == 64 and .stdout == "" and (.stderr | test("quoted") and test("Usage: abakus calc "))' "$(outcome $abakus calc)"
+
+# calc over 7 tallies, and calc's MCP result for it and for a 500-term chain. The command line prints read and every
+# tally; an MCP result has no read, at most 5 tallies, then tallies_total (ADR-0008). Budget for an MCP result: 400
+# characters, measured on exactly the text an MCP client gets (call --without-details), with jq -Rs length.
+for tally in files lines words pages tests; do $abakus tally create $tally --shared >/dev/null; done
+many='{requests} + {build-errors} + {files} + {lines} + {words} + {pages} + {tests}'
+many_json=$(jq -nc --arg expression "$many" '{expression: $expression}')
+expect "cli: calc prints read and all 7 tallies" \
+  '.result == 1268 and (.read | length) > 0 and (.tallies | length) == 7 and (has("tallies_total") | not)' \
+  "$($abakus calc "$many")"
+expect "cli: call calc prints read and all 7 tallies too" '(.tallies | length) == 7 and has("read")' \
+  "$($abakus call calc "$many_json")"
+mcp_many=$(print -r -- "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"calc\",\"arguments\":$many_json}}" \
+  | $abakus mcp 2>>$stderr_log | jq -r '.result.content[0].text')
+expect "mcp: calc lists the first 5 of 7 tallies, then tallies_total, and no read" \
+  '(.tallies | map(.name)) == ["requests", "build-errors", "files", "lines", "words"] and .tallies_total == 7
+     and (has("read") | not)' "$mcp_many"
+expect "cli: call calc --without-details prints the text of the MCP result above, character for character" \
+  '.cli == .mcp' "$(jq -n --arg cli "$($abakus call calc --without-details "$many_json")" --arg mcp "$mcp_many" \
+     '{cli: $cli, mcp: $mcp}')"
+expect "size: calc's MCP result for 7 tallies stays within 400 characters" '. <= 400' \
+  "$($abakus call calc --without-details "$many_json" | jq -Rs length)"
+chain=1
+repeat 499 chain+=+1
+chain_json=$(jq -nc --arg expression "$chain" '{expression: $expression}')
+expect "size: calc's MCP result for a chain of 500 terms (999 characters) stays within 400 characters" \
+  '.size <= 400 and .text == "{\"result\":500}"' \
+  "$(jq -n --arg text "$($abakus call calc --without-details "$chain_json")" \
+     --argjson size "$($abakus call calc --without-details "$chain_json" | jq -Rs length)" '{text: $text, size: $size}')"
 
 # CLI: sum from arguments (number strings, a negative number) and from stdin
 expect "cli: sum reads 410k and 1,234.5, and prints read" \
