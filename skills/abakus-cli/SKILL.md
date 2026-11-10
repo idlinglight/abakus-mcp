@@ -26,9 +26,13 @@ If that is missing too, abakus is not installed: use the MCP tools, or tell the 
   command can simply be run again:
 
   ```sh
+  set -o pipefail                           # so that an abakus error fails the pipeline, not only jq's output
   sed -nE 's/.*duration=([0-9.]+)ms.*/\1/p' run.log | abakus sum | jq -c 'del(.read)'
   # {"total":1653.5,"count":3,"mean":551.166666666667,"mean_exact":false}
   ```
+
+  This needs jq 1.7 or later (`jq --version`); see [Output and exit status](#output-and-exit-status) for an
+  older one.
 
 - **What an MCP result leaves out.** The command line also prints:
   - `read` of `sum` and of the tally tools: how each number string was read, as `{"input", "value"}` (with
@@ -63,16 +67,16 @@ description and input schema, the same text the MCP tool has. `abakus --version`
 abakus sum 410k 1,234.5 -3                  # numbers as arguments; negative numbers are fine
 abakus sum --decimal , 1.234,5 12,5         # numbers with a decimal comma
 printf '%s\n' 12.5 7 3 | abakus sum         # no arguments: the numbers come from stdin
+set -o pipefail
 tail -n +2 export.csv | cut -d';' -f3 | abakus sum --decimal , | jq -c 'del(.read)'   # skip the header line
 ```
 
 - Without arguments, `sum` reads stdin and splits it at whitespace and line breaks. Every word must be a number:
   a header (`amount`), a unit (`12ms`) or a currency sign is an error that names the word, such as `numbers[0]`.
 - With arguments, stdin is ignored.
-- A pipeline that finds nothing gives `{"total":0,"count":0,"mean":null}` with exit status 0. So does
-  `abakus sum` with neither arguments nor a pipe in an agent's shell, where stdin is usually empty. Compare
-  `count` with the number of values you expected.
-- In a terminal, `sum` says that it waits: type or paste the numbers, then press ctrl-D on an empty line.
+- A pipeline that finds nothing gives `{"total":0,"count":0,"mean":null}` with exit status 0: compare `count`
+  with the number of values you expected. Without arguments and without a pipe, `sum` reads the shell's stdin,
+  which may be empty or may wait forever: pipe the numbers in, or add `</dev/null`.
 - Every word is a string, so `read` lists each one.
 
 ### calc
@@ -86,8 +90,7 @@ abakus calc -2^2                            # -4: a leading minus belongs to the
 
 - Put the expression in single quotes. Braces, `*`, `^`, `(` and spaces mean something to the shell: unquoted,
   the shell may change the expression or refuse the command before abakus sees it.
-- A leading `-` is part of the expression, not an option. A leading `--` is dropped: `abakus calc -- -2^2` is
-  the same as `abakus calc -2^2`.
+- A leading `-` is part of the expression, not an option.
 - `read` shows the grouping: `abakus calc '2^3^2'` prints `"read":"2 ^ (3 ^ 2)"`.
 
 ### Tallies
@@ -112,7 +115,6 @@ abakus tallies info review                  # only tallies whose names start wit
 - `--decimal ,` works here too, for numbers written with a decimal comma.
 - `tally add` takes one amount. For many numbers, sum them first (`… | abakus sum`), check its `count`, then add
   the `total`.
-- `abakus tally list` is the old name of `abakus tallies info` and still works.
 
 ### date-diff
 
@@ -145,10 +147,12 @@ abakus call --without-details tallies_info '{"prefix": "review"}'
   exit status 1. It is the same text an MCP client gets.
 - A usage mistake (an unknown option, a missing argument): `Error: …` and the command's usage on stderr, exit
   status 64.
-- In a pipeline into `jq`, an error leaves jq without input and shows only on stderr. Check the exit status
-  (`set -o pipefail`), or run the command alone to read the message.
+- In a pipeline into `jq`, an error leaves jq without input and shows only on stderr. Use `set -o pipefail`, so
+  the pipeline fails, or run the command alone to read the message.
 - jq computes in binary floating point. Use it to select and shape, never to add or round: leave the arithmetic
-  to abakus. jq before 1.7 also rounds long numbers when it prints them.
+  to abakus. jq before 1.7 (`jq --version`) also rounds long numbers when it prints them, `total` included. With
+  such a jq, keep abakus's numbers out of it: `… | jq -Rnc '{numbers: [inputs]}' | abakus call --without-details sum -`
+  turns one number per line into JSON strings and prints the sum without `read`, as abakus wrote it.
 
 ## Notes and errors are written in MCP terms
 
@@ -173,10 +177,9 @@ line:
   `abakus call tally_set '{"name": "bytes-p2x7", "value": 26.234}'` or
   `abakus tally set bytes-p2x7 --value 26.234`.
 - `numbers[2]` is the third number, counted from 0: the third argument, or the third word on stdin.
-- `thresholds[1].at[0]`: thresholds are counted from 0 in a fixed order, whatever order the options came in:
-  `--limit`, `--limit-count`, `--at`, `--at-count`, `--every`, `--every-count`, counting only those given. With
-  `--every-count 5 --at 1,500 --limit 20`, `thresholds[1]` is the `--at` threshold and `at[0]` its first mark,
-  `1,500`.
+- `thresholds[1].at[0]`: the thresholds given count from 0 in this order, whatever order the options came in:
+  `--limit`, `--limit-count`, `--at`, `--at-count`, `--every`, `--every-count`. With
+  `--every-count 5 --at 1,500 --limit 20`, it is the first `--at` mark.
 - A note that says to replace the thresholds with tally_set, passing them again with `decimal: ","`, means: run
   `abakus tally set <name>` with all threshold options again, plus `--decimal ,`.
 
