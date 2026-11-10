@@ -66,6 +66,29 @@ import Testing
         #expect(call[path: ["content", 0, "text"]] == #"{"answer":3}"#)
     }
 
+    /// A tool's own `withoutDetails` is the one the server uses, although it holds the tool as `any Tool`: calc
+    /// shortens its `tallies` that way (ADR-0008, amendment).
+    @Test func resultsGoThroughTheToolsOwnWithoutDetails() throws {
+        struct ShorteningTool: Tool {
+            let name = "shortening"
+            let description = "Answers with a list, shortened over MCP."
+            let inputSchema: JSONValue = ["type": "object", "properties": [:]]
+            let annotations = ToolAnnotations(readOnly: true, destructive: false, idempotent: true)
+
+            func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
+                ["answer": 3, "each": [1, 2, 3]]
+            }
+
+            func withoutDetails(_ result: JSONObject) -> JSONObject {
+                ["answer": result["answer"] ?? .null, "each": [1], "each_total": 3]
+            }
+        }
+        var server = MCPServer(tools: [ShorteningTool()], context: testContext())
+        let call = try result(&server, request(1, "tools/call", ["name": "shortening"]))
+        #expect(call["structuredContent"] == ["answer": 3, "each": [1], "each_total": 3])
+        #expect(call[path: ["content", 0, "text"]] == #"{"answer":3,"each":[1],"each_total":3}"#)
+    }
+
     @Test func toolListShapeFollowsTheNegotiatedRevision() throws {
         var newest = makeServer()
         _ = try result(&newest, initializeRequest(version: "2025-11-25"))

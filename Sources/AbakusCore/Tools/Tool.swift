@@ -12,13 +12,18 @@ public protocol Tool: Sendable {
     var inputSchema: JSONValue { get }
     var annotations: ToolAnnotations { get }
     /// Keys of the result that grow with the input, such as how each string was read. The command line prints
-    /// them; an MCP result leaves them out, so that its size does not depend on how much input there was
-    /// (ADR-0008). Most tools have none.
+    /// them; an MCP result leaves them out (`withoutDetails`), so that its size does not depend on how much input
+    /// there was (ADR-0008). Most tools have none.
     var detailKeys: [String] { get }
     /// Runs the tool. The result is always a JSON object, with the detail keys included. Anything the caller
     /// should fix (unknown name, unreadable number, ...) is a `ToolError`, which reaches the agent as a failed tool
     /// call it can read.
     func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject
+    /// A result as an MCP client gets it (ADR-0008). The default leaves out the detail keys; a tool may also
+    /// shorten a list to a fixed number of entries plus a count, as calc does with `tallies`. A requirement, not
+    /// only an extension method, so that the server and `abakus call --without-details`, which hold `any Tool`,
+    /// get the tool's own version.
+    func withoutDetails(_ result: JSONObject) -> JSONObject
 }
 
 extension Tool {
