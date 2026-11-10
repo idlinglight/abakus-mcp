@@ -384,11 +384,12 @@ expect "cli: --help lists the commands" '.status == 0 and (.stdout | test("SUBCO
 expect "cli: a command's --help shows its usage" '.status == 0 and (.stdout | test("USAGE: abakus sum "))' \
   "$(outcome $abakus sum --help)"
 
-# The abakus skill (skills/abakus/SKILL.md) against this binary, so that the two cannot drift apart.
-# help_for maps each command the help lists, one level of groups deep, to its --help text: "abakus", "abakus sum",
-# "abakus tally create". In ArgumentParser's help, a command is a line under SUBCOMMANDS: that starts with two
-# spaces and a name; a hidden command is not listed, so not in the map.
-skill_file=${0:A:h:h}/skills/abakus/SKILL.md
+# The abakus skill (skills/abakus/: SKILL.md and the topic files it links) against this binary, so that the two
+# cannot drift apart. help_for maps each command the help lists, one level of groups deep, to its --help text:
+# "abakus", "abakus sum", "abakus tally create". In ArgumentParser's help, a command is a line under SUBCOMMANDS:
+# that starts with two spaces and a name; a hidden command is not listed, so not in the map.
+skill_folder=${0:A:h:h}/skills/abakus
+skill_files=($skill_folder/*.md(N))
 typeset -A help_for
 subcommands() { print -r -- $1 | awk '/^SUBCOMMANDS:/ { s = 1; next } s && /^  [a-z]/ { print $1 }' }
 is_group() { [[ ${help_for[$1]-} == *SUBCOMMANDS:* ]] }
@@ -401,60 +402,91 @@ for top in $(subcommands ${help_for[abakus]}); do
     help_for[$key]=$($abakus $top $sub --help)
   done
 done
-# Only the skill's code is read, fenced blocks and `inline code`, split into words as the shell would. A command is
-# "abakus" and each next word that names a command of the group before it. Its options are the words that start
-# with -- up to the end of the command: |, ||, ;, &&, &, ) or a # comment. So `jq --raw-output` is no option of
-# abakus, and an option written on its own in the text is not checked.
-skill_code=$(awk '/^[[:space:]]*```/ { fence = !fence; next }
-  fence { print; next }
-  { while (match($0, /`[^`]+`/)) { print substr($0, RSTART + 1, RLENGTH - 2); $0 = substr($0, RSTART + RLENGTH) } }' \
-  $skill_file)
+# Only the skill's code is read, fenced blocks and `inline code` of every file, split into words as the shell would.
+# A command is "abakus" and each next word that names a command of the group before it. Its options are the words
+# that start with -- up to the end of the command: |, ||, ;, &&, &, ) or a # comment. So `jq --raw-output` is no
+# option of abakus, and an option written on its own in the text is not checked. A finding names its file.
 skill_commands=() unknown=() misplaced=() option_count=0
-for line in ${(f)skill_code}; do
-  words=(${(z)line})
-  for (( i = 1; i <= $#words; i++ )); do
-    [[ ${words[i]} == '#'* ]] && break  # a comment ends the line
-    [[ ${words[i]} == abakus ]] || continue
-    command=abakus j=$(( i + 1 ))
-    while is_group $command && [[ ${words[j]-} == [a-z]* ]]; do
-      command+=" ${words[j]}"
-      j=$(( j + 1 ))
-    done
-    if (( ! ${+help_for[$command]} )); then
-      unknown+=$command
-      continue
-    fi
-    [[ $command == abakus ]] || skill_commands+=$command
-    for (( ; j <= $#words; j++ )); do
-      case ${words[j]} in
-        ('|'|'||'|';'|'&&'|'&'|')'|'#'*) break ;;
-        (--[a-z]*)
-          option_count=$(( option_count + 1 ))
-          [[ $'\n'${help_for[$command]}$'\n' == *[^a-z-]${words[j]}[^a-z-]* ]] || misplaced+="$command ${words[j]}" ;;
-      esac
+for file in $skill_files; do
+  skill_code=$(awk '/^[[:space:]]*```/ { fence = !fence; next }
+    fence { print; next }
+    { while (match($0, /`[^`]+`/)) { print substr($0, RSTART + 1, RLENGTH - 2); $0 = substr($0, RSTART + RLENGTH) } }' \
+    $file)
+  for line in ${(f)skill_code}; do
+    words=(${(z)line})
+    for (( i = 1; i <= $#words; i++ )); do
+      [[ ${words[i]} == '#'* ]] && break  # a comment ends the line
+      [[ ${words[i]} == abakus ]] || continue
+      command=abakus j=$(( i + 1 ))
+      while is_group $command && [[ ${words[j]-} == [a-z]* ]]; do
+        command+=" ${words[j]}"
+        j=$(( j + 1 ))
+      done
+      if (( ! ${+help_for[$command]} )); then
+        unknown+="${file:t}: $command"
+        continue
+      fi
+      [[ $command == abakus ]] || skill_commands+=$command
+      for (( ; j <= $#words; j++ )); do
+        case ${words[j]} in
+          ('|'|'||'|';'|'&&'|'&'|')'|'#'*) break ;;
+          (--[a-z]*)
+            option_count=$(( option_count + 1 ))
+            [[ $'\n'${help_for[$command]}$'\n' == *[^a-z-]${words[j]}[^a-z-]* ]] ||
+              misplaced+="${file:t}: $command ${words[j]}" ;;
+        esac
+      done
     done
   done
 done
 skill_commands=(${(u)skill_commands})
-expect "skill: every command it names is one the help lists (no hidden old name)" '.found > 5 and .unknown == []' \
-  "$(jq -nc --argjson found $#skill_commands '{found: $found, unknown: $ARGS.positional}' --args -- ${(u)unknown})"
+expect "skill: every command its files name is one the help lists (no hidden old name)" \
+  '.files >= 3 and .found > 5 and .unknown == []' \
+  "$(jq -nc --argjson files $#skill_files --argjson found $#skill_commands \
+     '{files: $files, found: $found, unknown: $ARGS.positional}' --args -- ${(u)unknown})"
 unnamed=()
 for command in ${(ok)help_for}; do
   is_group $command || (( ${skill_commands[(Ie)$command]} )) || unnamed+=$command
 done
-expect "skill: names every command the help lists" '. == []' "$(jq -nc '$ARGS.positional' --args -- $unnamed)"
-expect "skill: each option it names is in the help of the command it is written with" \
+expect "skill: its files together name every command the help lists" '. == []' \
+  "$(jq -nc '$ARGS.positional' --args -- $unnamed)"
+expect "skill: each option its files name is in the help of the command it is written with" \
   '.found > 10 and .misplaced == []' \
   "$(jq -nc --argjson found $option_count '{found: $found, misplaced: $ARGS.positional}' --args -- ${(u)misplaced})"
-# The skill's table of MCP terms: each tool name in it (snake_case in backticks, such as `tally_create`) is a tool.
+# The skill's tables of MCP terms: each tool name in them (snake_case in backticks, such as `tally_create`) is a tool.
 tool_names=(${(f)"$($abakus tools | awk '{ print $1 }')"})
-table_tools=(${(u)${(f)"$(grep '^|' $skill_file | grep -oE '`[a-z]+(_[a-z]+)+`' | tr -d '`')"}})
+table_tools=(${(u)${(f)"$(grep -h '^|' $skill_files | grep -oE '`[a-z]+(_[a-z]+)+`' | tr -d '`')"}})
 not_tools=()
 for name in $table_tools; do
   (( ${tool_names[(Ie)$name]} )) || not_tools+=$name
 done
-expect "skill: each tool name in its table of MCP terms is a tool" '.found >= 5 and .unknown == []' \
+expect "skill: each tool name in its tables of MCP terms is a tool" '.found >= 5 and .unknown == []' \
   "$(jq -nc --argjson found $#table_tools '{found: $found, unknown: $ARGS.positional}' --args -- $not_tools)"
+# Claude Code loads SKILL.md when the skill triggers, and another file of the folder only when SKILL.md sends the
+# agent there: every file it links (a Markdown link, not a web address or an #anchor) exists, and it links every
+# topic file.
+skill_links=(${(u)${(f)"$(grep -oE '\]\([^)#]+' $skill_folder/SKILL.md | cut -c 3- | grep -v '://')"}})
+missing=() unlinked=()
+for link in $skill_links; do
+  [[ -f $skill_folder/$link ]] || missing+=$link
+done
+for file in $skill_files; do
+  [[ ${file:t} == SKILL.md ]] || (( ${skill_links[(Ie)${file:t}]} )) || unlinked+=${file:t}
+done
+expect "skill: every file SKILL.md links exists, and it links every topic file" \
+  '.links >= 2 and .missing == [] and .unlinked == []' \
+  "$(jq -nc --argjson links $#skill_links --argjson missing "$(jq -nc '$ARGS.positional' --args -- $missing)" \
+     --argjson unlinked "$(jq -nc '$ARGS.positional' --args -- $unlinked)" \
+     '{links: $links, missing: $missing, unlinked: $unlinked}')"
+# Claude Code knows the skill by the name in SKILL.md's frontmatter, and decides from its description, at most 1024
+# characters, when to load it.
+frontmatter=$(awk 'NR == 1 && /^---$/ { f = 1; next } f && /^---$/ { exit } f { print }' $skill_folder/SKILL.md)
+skill_name=$(print -r -- $frontmatter | sed -n 's/^name: //p')
+description=$(print -r -- $frontmatter |
+  awk '/^description:/ { d = 1; next } d && /^  / { sub(/^  /, ""); printf "%s%s", s, $0; s = " " }')
+expect "skill: SKILL.md's frontmatter names the folder, with a description of at most 1024 characters" \
+  '.name == "abakus" and (.description | length) > 100 and (.description | length) <= 1024' \
+  "$(jq -nc --arg name "$skill_name" --arg description "$description" '{name: $name, description: $description}')"
 
 # install.zsh refuses an unknown argument, and a relative CLAUDE_CONFIG_DIR with --skill, before it builds or
 # installs anything. PATH and HOME point to nothing useful, so that even a broken check could neither build (swift
