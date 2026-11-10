@@ -37,6 +37,8 @@ If that is missing too, abakus is not installed: use the MCP tools, or tell the 
 - **What an MCP result leaves out.** The command line also prints:
   - `read` of `sum` and of the tally tools: how each number string was read, as `{"input", "value"}` (with
     `"index"` for `sum`).
+  - Every mark of an `at` threshold, under `marks`, in the tally commands and `abakus tallies info`; an MCP result
+    shows `marks_total`, `passed` and the next 5 under `ahead`.
   - `read` of `calc`: the expression as calc understood it, with parentheses that show the grouping; and every
     tally the expression used, where an MCP result lists the first 5 and then `tallies_total`. This is for a
     successful result: a calc error is the same text on both sides and lists at most 5 tallies.
