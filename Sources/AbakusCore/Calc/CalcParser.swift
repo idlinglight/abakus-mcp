@@ -751,7 +751,7 @@ struct CalcParser {
         if name.isEmpty {
             throw ToolError(
                 "The tally reference {\(content)} \(at(position)) has no name: write the tally's full name in braces, "
-                    + "as tally_create or tally_list returned it, like {errors-k3f9}."
+                    + "as tally_create returned it, like {errors-k3f9}."
             )
         }
         let lowercased = name.lowercased()
@@ -776,7 +776,7 @@ struct CalcParser {
             }
             throw ToolError(
                 "\(name.quotedForMessage) \(at(position)) is not a tally name: \(TallyName.rule). Write the full name in "
-                    + "braces, as tally_create or tally_list returned it, like {errors-k3f9}."
+                    + "braces, as tally_create returned it, like {errors-k3f9}."
             )
         }
         return (name, field)

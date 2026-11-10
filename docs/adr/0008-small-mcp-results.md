@@ -1,7 +1,7 @@
 # ADR-0008: MCP results stay small; the command line shows everything
 
 Status: accepted, 2026-11-09; amended 2026-11-10 (`abakus call --without-details`; the tools that work on one
-tally within the rule, see Scope)
+tally within the rule; `tallies_info`, formerly `tally_list`, within the rule; see Scope)
 
 ## Context
 
@@ -137,13 +137,15 @@ the practical check; the growth rule says what does not belong in a result at al
   marks per threshold, then a count; `tally_create` and `tally_set` take at most 5 thresholds; `read` is a detail,
   with the decimal note of `sum` in its place. The exception also said that an error for an unknown name lists whole
   tallies in `details.matching`: it lists only each one's name, value, count and created time, and always did.
+- `tallies_info` is within the rule since abakus 0.5.1 (amended 2026-11-10). Until then it was `tally_list`, a
+  known exception that grew with the number of tallies, other sessions' included. Over MCP it now returns the
+  folder and how many tallies there are; `tallies` and `unreadable`, which grow with the number of tallies, are its
+  details. The files did not become an interface for agents ([ADR-0004](0004-tallies.md) and
+  [ADR-0003](0003-state-in-user-temp-folder.md), amendments of 2026-11-10).
 - Known exceptions, each to be brought within the rule when it is next changed:
   - `calc`: `read` grows with the expression and `tallies` with the tallies it names. ADR-0007's reasoning about
     `-2^2` relies on `read` being visible; the replacement would be notes for the known traps, and `tallies` could
     become a list of a fixed length plus a count.
-  - `tally_list` grows with the number of tallies, other sessions' included, which the caller does not control.
-    A direction: the folder and what is in it, plus a count. The files would become an interface that agents read,
-    and the description would have to say that tallies change only through the tally tools, which hold the lock.
 - A skill for the command line, user-level and installed on request, with its source in this repository: open.
 
 ## Consequences

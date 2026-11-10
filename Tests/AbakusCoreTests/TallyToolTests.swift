@@ -42,7 +42,7 @@ import Testing
         #expect(first != second)
         try state.call("tally_add", ["name": .string(first), "amount": 3])
         #expect(try state.call("tally_add", ["name": .string(second)])["value"] == 1)
-        #expect(TallyTest.names(try state.call("tally_list"), in: "tallies") == [first, second].sorted())
+        #expect(TallyTest.names(try state.call("tallies_info"), in: "tallies") == [first, second].sorted())
     }
 
     @Test func aSharedTallyDoesNotBlockSuffixedOnes() throws {
@@ -52,7 +52,7 @@ import Testing
         let own = try #require(response["name"]?.stringValue)
         #expect(own.hasPrefix("items-"))
         #expect(response["note"]?.stringValue?.hasPrefix("A tally named \"items\" already exists") == true)
-        #expect(TallyTest.names(try state.call("tally_list"), in: "tallies") == ["items", own])
+        #expect(TallyTest.names(try state.call("tallies_info"), in: "tallies") == ["items", own])
     }
 
     @Test func nameLengthsLeaveRoomForTheSuffixUnlessShared() throws {
@@ -93,7 +93,7 @@ import Testing
         let existing = try #require(error.details?["existing"]?.objectValue)
         #expect(existing["name"] == "items")
         #expect(existing["value"] == 3)
-        #expect(try state.call("tally_list")["tallies"]?.arrayValue?.count == 1)  // nothing new
+        #expect(try state.call("tallies_info")["tallies"]?.arrayValue?.count == 1)  // nothing new
     }
 
     @Test func uniqueIsGoneAndTheErrorSaysWhatToDoInstead() throws {
@@ -137,7 +137,7 @@ import Testing
             "\(second)". If you meant to continue "\(first)", add to it with tally_add and drop this new one with \
             tally_drop.
             """))
-        #expect(TallyTest.names(try state.call("tally_list"), in: "tallies") == [first, second])
+        #expect(TallyTest.names(try state.call("tallies_info"), in: "tallies") == [first, second])
         // No note when nothing has exactly the given name, even if suffixed tallies of it exist.
         #expect(try state.call("tally_create", ["name": "items"])["note"] == nil)
     }
@@ -333,7 +333,7 @@ import Testing
         try state.call("tally_create", ["name": "items", "shared": true])
         let typo = try #require(state.failure("tally_add", ["name": "items", "amout": 5]))
         #expect(typo.message == "Unknown argument \"amout\". tally_add takes \"name\" (required), \"amount\" and \"decimal\".")
-        #expect(state.failure("tally_list", ["prefx": "a"])?.message == "Unknown argument \"prefx\". tally_list takes \"prefix\".")
+        #expect(state.failure("tallies_info", ["prefx": "a"])?.message == "Unknown argument \"prefx\". tallies_info takes \"prefix\".")
         let mark = try #require(state.failure("tally_add", ["name": "items", "amount": "1", "decimal": ";"]))
         #expect(mark.message.contains("decimal must be"))
         let unreadable = try #require(state.failure("tally_add", ["name": "items", "amount": "lots"]))
@@ -343,7 +343,7 @@ import Testing
         let tooPrecise = try #require(state.failure("tally_add", ["name": "items", "amount": "1234567890123456789012345678901234567891"]))
         #expect(tooPrecise.message.hasPrefix("amount: Cannot read"))
         #expect(tooPrecise.message.contains("significant digits"))
-        #expect(try state.call("tally_list")["tallies"]?.arrayValue?.first?.objectValue?["count"] == 0)  // all refused
+        #expect(try state.call("tallies_info")["tallies"]?.arrayValue?.first?.objectValue?["count"] == 0)  // all refused
         #expect(try state.call("tally_add", ["name": "items", "amount": 1, "decimal": ","])["value"] == 1)
         #expect(try state.call("tally_add", ["name": "items", "amount": nil])["value"] == 2)  // null counts as absent
     }
@@ -419,7 +419,7 @@ import Testing
         let error = try #require(state.failure("tally_add", ["name": "huge", "amount": .number(large)]))
         #expect(error.message.contains("too large"))
         #expect(error.message.contains("unchanged"))
-        #expect(try state.call("tally_list")["tallies"]?.arrayValue?.first?.objectValue?["count"] == 0)
+        #expect(try state.call("tallies_info")["tallies"]?.arrayValue?.first?.objectValue?["count"] == 0)
     }
 }
 
@@ -592,26 +592,34 @@ import Testing
     }
 }
 
-@Suite struct TallyListTests {
-    @Test func listsSortedWithFullStateAndTheFolder() throws {
+@Suite struct TalliesInfoTests {
+    private let tool = TalliesInfo()
+
+    @Test func countsAndListsSortedWithFullStateAndTheFolder() throws {
         let state = TallyTestState()
         for name in ["b", "a-2", "a"] {
             try state.call("tally_create", ["name": .string(name), "shared": true, "thresholds": [["limit": 3]]])
         }
-        let response = try state.call("tally_list")
-        #expect(response.keys == ["folder", "tallies"])
+        let response = try state.call("tallies_info")
+        #expect(response.keys == ["folder", "tallies_found", "tallies"])
         #expect(response["folder"] == .string(state.tallies.path))
+        #expect(response["tallies_found"] == 3)
         #expect(TallyTest.names(response, in: "tallies") == ["a", "a-2", "b"])
         let first = try #require(response["tallies"]?.arrayValue?.first?.objectValue)
         #expect(first["thresholds"] == [["limit": 3, "of": "value", "reached": false, "remaining": 3]])
 
-        #expect(TallyTest.names(try state.call("tally_list", ["prefix": "a"]), in: "tallies") == ["a", "a-2"])
-        #expect(TallyTest.names(try state.call("tally_list", ["prefix": "zz"]), in: "tallies") == [])
+        let prefixed = try state.call("tallies_info", ["prefix": "a"])
+        #expect(prefixed["tallies_found"] == 2)
+        #expect(TallyTest.names(prefixed, in: "tallies") == ["a", "a-2"])
+        let none = try state.call("tallies_info", ["prefix": "zz"])
+        #expect(none["tallies_found"] == 0)
+        #expect(none["tallies"] == [])
     }
 
     @Test func emptyWithoutCreatingTheFolder() throws {
         let state = TallyTestState()
-        #expect(try state.call("tally_list")["tallies"] == [])
+        let response = try state.call("tallies_info")
+        #expect(response == ["folder": .string(state.tallies.path), "tallies_found": 0, "tallies": []])
         #expect(!FileManager.default.fileExists(atPath: state.url.path))
     }
 
@@ -621,9 +629,82 @@ import Testing
         try state.plant("broken.json", "{ not json")
         try state.plant("Notes.json", "{}")  // not a tally name
         try state.plant("readme.txt", "hello")
-        let response = try state.call("tally_list")
+        let response = try state.call("tallies_info")
+        #expect(response.keys == ["folder", "tallies_found", "unreadable_found", "tallies", "unreadable"])
+        #expect(response["tallies_found"] == 1)
+        #expect(response["unreadable_found"] == 1)
         #expect(TallyTest.names(response, in: "tallies") == ["good"])
         #expect(TallyTest.names(response, in: "unreadable") == ["broken"])
+        let problem = response["unreadable"]?.arrayValue?.first?.objectValue?["problem"]?.stringValue
+        #expect(problem?.contains("not a tally file") == true)
+    }
+
+    /// The lists grow with the number of tallies, other sessions' included, so they are details: over MCP the
+    /// result is the folder and the counts (ADR-0008).
+    @Test func overMCPOnlyTheFolderAndTheCounts() throws {
+        #expect(tool.detailKeys == ["tallies", "unreadable"])
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "items", "thresholds": [["at": [1, 2, 3]]]])
+        #expect(tool.withoutDetails(try state.call("tallies_info")) == ["folder": .string(state.tallies.path), "tallies_found": 1])
+
+        try state.plant("broken.json", "{ not json")
+        let withUnreadable = tool.withoutDetails(try state.call("tallies_info"))
+        #expect(withUnreadable.keys == ["folder", "tallies_found", "unreadable_found"])
+        #expect(withUnreadable["unreadable_found"] == 1)
+    }
+
+    /// 40 times as many tallies, each with more thresholds and marks, add one digit to the MCP result and nothing
+    /// else.
+    @Test func theMCPResultGrowsOnlyByTheDigitsOfTheCount() throws {
+        let state = TallyTestState()
+        func written() throws -> String { JSONWriter.write(tool.withoutDetails(try state.call("tallies_info"))) }
+        try state.call("tally_create", ["name": "items"])
+        let one = try written()
+        let marks: [JSONValue] = (1...20).map { .number(String($0)) }
+        for _ in 1..<40 {
+            try state.call("tally_create", ["name": "items", "thresholds": [["limit": 20], ["at": .array(marks)], ["every": 5, "of": "count"]]])
+        }
+        let forty = try written()
+        #expect(forty.count == one.count + 1)
+        #expect(forty.count <= state.tallies.path.count + 40)
+    }
+
+    /// What the description promises for a lost name: calc with the name without its suffix shows the tallies named
+    /// with it plus a suffix, and writes nothing. A partial name finds none, and unreadable_found follows the prefix.
+    @Test func calcLooksUpALostNameWithoutWriting() throws {
+        let state = TallyTestState()
+        let name = try #require(try state.call("tally_create", ["name": "items"])["name"]?.stringValue)
+        try state.plant("broken.json", "{ not json")
+        let before = try Data(contentsOf: state.file(name))
+        let calc = try #require(Catalog.tool(named: "calc"))
+        func lookup(_ expression: String) throws -> ToolError {
+            try #require(throws: ToolError.self) { try calc.call(["expression": .string(expression)], in: state.context) }
+        }
+        #expect(TallyTest.names(try lookup("{items}").details ?? [:], in: "matching") == [name])
+        #expect(try lookup("{item}").details?["matching"] == nil)
+        #expect(try Data(contentsOf: state.file(name)) == before)
+
+        #expect(tool.withoutDetails(try state.call("tallies_info", ["prefix": "items"])) == ["folder": .string(state.tallies.path), "tallies_found": 1])
+        #expect(tool.withoutDetails(try state.call("tallies_info", ["prefix": "b"])) == ["folder": .string(state.tallies.path), "tallies_found": 0, "unreadable_found": 1])
+    }
+
+    /// The description says what an MCP result holds and that the command line lists the tallies, and keeps the
+    /// files internal: it tells nothing about their format, and says tallies change only through the tally tools.
+    @Test func theDescriptionKeepsTheFilesInternal() {
+        let text = tool.description
+        #expect(text.contains("returns folder and tallies_found"))
+        #expect(text.contains("unreadable_found"))
+        #expect(text.contains("With prefix, both count only tallies whose names start with it."))
+        #expect(text.contains("It lists no names or states"))
+        // A lookup by a guessed name goes through calc, which never writes: tally_add or tally_drop would change or
+        // delete a shared tally of exactly that name.
+        #expect(text.contains("call calc with {items}: calc never writes"))
+        #expect(!text.contains("tally_add") && !text.contains("tally_drop") && !text.contains("tally_set"))
+        #expect(text.contains("abakus tallies info"))
+        #expect(text.contains("Tallies change only through the tally tools, which hold the lock on the folder, never by changing files in it."))
+        for word in [".json", "JSON file", "format", " ls ", " cat ", "jq", "grep"] {
+            #expect(!text.contains(word), "\(word)")
+        }
     }
 }
 
@@ -670,7 +751,7 @@ import Testing
     @Test func listShowsTheTallyWithANoteNotAsUnreadable() throws {
         let state = TallyTestState()
         try plant(state)
-        let response = try state.call("tally_list")
+        let response = try state.call("tallies_info")
         #expect(response["unreadable"] == nil)
         let tally = try #require(response["tallies"]?.arrayValue?.first?.objectValue)
         #expect(tally["name"] == "odd")
@@ -685,7 +766,7 @@ import Testing
         #expect(response["count"] == 1)
         #expect(problem(response, in: "crossed")?.contains("crossed one of its marks cannot be computed") == true)
         #expect(problem(response, in: "thresholds") != nil)
-        #expect(try state.call("tally_list")["tallies"]?.arrayValue?.first?.objectValue?["count"] == 1)  // saved
+        #expect(try state.call("tallies_info")["tallies"]?.arrayValue?.first?.objectValue?["count"] == 1)  // saved
     }
 
     @Test func dropStillDeletesAndReturnsTheState() throws {
@@ -798,20 +879,20 @@ import Testing
         let error = try #require(state.failure("tally_add", ["name": "checks"]))
         #expect(error.message.contains("cannot be read"))
         #expect(error.message.contains("whole numbers"))
-        #expect(TallyTest.names(try state.call("tally_list"), in: "unreadable") == ["checks"])
+        #expect(TallyTest.names(try state.call("tallies_info"), in: "unreadable") == ["checks"])
         #expect(try state.call("tally_drop", ["name": "checks"])["unreadable"] != nil)
     }
 }
 
 @Suite struct TallyToolDefinitionTests {
     @Test func theFiveToolsInOrder() {
-        #expect(TallyTools.all.map(\.name) == ["tally_create", "tally_add", "tally_set", "tally_list", "tally_drop"])
+        #expect(TallyTools.all.map(\.name) == ["tally_create", "tally_add", "tally_set", "tallies_info", "tally_drop"])
         #expect(Catalog.tools.prefix(5).map(\.name) == TallyTools.all.map(\.name))
     }
 
     @Test func annotationsAreDeliberate() {
         let byName = Dictionary(uniqueKeysWithValues: TallyTools.all.map { ($0.name, $0.annotations) })
-        #expect(byName["tally_list"] == ToolAnnotations(title: "List tallies", readOnly: true, destructive: false, idempotent: true))
+        #expect(byName["tallies_info"] == ToolAnnotations(title: "Count tallies", readOnly: true, destructive: false, idempotent: true))
         #expect(byName["tally_drop"]?.destructive == true)
         #expect(byName["tally_set"]?.destructive == true)
         #expect(byName["tally_add"]?.readOnly == false)
@@ -827,7 +908,7 @@ import Testing
             #expect(schema["type"] == "object", "\(tool.name)")
             #expect(schema["additionalProperties"] == false, "\(tool.name)")
             let properties = try #require(schema["properties"]?.objectValue)
-            if tool.name == "tally_list" {
+            if tool.name == "tallies_info" {
                 #expect(schema["required"] == nil)
             } else {
                 #expect(schema["required"] == ["name"], "\(tool.name)")

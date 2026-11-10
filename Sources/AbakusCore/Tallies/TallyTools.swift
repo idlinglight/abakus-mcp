@@ -1,8 +1,8 @@
 import Foundation
 
-/// Tally tools (ADR-0004): tally_create, tally_add, tally_set, tally_list, tally_drop.
+/// Tally tools (ADR-0004): tally_create, tally_add, tally_set, tallies_info, tally_drop.
 public enum TallyTools {
-    public static let all: [any Tool] = [TallyCreate(), TallyAdd(), TallySet(), TallyList(), TallyDrop()]
+    public static let all: [any Tool] = [TallyCreate(), TallyAdd(), TallySet(), TalliesInfo(), TallyDrop()]
 
     /// How many thresholds tally_create and tally_set take, for the command line's help.
     public static let maximumThresholds = Threshold.maximumPerTally
@@ -227,15 +227,28 @@ struct TallySet: Tool {
     }
 }
 
-// MARK: - tally_list
+// MARK: - tallies_info
 
-struct TallyList: Tool {
-    let name = "tally_list"
+/// Over MCP, the folder and how many tallies there are; the command line also prints every tally with its state.
+/// The lists grow with the number of tallies, other sessions' included, so they are details (ADR-0008). The files
+/// are no interface for agents: the description does not document them (ADR-0003, ADR-0004).
+struct TalliesInfo: Tool {
+    let name = "tallies_info"
+
+    let detailKeys = ["tallies", "unreadable"]
 
     let description = """
-        List tallies sorted by name, each with its full state; with prefix, only names starting with it. Also \
-        returns the folder they are kept in. Use it to see what exists or to find a name you lost, such as the \
-        suffix tally_create gave it.
+        Count tallies and get the folder they are kept in: returns folder and tallies_found, the number of \
+        tallies, plus unreadable_found, the number of tallies whose file cannot be read, when there are any. With \
+        prefix, both count only tallies whose names start with it. It lists no names or states, so the result \
+        stays small however many tallies other sessions keep. To look up a name you lost, such as items-k3f9 when \
+        you remember items, call calc with {items}: calc never writes, and its error for an unknown name shows the \
+        tallies named items plus a suffix (up to 20), with when each was created. If a tally is named exactly \
+        items, calc returns its value instead, and it may be another session's. calc also reads one tally's value \
+        or count: {name} or {name:count}. The abakus command line (abakus tallies info, the same program as this \
+        server) prints the same JSON plus every tally with its full state (tallies) and each unreadable one with \
+        what is wrong (unreadable). Tallies change only through the tally tools, which hold the lock on the \
+        folder, never by changing files in it.
         """
 
     let inputSchema: JSONValue = [
@@ -243,13 +256,14 @@ struct TallyList: Tool {
         "properties": [
             "prefix": [
                 "type": "string",
-                "description": "Only tallies whose names start with this, e.g. \"items\" for items-k3f9.",
+                "description": "Count only tallies whose names start with this, e.g. \"items\" for items-k3f9.",
             ],
         ],
         "additionalProperties": false,
     ]
 
-    let annotations = ToolAnnotations(title: "List tallies", readOnly: true, destructive: false, idempotent: true)
+    // Over MCP it counts; the command line, which lists, has its own help text.
+    let annotations = ToolAnnotations(title: "Count tallies", readOnly: true, destructive: false, idempotent: true)
 
     func call(_ arguments: JSONObject, in context: ToolContext) throws(ToolError) -> JSONObject {
         let args = try TallyArguments(arguments, for: self)
@@ -278,7 +292,12 @@ struct TallyList: Tool {
                     break
                 }
             }
-            var response: JSONObject = ["folder": .string(store.folder.url.path), "tallies": .array(tallies)]
+            // The counts first, then the lists: without the details, what remains is the start of the full result.
+            var response: JSONObject = [
+                "folder": .string(store.folder.url.path), "tallies_found": .number(String(tallies.count)),
+            ]
+            if !unreadable.isEmpty { response["unreadable_found"] = .number(String(unreadable.count)) }
+            response["tallies"] = .array(tallies)
             if !unreadable.isEmpty { response["unreadable"] = .array(unreadable) }
             return response
         }

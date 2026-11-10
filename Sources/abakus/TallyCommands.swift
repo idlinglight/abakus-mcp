@@ -9,7 +9,7 @@ struct TallyCommand: ParsableCommand {
             Tallies live in the per-user temporary folder (or ABAKUS_STATE_DIR), one folder for all sessions of the \
             user, and disappear after about three days untouched. `tally create` appends a random suffix to the \
             name unless --shared is given. Names: lowercase letters, digits, '.', '_' and '-', at most 64 \
-            characters including the suffix.
+            characters including the suffix. `abakus tallies info` shows them all.
             """,
         subcommands: [Create.self, Add.self, Set.self, List.self, Drop.self]
     )
@@ -106,17 +106,17 @@ struct TallyCommand: ParsableCommand {
         }
     }
 
+    /// The command's name before 0.5.1, when the tool was tally_list (now tallies_info). Kept so that scripts keep
+    /// working, and left out of the help, which shows `abakus tallies info`.
     struct List: ParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Show tallies with their state (tally_list).")
+        static let configuration = CommandConfiguration(
+            abstract: "The old name of `abakus tallies info`.", shouldDisplay: false
+        )
 
-        @Argument(help: "Show only tallies whose name starts with this.") var prefix: String?
+        @OptionGroup var prefix: TallyPrefix
 
         func run() throws {
-            var arguments = JSONObject()
-            if let prefix {
-                arguments["prefix"] = .string(prefix)
-            }
-            try ToolRunner.run("tally_list", arguments)
+            try ToolRunner.run("tallies_info", prefix.arguments)
         }
     }
 
@@ -128,6 +128,41 @@ struct TallyCommand: ParsableCommand {
         func run() throws {
             try ToolRunner.run("tally_drop", ["name": .string(name)])
         }
+    }
+}
+
+/// `abakus tallies info`, the tool about all tallies at once (tallies_info). A group of its own, so that the command
+/// keeps the tool's name: tally_create is `abakus tally create`, tallies_info is `abakus tallies info`.
+struct TalliesCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "tallies",
+        abstract: "All tallies at once: where they are kept, how many there are, and each one's state.",
+        subcommands: [Info.self]
+    )
+
+    struct Info: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Print the folder, the counts and every tally with its state (tallies_info)."
+        )
+
+        @OptionGroup var prefix: TallyPrefix
+
+        func run() throws {
+            try ToolRunner.run("tallies_info", prefix.arguments)
+        }
+    }
+}
+
+/// The optional name prefix of `abakus tallies info` and of its old name, `abakus tally list`.
+struct TallyPrefix: ParsableArguments {
+    @Argument(help: "Only tallies whose name starts with this.") var prefix: String?
+
+    var arguments: JSONObject {
+        var arguments = JSONObject()
+        if let prefix {
+            arguments["prefix"] = .string(prefix)
+        }
+        return arguments
     }
 }
 
