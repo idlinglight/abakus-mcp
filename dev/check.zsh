@@ -38,7 +38,7 @@ outcome() {
 }
 
 # MCP, legacy era: initialize, then the tools, as a client that negotiated 2025-11-25 sees them; a shared tally
-# "requests" for calc to read, here and in the modern era, and tally_list, which counts it
+# "requests" for calc to read, here and in the modern era; tallies_info, which counts it, and its old name
 responses=$(printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"check","version":"0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
@@ -48,15 +48,16 @@ responses=$(printf '%s\n' \
   '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"tally_create","arguments":{"name":"requests","shared":true}}}' \
   '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"tally_add","arguments":{"name":"requests","amount":1250}}}' \
   '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"calc","arguments":{"expression":"37 / {requests} * 100"}}}' \
-  '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"tally_list","arguments":{}}}' \
+  '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"tallies_info","arguments":{}}}' \
+  '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"tally_list","arguments":{}}}' \
   | $abakus mcp 2>>$stderr_log)
-expect "mcp legacy: eight responses, none for the notification" '. == null' \
-  "$(print -r -- "$responses" | jq -s 'if length == 8 then null else length end')"
+expect "mcp legacy: nine responses, none for the notification" '. == null' \
+  "$(print -r -- "$responses" | jq -s 'if length == 9 then null else length end')"
 expect "mcp legacy: initialize negotiates 2025-11-25 and sends instructions" \
   '.result.protocolVersion == "2025-11-25" and (.result.instructions | contains("shared: true") and contains("calc") and (contains("unique") | not))' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 1)')"
 expect "mcp legacy: tools/list has all eight tools" \
-  '[.result.tools[].name] | sort == ["calc","date_diff","sum","tally_add","tally_create","tally_drop","tally_list","tally_set"]' \
+  '[.result.tools[].name] | sort == ["calc","date_diff","sum","tallies_info","tally_add","tally_create","tally_drop","tally_set"]' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 2)')"
 expect "mcp legacy: sum of 0.1 and 0.2 is exactly 0.3, without read (a detail, ADR-0008)" \
   '.result.structuredContent == {"total": 0.3, "count": 2, "mean": 0.15}
@@ -70,10 +71,13 @@ expect "mcp legacy: calc reads a tally by name" \
   '.result.structuredContent == {"result": 2.96, "read": "(37 / {requests}) * 100",
      "tallies": [{"name": "requests", "of": "value", "value": 1250}]}' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 7)')"
-expect "mcp legacy: tally_list gives the folder and the count, without the list (a detail, ADR-0008)" \
+expect "mcp legacy: tallies_info gives the folder and the count, without the list (a detail, ADR-0008)" \
   ".result.structuredContent == {\"folder\": \"$ABAKUS_STATE_DIR/tallies\", \"tallies_found\": 1}
      and (.result.content[0].text | contains(\"\\\"tallies\\\"\") | not)" \
   "$(print -r -- "$responses" | jq -c 'select(.id == 8)')"
+expect "mcp legacy: the old name tally_list is an unknown tool whose error gives the new name" \
+  '.error.code == -32602 and (.error.message | test("^Unknown tool: tally_list\\. It was renamed to tallies_info in abakus 0\\.5\\.0\\."))' \
+  "$(print -r -- "$responses" | jq -c 'select(.id == 9)')"
 
 # MCP, modern era: stateless, version and capabilities in every request's _meta
 meta='"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}'
@@ -125,7 +129,7 @@ expect "cli: tally set refuses --clear-thresholds with threshold options, with t
   "$(outcome $abakus tally set "$name" --clear-thresholds --limit 3)"
 expect "cli: tally set --clear-thresholds removes them" '.thresholds == []' \
   "$($abakus tally set "$name" --clear-thresholds)"
-expect "cli: tally list shows it" ".tallies | map(.name) | index(\"$name\") != null" "$($abakus tally list items)"
+expect "cli: tallies info shows it" ".tallies | map(.name) | index(\"$name\") != null" "$($abakus tallies info items)"
 expect "cli: tally drop returns the final state" '.dropped == true and .value == -1.5' "$($abakus tally drop "$name")"
 expect "cli: adding to a dropped tally fails with exit 1 and says why" \
   '.status == 1 and .stdout == "" and (.stderr | test("no tally named"))' "$(outcome $abakus tally add "$name")"
@@ -152,7 +156,7 @@ expect "cli: calc with an unknown tally fails with exit 1 and computes nothing" 
 expect "cli: calc without an expression is a usage error, with calc's usage" \
   '.status == 64 and .stdout == "" and (.stderr | test("quoted") and test("Usage: abakus calc "))' "$(outcome $abakus calc)"
 
-# tally_list in a state folder of its own, so that its counts do not depend on the checks above: 30 tallies with
+# tallies_info in a state folder of its own, so that its counts do not depend on the checks above: 30 tallies with
 # thresholds, one more, and a file that cannot be read. Over MCP (measured with call --without-details, exactly the
 # text an MCP client gets) the result is the folder and the counts: 30 tallies add one digit to an empty folder's
 # result and no names, and it stays within 200 characters (ADR-0008). The command line lists them all. The folder
@@ -160,40 +164,42 @@ expect "cli: calc without an expression is a usage error, with calc's usage" \
 scratch_state=$ABAKUS_STATE_DIR
 export ABAKUS_STATE_DIR=$scratch_state/tally-list
 list_folder=$ABAKUS_STATE_DIR/tallies
-mcp_list_empty=$($abakus call --without-details tally_list '{}')
+mcp_list_empty=$($abakus call --without-details tallies_info '{}')
 for i in {1..30}; do
   $abakus tally create bulk --limit 20 --at 5 --at 10 --at 15 --every-count 5 >/dev/null
 done
-mcp_list=$($abakus call --without-details tally_list '{}')
-expect "tally_list over MCP: 30 tallies add one digit to an empty folder's result, and no names" \
+mcp_list=$($abakus call --without-details tallies_info '{}')
+expect "tallies_info over MCP: 30 tallies add one digit to an empty folder's result, and no names" \
   ".empty == {\"folder\": \"$list_folder\", \"tallies_found\": 0} and .full == {\"folder\": \"$list_folder\", \"tallies_found\": 30}
      and (.full_text | length) == (.empty_text | length) + 1 and (.full_text | contains(\"bulk\") | not)" \
   "$(jq -n --arg empty_text "$mcp_list_empty" --arg full_text "$mcp_list" \
      '{empty_text: $empty_text, full_text: $full_text, empty: ($empty_text | fromjson), full: ($full_text | fromjson)}')"
 $abakus tally create other --shared >/dev/null
 print -r -- '{ not json' > $list_folder/broken.json
-mcp_list=$($abakus call --without-details tally_list '{}')
-expect "tally_list over MCP: the folder and the counts, unreadable_found for the broken file" \
+mcp_list=$($abakus call --without-details tallies_info '{}')
+expect "tallies_info over MCP: the folder and the counts, unreadable_found for the broken file" \
   "keys_unsorted == [\"folder\", \"tallies_found\", \"unreadable_found\"]
      and . == {\"folder\": \"$list_folder\", \"tallies_found\": 31, \"unreadable_found\": 1}" "$mcp_list"
-expect "tally_list over MCP stays within 200 characters with 31 tallies" \
+expect "tallies_info over MCP stays within 200 characters with 31 tallies" \
   '. <= 200' "$(print -rn -- "$mcp_list" | jq -Rs length)"
-expect "tally_list over MCP with a prefix counts only the tallies whose names start with it" \
+expect "tallies_info over MCP with a prefix counts only the tallies whose names start with it" \
   ". == {\"folder\": \"$list_folder\", \"tallies_found\": 30}" \
-  "$($abakus call --without-details tally_list '{"prefix": "bulk"}')"
-expect "tally_list over MCP with a prefix counts only the unreadable files whose names start with it" \
+  "$($abakus call --without-details tallies_info '{"prefix": "bulk"}')"
+expect "tallies_info over MCP with a prefix counts only the unreadable files whose names start with it" \
   ". == {\"folder\": \"$list_folder\", \"tallies_found\": 0, \"unreadable_found\": 1}" \
-  "$($abakus call --without-details tally_list '{"prefix": "br"}')"
-expect "cli: tally list prints every tally with its state, and the unreadable file with what is wrong" \
+  "$($abakus call --without-details tallies_info '{"prefix": "br"}')"
+expect "cli: tallies info prints every tally with its state, and the unreadable file with what is wrong" \
   '.tallies_found == 31 and (.tallies | length) == 31 and .unreadable_found == 1
      and ([.tallies[] | select(.name | test("^bulk-[a-z0-9]{4}$"))] | length) == 30
      and all(.tallies[]; has("value") and has("count") and has("thresholds") and has("created") and has("updated"))
      and ([.tallies[] | select(.name | startswith("bulk-")) | .thresholds | length] | unique) == [3]
      and (.unreadable | length == 1 and .[0].name == "broken" and (.[0].problem | length) > 0)' \
-  "$($abakus tally list)"
-expect "cli: tally list with a prefix lists only those, sorted by name" \
+  "$($abakus tallies info)"
+expect "cli: tallies info with a prefix lists only those, sorted by name" \
   '.tallies_found == 30 and (.tallies | map(.name)) == (.tallies | map(.name) | sort) and (has("unreadable") | not)' \
-  "$($abakus tally list bulk)"
+  "$($abakus tallies info bulk)"
+expect "cli: tally list, the old name of tallies info, still prints the same" '.old == .new and (.new | length) > 0' \
+  "$(jq -n --arg old "$($abakus tally list bulk)" --arg new "$($abakus tallies info bulk)" '{old: $old, new: $new}')"
 expect "cli: tally drop removes the file that cannot be read" '.dropped == true and .name == "broken"' \
   "$($abakus tally drop broken)"
 export ABAKUS_STATE_DIR=$scratch_state
@@ -248,6 +254,9 @@ expect "cli: call with arguments that are not an object fails with exit 1" \
   '.status == 1 and .stdout == "" and (.stderr | test("must be a JSON object"))' "$(outcome $abakus call sum '[1, 2]')"
 expect "cli: call with an unknown tool fails with exit 1 and points to abakus tools" \
   '.status == 1 and .stdout == "" and (.stderr | test("no tool named nosuch") and test("abakus tools"))' "$(outcome $abakus call nosuch)"
+expect "cli: call with the old name tally_list fails with exit 1 and gives the new name" \
+  '.status == 1 and .stdout == "" and (.stderr | test("no tool named tally_list\\. It was renamed to tallies_info in abakus 0\\.5\\.0\\."))' \
+  "$(outcome $abakus call tally_list)"
 expect "cli: call prints the details an MCP result leaves out" '.read == [{"index": 0, "input": "0.1", "value": 0.1}]' \
   "$($abakus call sum '{"numbers": ["0.1", 0.2]}')"
 expect "cli: call --without-details prints the text of the MCP result above, character for character" '.cli == .mcp' \
@@ -258,7 +267,7 @@ expect "cli: call --without-details prints the text of the MCP result above, cha
 expect "cli: tools lists the eight tools by name and title, a short line each and nothing else" \
   '.status == 0 and (.stdout | split("\n") | all(length <= 80 and test("^[a-z_]+ +[A-Z]")) and any(test("^sum +Exact sum$"))
      and ([.[] | split(" ")[0]] | sort)
-       == ["calc","date_diff","sum","tally_add","tally_create","tally_drop","tally_list","tally_set"])' \
+       == ["calc","date_diff","sum","tallies_info","tally_add","tally_create","tally_drop","tally_set"])' \
   "$(outcome $abakus tools)"
 expect "cli: tools --show prints a tool's description and input schema" \
   '.status == 0 and (.stdout | test("Adds numbers exactly") and test("\"numbers\""))' "$(outcome $abakus tools --show sum)"

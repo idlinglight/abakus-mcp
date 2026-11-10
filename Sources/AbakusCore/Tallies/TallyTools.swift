@@ -1,8 +1,8 @@
 import Foundation
 
-/// Tally tools (ADR-0004): tally_create, tally_add, tally_set, tally_list, tally_drop.
+/// Tally tools (ADR-0004): tally_create, tally_add, tally_set, tallies_info, tally_drop.
 public enum TallyTools {
-    public static let all: [any Tool] = [TallyCreate(), TallyAdd(), TallySet(), TallyList(), TallyDrop()]
+    public static let all: [any Tool] = [TallyCreate(), TallyAdd(), TallySet(), TalliesInfo(), TallyDrop()]
 }
 
 // MARK: - tally_create
@@ -207,13 +207,13 @@ struct TallySet: Tool {
     }
 }
 
-// MARK: - tally_list
+// MARK: - tallies_info
 
 /// Over MCP, the folder and how many tallies there are; the command line also prints every tally with its state.
 /// The lists grow with the number of tallies, other sessions' included, so they are details (ADR-0008). The files
 /// are no interface for agents: the description does not document them (ADR-0003, ADR-0004).
-struct TallyList: Tool {
-    let name = "tally_list"
+struct TalliesInfo: Tool {
+    let name = "tallies_info"
 
     let detailKeys = ["tallies", "unreadable"]
 
@@ -225,7 +225,7 @@ struct TallyList: Tool {
         you remember items, call calc with {items}: calc never writes, and its error for an unknown name shows the \
         tallies named items plus a suffix (up to 20), with when each was created. If a tally is named exactly \
         items, calc returns its value instead, and it may be another session's. calc also reads one tally's value \
-        or count: {name} or {name:count}. The abakus command line (abakus tally list, the same program as this \
+        or count: {name} or {name:count}. The abakus command line (abakus tallies info, the same program as this \
         server) prints the same JSON plus every tally with its full state (tallies) and each unreadable one with \
         what is wrong (unreadable). Tallies change only through the tally tools, which hold the lock on the \
         folder, never by changing files in it.

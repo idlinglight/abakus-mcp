@@ -26,7 +26,7 @@ import Testing
             return await group.reduce(into: []) { $0 += $1 }
         }
         #expect(failures.isEmpty, "\(failures.first ?? "")")
-        let tally = try #require(try state.call("tally_list")["tallies"]?.arrayValue?.first?.objectValue)
+        let tally = try #require(try state.call("tallies_info")["tallies"]?.arrayValue?.first?.objectValue)
         #expect(tally["count"] == 400)
         #expect(tally["value"] == 400)
     }
@@ -44,7 +44,7 @@ import Testing
                             if task.isMultiple(of: 2) {
                                 _ = try TallyAdd().call(["name": "items", "amount": .number("0.5")], in: context)
                             } else {
-                                let listed = try TallyList().call([:], in: context)
+                                let listed = try TalliesInfo().call([:], in: context)
                                 if listed["unreadable"] != nil || listed["tallies"]?.arrayValue?.count != 1 {
                                     failures.append("unexpected list: \(listed)")
                                 }
@@ -59,6 +59,6 @@ import Testing
             return await group.reduce(into: []) { $0 += $1 }
         }
         #expect(failures.isEmpty, "\(failures.first ?? "")")
-        #expect(try state.call("tally_list")["tallies"]?.arrayValue?.first?.objectValue?["value"] == 60)
+        #expect(try state.call("tallies_info")["tallies"]?.arrayValue?.first?.objectValue?["value"] == 60)
     }
 }

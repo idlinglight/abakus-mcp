@@ -13,7 +13,9 @@ struct Abakus: ParsableCommand {
             with exit status 64.
             """,
         version: AbakusInfo.version,
-        subcommands: [Serve.self, TallyCommand.self, Sum.self, Calc.self, DateDiff.self, Tools.self, Call.self]
+        subcommands: [
+            Serve.self, TallyCommand.self, TalliesCommand.self, Sum.self, Calc.self, DateDiff.self, Tools.self, Call.self,
+        ]
     )
 }
 
