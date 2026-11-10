@@ -5,7 +5,8 @@ suffix, `tally_set` and exactness, unknown names and arguments, thresholds that 
 2026-11-08 (a random suffix by default, `shared: true` for an exact name; see the end); amended 2026-11-08
 (the advice for unknown names in `tally_drop`); amended 2026-11-10 (an `at` threshold by how many marks it has
 and the next ones, `at` crossings capped, at most 5 thresholds, `read` as a detail with a decimal note; see the
-end); amended 2026-11-10 (`tally_list` becomes `tallies_info`; over MCP the folder and how many tallies there are)
+end); amended 2026-11-10 (`tally_list` becomes `tallies_info`; over MCP the folder and how many tallies there are);
+amended 2026-11-10 (every mark of an `at` threshold on the command line)
 
 ## Context
 
@@ -61,9 +62,9 @@ does not reliably know an identifier that is unique to its session.
 - A tally that ever had to round says `exact: false` in every response, until its value is set.
 - Unknown arguments are errors: a typo such as `amout` would otherwise be ignored and add 1.
 - Every response carries the tally's full state, each threshold with its status. (Amended 2026-11-10, see the
-  end: an `at` threshold shows how many marks it has and at most 5 of those ahead, not all of them; `at`
-  crossings list at most 10 marks; at most 5 thresholds; how strings were read is a detail, with a note when a
-  reading was a choice.)
+  end: an `at` threshold shows how many marks it has and at most 5 of those ahead, and all of them only on the
+  command line; `at` crossings list at most 10 marks; at most 5 thresholds; how strings were read is a detail,
+  with a note when a reading was a choice.)
 - Tools: `tally_create`, `tally_add`, `tally_set` (value, count or thresholds of an existing tally),
   `tally_list` (all tallies or those with a name prefix, and the folder they are in; now `tallies_info`, over MCP
   only the folder and how many there are, by the amendment of 2026-11-10), `tally_drop` (returns the final state).
@@ -224,7 +225,8 @@ marks. What the agent needs from a response is where the tally stands against th
   given as strings, `tally_create` and `tally_add` stay within 700 characters (`dev/check.zsh` checks it; 555 and
   627 there); the same call gave about 7,400 before.
 - Of an `at` threshold's marks, a response shows the next 5 at most, on the command line too. All of them are in
-  the agent's request and in the tally's file (ADR-0003: state can be inspected with `cat`).
+  the agent's request and in the tally's file (ADR-0003: state can be inspected with `cat`). (Amended at the end:
+  the command line shows them all.)
 - A tally file with more than 5 thresholds keeps working: every tool reads it, its responses show all its
   thresholds, and `tally_set` with `thresholds` brings it under the cap without touching its value or count. Every
   other rule of ADR-0003 still holds for files. Such files are rare: only abakus 0.4 and earlier could write one,
@@ -296,3 +298,38 @@ name given, which serves an agent looking for its own tally better.
   name that returns counts. The command line prints what `tally_list` returned before, plus the counts.
 - Over MCP, only the unknown-name error still names other sessions' tallies: `details.existing` up to 20 names,
   `details.matching` those that start with the name given and `-`, with when each was created.
+
+## Amendment 2026-11-10: every mark of an `at` threshold on the command line
+
+### Context
+
+With the amendment on the marks ahead, the command line printed the same `at` status as an MCP result: marks
+beyond the 5 ahead appeared in no output, only in the tally's file. In a usability probe of the command-line
+skill, all three agents assumed that `abakus tallies info` prints every mark, as ADR-0008's "the command line
+shows everything" suggests.
+
+### Decision
+
+- An `at` threshold's status in the core ends with all its marks, ascending: `"marks": [10, 20, 30, …]`, after
+  `ahead`. The command line prints it: the tally commands, `abakus call`, and `abakus tallies info`, whose
+  `tallies` list is the command line's only.
+- An MCP result is exactly as before. The tools that answer with a tally's state (`tally_create`, `tally_add`,
+  `tally_set`, `tally_drop`) leave `marks` out in their `withoutDetails` (ADR-0008, amendment on lists shortened
+  over MCP), together with `read`. Without it, the MCP status is the start of the full one.
+- `marks`, not `at`: it is the list that `marks_total` counts, so the count is named after the list, as ADR-0008
+  asks of a shortened list (`tallies_total`). `at` would repeat the argument's form, but it already means the
+  marks crossed in `crossed`, and a third meaning in one response is one too many; on the command line,
+  `tally set` takes marks as repeated `--at` options anyway.
+- Errors keep the compact status: they are the same text on both sides and are not shortened on the way out, so
+  the shared-name error's `details.existing` carries the tally's state without `marks`.
+- `crossed` is unchanged: it describes the call, and it is bounded.
+
+### Consequences
+
+- `abakus tallies info`, `abakus call` and the tally commands show every mark, as the skill says. Their output
+  grows with the marks, as the command line's output may (ADR-0008).
+- The MCP result, and the 700-character check in `dev/check.zsh`, are unchanged; the shared-name error for a tally
+  with 2000 marks is as long as for 2, give or take the digits of the count.
+- The descriptions of `tally_create`, `tally_add` and `tally_set` say that the command line also prints all the
+  marks (`marks`), as ADR-0008 asks of a tool that shortens a list.
+- abakus 0.5.3 is the first version with this.
