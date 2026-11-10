@@ -115,8 +115,9 @@ expect "cli: tally add with two amounts is a usage error, with tally add's usage
   '.status == 64 and .stdout == "" and (.stderr | test("Give one amount, not 2") and test("Usage: abakus tally add "))' \
   "$(outcome $abakus tally add "$name" 1 2)"
 expect "cli: tally set takes a negative value" '.value == -1.5' "$($abakus tally set "$name" --value -1.5)"
-expect "cli: tally set replaces the thresholds, from repeated --at and --at-count, each at by its marks, passed and next" \
-  '.thresholds == [{"marks": 2, "of": "value", "passed": 0, "next": 1}, {"marks": 1, "of": "count", "passed": 0, "next": 5}]' \
+expect "cli: tally set replaces the thresholds, from repeated --at and --at-count, each at with the marks ahead" \
+  '.thresholds == [{"marks_total": 2, "of": "value", "passed": 0, "ahead": [1, 2]},
+                   {"marks_total": 1, "of": "count", "passed": 0, "ahead": [5]}]' \
   "$($abakus tally set "$name" --at 1 --at 2 --at-count 5)"
 expect "cli: tally set refuses --clear-thresholds with threshold options, with tally set's usage" \
   '.status == 64 and .stdout == "" and (.stderr | test("either --clear-thresholds or threshold options") and test("Usage: abakus tally set "))' \
@@ -130,19 +131,21 @@ expect "cli: adding to a dropped tally fails with exit 1 and says why" \
 
 # Tallies within ADR-0008: an at threshold of 200 marks, given as strings that also read with a decimal comma.
 # call --without-details prints exactly the MCP text (checked for sum below); over MCP, tally_create and tally_add
-# stay within a budget of 700 characters each, with one note for all the strings. The command line prints read.
+# stay within a budget of 700 characters each: marks counted, at most 5 of those ahead listed, one note for all the
+# strings. The command line prints read.
 marks_args=$(jq -nc '{name: "bytes", thresholds: [{at: [range(1; 201) | "\(.),000"]}]}')
 mcp_text=$($abakus call --without-details tally_create "$marks_args")
 marks_name=$(print -r -- "$mcp_text" | jq -r .name)
-expect "mcp text: tally_create with 200 marks as strings stays within 700 characters: marks counted, one note, no read" \
-  '.length <= 700 and (.json | .thresholds == [{"marks": 200, "of": "value", "passed": 0, "next": 1000}]
+expect "mcp text: tally_create with 200 marks as strings stays within 700 characters: 5 marks ahead, one note, no read" \
+  '.length <= 700 and (.json | .thresholds == [{"marks_total": 200, "of": "value", "passed": 0, "ahead": [1000, 2000, 3000, 4000, 5000]}]
      and (has("read") | not) and (.notes | length == 1) and (.notes[0] | startswith("200 strings read differently")
      and contains("tally_set")))' \
   "$(jq -n --arg text "$mcp_text" '{length: ($text | length), json: ($text | fromjson)}')"
 mcp_text=$($abakus call --without-details tally_add "{\"name\": \"$marks_name\", \"amount\": \"150,500\"}")
 expect "mcp text: tally_add crossing 150 of the marks stays within 700 characters: a count with the first and the last" \
-  '.length <= 700 and (.json | .crossed == [{"marks": 200, "of": "value", "times": 150, "first": 1000, "last": 150000}]
-     and .thresholds == [{"marks": 200, "of": "value", "passed": 150, "next": 151000}] and (has("read") | not)
+  '.length <= 700 and (.json | .crossed == [{"marks_total": 200, "of": "value", "times": 150, "first": 1000, "last": 150000}]
+     and .thresholds == [{"marks_total": 200, "of": "value", "passed": 150, "ahead": [151000, 152000, 153000, 154000, 155000]}]
+     and (has("read") | not)
      and (.notes[0] | contains("crossed above follows 150500") and contains("\"value\": 150.5")))' \
   "$(jq -n --arg text "$mcp_text" '{length: ($text | length), json: ($text | fromjson)}')"
 expect "cli: tally create prints read, one entry per string" '.read | length == 200 and .[0] == {"input": "1,000", "value": 1000}' \

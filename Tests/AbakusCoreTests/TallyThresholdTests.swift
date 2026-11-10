@@ -98,8 +98,8 @@ extension String {
 
     @Test func aMarkIsCrossedWhenReachedOrPassedGoingUp() throws {
         let marks = Threshold(.at([10, 15, 20]))
-        #expect(try crossing(marks, "9", "10") == ["marks": 3, "of": "value", "at": [10]])
-        #expect(try crossing(marks, "9", "16") == ["marks": 3, "of": "value", "at": [10, 15]])
+        #expect(try crossing(marks, "9", "10") == ["marks_total": 3, "of": "value", "at": [10]])
+        #expect(try crossing(marks, "9", "16") == ["marks_total": 3, "of": "value", "at": [10, 15]])
         #expect(try crossing(marks, "10", "14") == nil)  // 10 was reached before
         #expect(try crossing(marks, "21", "30") == nil)
     }
@@ -107,7 +107,7 @@ extension String {
     @Test func goingDownReportsNothingAndGoingBackUpReportsAgain() throws {
         let marks = Threshold(.at([10]))
         #expect(try crossing(marks, "12", "5") == nil)
-        #expect(try crossing(marks, "5", "10") == ["marks": 1, "of": "value", "at": [10]])
+        #expect(try crossing(marks, "5", "10") == ["marks_total": 1, "of": "value", "at": [10]])
     }
 
     @Test func everyListsTheMultiplesPassed() throws {
@@ -150,9 +150,9 @@ extension String {
     /// Up to ten marks crossed are listed, as for every; beyond that, how many with the first and the last.
     @Test func atListsAtMostTenMarksCrossed() throws {
         let marks = Threshold(.at((1...400).map { Decimal($0) }))
-        #expect(try crossing(marks, "0", "10") == ["marks": 400, "of": "value", "at": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]])
-        #expect(try crossing(marks, "0", "11") == ["marks": 400, "of": "value", "times": 11, "first": 1, "last": 11])
-        #expect(try crossing(marks, "149.5", "399.5") == ["marks": 400, "of": "value", "times": 250, "first": 150, "last": 399])
+        #expect(try crossing(marks, "0", "10") == ["marks_total": 400, "of": "value", "at": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]])
+        #expect(try crossing(marks, "0", "11") == ["marks_total": 400, "of": "value", "times": 11, "first": 1, "last": 11])
+        #expect(try crossing(marks, "149.5", "399.5") == ["marks_total": 400, "of": "value", "times": 250, "first": 150, "last": 399])
         #expect(Threshold.listedMarks == 10)
     }
 
@@ -164,10 +164,12 @@ extension String {
         for old in values {
             let passed = marks.filter { $0 <= old }.count
             #expect(Threshold.marksReached(by: old, in: marks) == passed, "\(old)")
-            #expect(try threshold.status(of: tally(value: old.description))["passed"] == .number(String(passed)))
+            let status = try threshold.status(of: tally(value: old.description))
+            #expect(status["passed"] == .number(String(passed)))
+            #expect(status["ahead"] == .array(marks.filter { $0 > old }.prefix(5).map(JSONValue.decimal)), "\(old)")
             for new in values where new > old {
                 let crossed = marks.filter { old < $0 && $0 <= new }
-                let expected: JSONObject? = crossed.isEmpty ? nil : ["marks": 6, "of": "value", "at": .array(crossed.map(JSONValue.decimal))]
+                let expected: JSONObject? = crossed.isEmpty ? nil : ["marks_total": 6, "of": "value", "at": .array(crossed.map(JSONValue.decimal))]
                 #expect(try threshold.crossing(from: tally(value: old.description), to: tally(value: new.description)) == expected, "\(old) to \(new)")
             }
         }
@@ -197,15 +199,33 @@ extension String {
     }
 
     /// An at threshold shows how many marks it has, how many are passed (at or below the current value) and the
-    /// next one; never the marks themselves, so its status has the same size for 2 marks or 2000.
-    @Test func statusGivesTheNextMark() throws {
+    /// marks ahead, at most 5: an agent that lost its request still sees what comes next, and the status has the
+    /// same size for 7 marks or 2000. [] once all are passed, as crossed is [] when nothing was crossed.
+    @Test func statusGivesTheMarksAhead() throws {
         let marks = Threshold(.at([10, 20]))
-        #expect(try marks.status(of: tally(value: "-5")) == ["marks": 2, "of": "value", "passed": 0, "next": 10])
-        #expect(try marks.status(of: tally(value: "10")) == ["marks": 2, "of": "value", "passed": 1, "next": 20])
-        #expect(try marks.status(of: tally(value: "19.99")) == ["marks": 2, "of": "value", "passed": 1, "next": 20])
-        #expect(try marks.status(of: tally(value: "20")) == ["marks": 2, "of": "value", "passed": 2])
+        #expect(try marks.status(of: tally(value: "-5")) == ["marks_total": 2, "of": "value", "passed": 0, "ahead": [10, 20]])
+        #expect(try marks.status(of: tally(value: "10")) == ["marks_total": 2, "of": "value", "passed": 1, "ahead": [20]])
+        #expect(try marks.status(of: tally(value: "19.99")) == ["marks_total": 2, "of": "value", "passed": 1, "ahead": [20]])
+        #expect(try marks.status(of: tally(value: "20")) == ["marks_total": 2, "of": "value", "passed": 2, "ahead": []])
+        // The two cases of the approved preview.
+        #expect(try Threshold(.at([50, 100, 150])).status(of: tally(value: "60")) == ["marks_total": 3, "of": "value", "passed": 1, "ahead": [100, 150]])
+        let hundreds = Threshold(.at((1...200).map { Decimal($0) }))
+        #expect(try hundreds.status(of: tally(value: "18.5")) == ["marks_total": 200, "of": "value", "passed": 18, "ahead": [19, 20, 21, 22, 23]])
         let many = Threshold(.at((1...2000).map { Decimal($0 * 1000) }), of: .count)
-        #expect(try many.status(of: tally(count: 2500)) == ["marks": 2000, "of": "count", "passed": 2, "next": 3000])
+        #expect(try many.status(of: tally(count: 2500)) == ["marks_total": 2000, "of": "count", "passed": 2, "ahead": [3000, 4000, 5000, 6000, 7000]])
+        #expect(Threshold.marksAhead == 5)
+    }
+
+    /// The worst case per at threshold is fixed: five marks of 38 significant digits.
+    @Test func theMarksAheadKeepTheStatusBounded() throws {
+        let long = (1...200).map { TallyTest.decimal(String(repeating: "9", count: 34) + String(1000 + $0)) }
+        #expect(long[0].description.count == 38)
+        let status = try Threshold(.at(long)).status(of: tally(value: "0"))
+        #expect(status["ahead"]?.arrayValue?.count == 5)
+        #expect(JSONWriter.write(status).count <= 260, "\(JSONWriter.write(status).count)")
+    }
+
+    @Test func everyStatusGivesTheNextMark() throws {
         #expect(try Threshold(.every(5)).status(of: tally(value: "0")) == ["every": 5, "of": "value", "next": 5])
         #expect(try Threshold(.every(5)).status(of: tally(value: "10")) == ["every": 5, "of": "value", "next": 15])
         #expect(try Threshold(.every(5)).status(of: tally(value: "-3")) == ["every": 5, "of": "value", "next": 5])

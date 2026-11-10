@@ -22,8 +22,8 @@ struct TallyCreate: Tool {
         Leave other sessions' tallies alone unless you coordinate with them. Optional thresholds, at most \
         \(Threshold.maximumPerTally), watch the value (default) or the count: limit (a ceiling), at (marks, any \
         number of them), every (a period); they inform and never block. Returns the new tally's state, each \
-        threshold with its status; an at threshold shows marks (how many it has), passed (how many are reached) \
-        and next, not the marks themselves. \(NumberReader.rulesInBrief) \(TallySchema.readingsInBrief)
+        threshold with its status; an at threshold shows marks_total, passed (how many are reached) and ahead \
+        (the next marks, up to \(Threshold.marksAhead)). \(NumberReader.rulesInBrief) \(TallySchema.readingsInBrief)
         """
 
     let inputSchema: JSONValue = [
@@ -97,8 +97,8 @@ struct TallyAdd: Tool {
         count, added, crossed and thresholds. crossed lists what this addition reached or passed: a limit reached \
         for the first time, marks of at and every (up to \(Threshold.listedMarks) per threshold; beyond that, how \
         many as times, with the first and the last); [] if nothing. thresholds gives each one's status: a limit \
-        says reached plus remaining or over; an at threshold says marks (how many it has), passed (how many are \
-        reached) and next; every says next. Thresholds never block. Negative amounts subtract. \
+        says reached plus remaining or over; an at threshold says marks_total, passed (how many are reached) and \
+        ahead (the next marks, up to \(Threshold.marksAhead)); every says next. Thresholds never block. Negative amounts subtract. \
         \(NumberReader.rulesInBrief) \(TallySchema.readingsInBrief) An unknown name is an error, never a new \
         tally: the name may be misspelled, lack the suffix tally_create gave it, or have expired (unchanged for \
         about three days). If tallies whose names start with the name you gave exist, the error shows them with \
@@ -170,7 +170,7 @@ struct TallySet: Tool {
         Correct a tally: set its value and/or count, or replace its thresholds (at most \
         \(Threshold.maximumPerTally); an empty list removes them). For fixing a miscount or changing a budget; \
         normal counting is tally_add. Reports no crossings; returns the state, each threshold with its status (an \
-        at threshold shows marks, passed and next, not the marks themselves). \(NumberReader.rulesInBrief) \
+        at threshold shows marks_total, passed and ahead, the next marks). \(NumberReader.rulesInBrief) \
         \(TallySchema.readingsInBrief) An unknown name is an error, never a new tally. If tallies whose names \
         start with the name you gave exist, the error shows them with when each was created.
         """
@@ -366,7 +366,7 @@ enum TallySchema {
     static let thresholds: JSONValue = [
         "type": "array",
         "description": .string(
-            "What to watch, at most \(Threshold.maximumPerTally) thresholds. Each item has exactly one of limit (a ceiling: every response says whether it is reached and what remains), at (a list of marks, any number of them: every response gives marks, how many there are, passed, how many are reached, and next) or every (a period: marks at every multiple), and optionally of: \"value\" (default) or \"count\". An addition reports each mark it reaches or passes going up, up to \(Threshold.listedMarks) per threshold; beyond that, how many as times, with the first and the last. E.g. \(Threshold.example)."
+            "What to watch, at most \(Threshold.maximumPerTally) thresholds. Each item has exactly one of limit (a ceiling: every response says whether it is reached and what remains), at (a list of marks, any number of them: every response gives marks_total, passed, how many are reached, and ahead, the next \(Threshold.marksAhead) at most) or every (a period: marks at every multiple), and optionally of: \"value\" (default) or \"count\". An addition reports each mark it reaches or passes going up, up to \(Threshold.listedMarks) per threshold; beyond that, how many as times, with the first and the last. E.g. \(Threshold.example)."
         ),
         "maxItems": .number(String(Threshold.maximumPerTally)),
         "items": [

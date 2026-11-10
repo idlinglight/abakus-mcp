@@ -68,11 +68,12 @@ the thresholds have, so it stays small over MCP ([ADR-0008](docs/adr/0008-small-
 marks, any number of them) or `every` (a period), and optionally `of: "value"` (default) or `"count"`. An
 addition crosses a mark when it takes the tally from below the mark to the mark or past it; a tally that goes
 back down and up again reports the mark again. Thresholds never block. Each threshold's status is in every
-response: a limit says `reached` and `remaining` or `over`; `at` says how many `marks` it has, how many are
-`passed` (reached) and the `next` one, not the marks themselves
-(`{"marks": 50, "of": "value", "passed": 2, "next": 3000000}`); `every` says the `next` mark. A sixth threshold is
-an error: marks on the value (or on the count) fit in one `at` threshold, and a second tally can watch the rest.
-The tally's file keeps every mark.
+response: a limit says `reached` and `remaining` or `over`; `at` says how many marks it has (`marks_total`), how
+many are `passed` (reached) and the marks `ahead`, at most 5 (`[]` once all are passed), so an agent that lost its
+request to a context compaction still sees what comes next:
+`{"marks_total": 200, "of": "value", "passed": 18, "ahead": [19, 20, 21, 22, 23]}`; `every` says the `next` mark.
+A sixth threshold is an error: marks on the value (or on the count) fit in one `at` threshold, and a second tally
+can watch the rest. The tally's file keeps every mark.
 
 **Number strings**: over MCP, a string that reads differently with the other decimal mark (`"1,234"` is 1234 with
 `.`, 1.234 with `,`), when no other string in the call rules that mark out, gets one note under `notes` that names
@@ -115,8 +116,8 @@ with `tally_add` and drop the new one with `tally_drop`.
 
 {"name": "bytes-p2x7", "amount": "1,234"}
 → {"name": "bytes-p2x7", "value": 1259, "count": 2, "added": 1234,
-   "crossed": [{"marks": 200, "of": "value", "times": 12, "first": 100, "last": 1200}],
-   "thresholds": [{"marks": 200, "of": "value", "passed": 12, "next": 1300}],
+   "crossed": [{"marks_total": 200, "of": "value", "times": 12, "first": 100, "last": 1200}],
+   "thresholds": [{"marks_total": 200, "of": "value", "passed": 12, "ahead": [1300, 1400, 1500, 1600, 1700]}],
    "created": "2026-11-08T09:40:00Z", "updated": "2026-11-08T09:41:00Z",
    "notes": ["\"1,234\" (amount) was read as 1234; with decimal: \",\" it would be 1.234. If you meant 1.234,
               correct the value with tally_set {\"name\": \"bytes-p2x7\", \"value\": 26.234}, which keeps the
@@ -125,10 +126,10 @@ with `tally_add` and drop the new one with `tally_drop`.
 ```
 
 Crossings start like the threshold's status: `{"limit": 20, "of": "value"}`,
-`{"marks": 50, "of": "value", "at": [1000000]}` (the marks crossed) or `{"every": 5, "of": "count", "at": [5]}`.
-Past 10 marks of one threshold, how many with the first and the last:
-`{"every": 1, "of": "value", "times": 250, "first": 1, "last": 250}`, and the same after `"marks"` for `at`. A
-tally that ever had to round says `"exact": false`.
+`{"marks_total": 50, "of": "value", "at": [1000000]}` (the marks crossed) or
+`{"every": 5, "of": "count", "at": [5]}`. Past 10 marks of one threshold, how many with the first and the last:
+`{"every": 1, "of": "value", "times": 250, "first": 1, "last": 250}`, and the same after `"marks_total"` for
+`at`. A tally that ever had to round says `"exact": false`.
 
 `tally_set` `{name, value?, count?, thresholds?, decimal?}` corrects a tally, reports no crossings;
 `thresholds` replaces them all (at most 5), `thresholds: []` removes them.
@@ -139,7 +140,7 @@ tally that ever had to round says `"exact": false`.
 {"prefix": "bytes"}
 → {"folder": "/var/folders/…/T/abakus/tallies",
    "tallies": [{"name": "bytes", "value": 2490123.5, "count": 1,
-                "thresholds": [{"marks": 2, "of": "value", "passed": 1, "next": 5000000}],
+                "thresholds": [{"marks_total": 2, "of": "value", "passed": 1, "ahead": [5000000]}],
                 "created": "2026-11-08T09:36:00Z", "updated": "2026-11-08T09:36:00Z"}]}
 ```
 

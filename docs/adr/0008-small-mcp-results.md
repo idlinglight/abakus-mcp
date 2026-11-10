@@ -133,9 +133,9 @@ the practical check; the growth rule says what does not belong in a result at al
 - `date_diff` is within the rule: its input is two instants, and every key it returns is bounded.
 - Amended 2026-11-10: the tools that work on one tally (`tally_create`, `tally_add`, `tally_set`, `tally_drop`)
   are within the rule, no longer a known exception ([ADR-0004](0004-tallies.md), amendment of 2026-11-10). An `at`
-  threshold shows how many marks it has, how many are reached and the next one; `crossed` lists at most 10 marks
-  per threshold, then a count; `tally_create` and `tally_set` take at most 5 thresholds; `read` is a detail, with
-  the decimal note of `sum` in its place. The exception also said that an error for an unknown name lists whole
+  threshold shows how many marks it has, how many are reached and at most 5 marks ahead; `crossed` lists at most 10
+  marks per threshold, then a count; `tally_create` and `tally_set` take at most 5 thresholds; `read` is a detail,
+  with the decimal note of `sum` in its place. The exception also said that an error for an unknown name lists whole
   tallies in `details.matching`: it lists only each one's name, value, count and created time, and always did.
 - Known exceptions, each to be brought within the rule when it is next changed:
   - `calc`: `read` grows with the expression and `tallies` with the tallies it names. ADR-0007's reasoning about

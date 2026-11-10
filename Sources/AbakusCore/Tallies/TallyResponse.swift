@@ -1,13 +1,13 @@
 import Foundation
 
 /// How tally tools answer: the tally's state as an ordered JSON object, plus what the call itself did. Each
-/// threshold shows its status; an `at` threshold by how many marks it has, not the marks, so the response stays the
-/// same size however many there are (ADR-0004, amendment of 2026-11-10; ADR-0008).
+/// threshold shows its status; an `at` threshold by how many marks it has and at most 5 of those ahead, so the
+/// response stays the same size however many there are (ADR-0004, amendment of 2026-11-10; ADR-0008).
 ///
 ///     {"name": "review-k3f9", "value": 7, "count": 5, "added": 2,
 ///      "crossed": [{"every": 5, "of": "count", "at": [5]}],
 ///      "thresholds": [{"limit": 20, "of": "value", "reached": false, "remaining": 13},
-///                     {"marks": 50, "of": "value", "passed": 2, "next": 10},
+///                     {"marks_total": 50, "of": "value", "passed": 2, "ahead": [10, 20, 30, 40, 50]},
 ///                     {"every": 5, "of": "count", "next": 10}],
 ///      "created": "2026-11-08T09:12:00Z", "updated": "2026-11-08T09:40:31Z"}
 enum TallyResponse {

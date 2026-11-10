@@ -188,7 +188,7 @@ import Testing
         let error = try #require(state.failure("tally_create", ["name": "bytes", "shared": true]))
         let existing = try #require(error.details?["existing"]?.objectValue)
         #expect(existing["thresholds"] == [
-            ["marks": 200, "of": "value", "passed": 2, "next": 3000],
+            ["marks_total": 200, "of": "value", "passed": 2, "ahead": [3000, 4000, 5000, 6000, 7000]],
             ["limit": 1000000, "of": "value", "reached": false, "remaining": 997500],
         ])
         #expect(existing["read"] == nil)
@@ -433,7 +433,7 @@ import Testing
         #expect(response["crossed"] == nil)
         #expect(response["read"] == [["input": "10", "value": 10]])
         #expect(TallyTest.tool("tally_set").withoutDetails(response)["read"] == nil)
-        #expect(response["thresholds"] == [["marks": 1, "of": "value", "passed": 1]])
+        #expect(response["thresholds"] == [["marks_total": 1, "of": "value", "passed": 1, "ahead": []]])
 
         let cleared = try state.call("tally_set", ["name": "items", "thresholds": []])
         #expect(cleared["thresholds"] == [])
@@ -506,7 +506,7 @@ import Testing
         let response = try state.call("tally_add", ["name": "bytes", "amount": "1,234"])
         #expect(response["value"] == 1259)  // the addition counted as read
         #expect(response["count"] == 2)
-        #expect(response["crossed"] == [["marks": 1, "of": "value", "at": [100]]])  // as read, not as perhaps meant
+        #expect(response["crossed"] == [["marks_total": 1, "of": "value", "at": [100]]])  // as read, not as perhaps meant
         #expect(response["notes"] == [.string("""
             "1,234" (amount) was read as 1234; with decimal: "," it would be 1.234. If you meant 1.234, correct the \
             value with tally_set {"name": "bytes", "value": 26.234}, which keeps the count and reports no crossings \
@@ -569,7 +569,8 @@ import Testing
     }
 }
 
-/// ADR-0008: a successful MCP result stays within a few hundred characters, however many marks a tally has.
+/// ADR-0008: a successful MCP result stays within a few hundred characters, however many marks a tally has. The
+/// budget is the one dev/check.zsh states: 700 characters.
 @Suite struct TallySmallResultTests {
     @Test func manyMarksGivenAsStringsKeepTheResultSmall() throws {
         let state = TallyTestState()
@@ -578,14 +579,14 @@ import Testing
         let created = try state.call("tally_create", ["name": "bytes", "thresholds": [["at": marks]]])
         let name = try #require(created["name"]?.stringValue)
         let createText = JSONWriter.write(TallyTest.tool("tally_create").withoutDetails(created))
-        #expect(createText.count <= 600, "\(createText.count): \(createText)")
+        #expect(createText.count <= 700, "\(createText.count): \(createText)")
         #expect(created["notes"]?.arrayValue?.first?.stringValue?.hasPrefix("200 strings read differently") == true)
 
         let added = try state.call("tally_add", ["name": .string(name), "amount": "150,500"])
-        #expect(added["crossed"] == [["marks": 200, "of": "value", "times": 150, "first": 1000, "last": 150000]])
-        #expect(added["thresholds"] == [["marks": 200, "of": "value", "passed": 150, "next": 151000]])
+        #expect(added["crossed"] == [["marks_total": 200, "of": "value", "times": 150, "first": 1000, "last": 150000]])
+        #expect(added["thresholds"] == [["marks_total": 200, "of": "value", "passed": 150, "ahead": [151000, 152000, 153000, 154000, 155000]]])
         let addText = JSONWriter.write(TallyTest.tool("tally_add").withoutDetails(added))
-        #expect(addText.count <= 600, "\(addText.count): \(addText)")
+        #expect(addText.count <= 700, "\(addText.count): \(addText)")
         // The command line still gets every reading.
         #expect(created["read"]?.arrayValue?.count == 200)
     }
@@ -786,7 +787,7 @@ import Testing
         let sixThresholds = JSONValue.array((1...6).map { ["limit": .number(String($0))] })
         #expect(state.failure("tally_set", ["name": "old", "thresholds": sixThresholds])?.message.hasPrefix("thresholds has 6 items") == true)
         let replaced = try state.call("tally_set", ["name": "old", "thresholds": [["at": [1, 2, 3, 4, 5, 6]]]])
-        #expect(replaced["thresholds"] == [["marks": 6, "of": "value", "passed": 4, "next": 5]])
+        #expect(replaced["thresholds"] == [["marks_total": 6, "of": "value", "passed": 4, "ahead": [5, 6]]])
         #expect(replaced["value"] == 4)
         #expect(replaced["count"] == 1)
     }

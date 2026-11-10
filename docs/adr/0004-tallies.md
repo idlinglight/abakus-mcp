@@ -3,8 +3,9 @@
 Status: accepted, 2026-11-08; amended 2026-11-08 (threshold argument shape, crossing rule and "once", unique
 suffix, `tally_set` and exactness, unknown names and arguments, thresholds that cannot be computed); amended
 2026-11-08 (a random suffix by default, `shared: true` for an exact name; see the end); amended 2026-11-08
-(the advice for unknown names in `tally_drop`); amended 2026-11-10 (an `at` threshold by how many marks it has,
-`at` crossings capped, at most 5 thresholds, `read` as a detail with a decimal note; see the end)
+(the advice for unknown names in `tally_drop`); amended 2026-11-10 (an `at` threshold by how many marks it has
+and the next ones, `at` crossings capped, at most 5 thresholds, `read` as a detail with a decimal note; see the
+end)
 
 ## Context
 
@@ -60,8 +61,9 @@ does not reliably know an identifier that is unique to its session.
 - A tally that ever had to round says `exact: false` in every response, until its value is set.
 - Unknown arguments are errors: a typo such as `amout` would otherwise be ignored and add 1.
 - Every response carries the tally's full state, each threshold with its status. (Amended 2026-11-10, see the
-  end: an `at` threshold shows how many marks it has, not the marks; `at` crossings list at most 10 marks; at
-  most 5 thresholds; how strings were read is a detail, with a note when a reading was a choice.)
+  end: an `at` threshold shows how many marks it has and at most 5 of those ahead, not all of them; `at`
+  crossings list at most 10 marks; at most 5 thresholds; how strings were read is a detail, with a note when a
+  reading was a choice.)
 - Tools: `tally_create`, `tally_add`, `tally_set` (value, count or thresholds of an existing tally),
   `tally_list` (all tallies or those with a name prefix, and the folder they are in), `tally_drop` (returns
   the final state).
@@ -139,7 +141,7 @@ new tally. `tally_add`'s description no longer points to `tally_list` for findin
 towards other sessions' tallies; it and `tally_set`'s description say that the error shows the tallies whose
 names start with the name given, with when each was created.
 
-## Amendment 2026-11-10: an `at` threshold by how many marks it has, at most 5 thresholds, `read` as a detail
+## Amendment 2026-11-10: an `at` threshold by its marks ahead, at most 5 thresholds, `read` as a detail
 
 ### Context
 
@@ -151,24 +153,37 @@ the number of thresholds nor the number of marks was limited. A `tally_create` w
 given as strings got a response of about 7,400 characters, and every `tally_add` after it repeated the 200 marks.
 ADR-0008 listed this as a known exception.
 
-The marks are the agent's own input: it has them in its request. What it needs from a response is where the tally
-stands against them.
+The marks are the agent's own input, but its request can be gone: a context compaction drops it, and with it the
+marks. What the agent needs from a response is where the tally stands against them and which come next.
 
 ### Decision
 
-- An `at` threshold's status is `{"marks": 50, "of": "value", "passed": 2, "next": 3000000}`: how many marks it
-  has, how many are reached (at or below the current value or count), and the next mark, left out when all are
-  passed. The kind key and `of` come first, as in the statuses of `limit` and `every`, which are unchanged.
-  Responses still carry the tally's whole state; an `at` threshold is shown by what an agent acts on, not by its
-  marks. The tally file keeps every mark: it is state, not a response.
+- An `at` threshold's status is
+  `{"marks_total": 200, "of": "value", "passed": 18, "ahead": [19, 20, 21, 22, 23]}`: how many marks it has, how
+  many are reached (at or below the current value or count), and the marks ahead, ascending, at most 5
+  (`Threshold.marksAhead`). The kind key and `of` come first, as in the statuses of `limit` and `every`, which are
+  unchanged. Responses still carry the tally's whole state; an `at` threshold is shown by what an agent acts on,
+  not by all its marks. The tally file keeps every mark: it is state, not a response.
+  - Why the marks ahead, not only a count and the next one: after a compaction, no MCP result showed which marks
+    were still ahead, and the agent could not get them back. With the count alone, none of the three agents of the
+    usability probe (Haiku, Sonnet, Opus) could say which marks were ahead. Five marks ahead answer it for the near
+    future, and a
+    list of a fixed length stays within ADR-0008. All of them are in the tally's file.
+  - `marks_total`, not `marks`: next to a list, a key named `marks` that holds a number reads like a list; two of
+    the three probe agents read it so. `_total` as in the unknown-name error's `existing_total`.
+  - No `next`: it would be `ahead[0]` under a second name, in every status. `every` keeps `next`: it has no list.
+  - `ahead` is `[]` once all marks are passed, not left out: as `crossed` is `[]` when nothing was crossed, the key
+    is always there, so an agent never has to wonder whether a missing key means "none" or "not shown".
+  - Size: at most 5 numbers per threshold, each bounded by the number rules (ADR-0005). Five marks of 38
+    significant digits give a status of about 250 characters.
 - `crossed` for an `at` threshold starts the same way and lists the marks crossed, at most 10
   (`Threshold.listedMarks`, as for `every`); beyond that, how many with the first and the last:
-  `{"marks": 400, "of": "value", "times": 250, "first": 150, "last": 399}`. Crossings of `limit` and `every` are
-  unchanged.
+  `{"marks_total": 400, "of": "value", "times": 250, "first": 150, "last": 399}`. Crossings of `limit` and `every`
+  are unchanged.
 - `tally_create` and `tally_set` take at most 5 thresholds. A sixth is an error that says to pass at most 5, that
   one `at` threshold takes any number of marks (so marks on the value, or on the count, fit in one), and that a
-  second tally can watch the rest. The schema says `maxItems: 5`. The number of marks is not limited: the status no
-  longer shows them. Five covers the cases this ADR is for (a budget, a checkpoint, a few marks) with room to spare,
+  second tally can watch the rest. The schema says `maxItems: 5`. The number of marks is not limited: the status
+  shows at most 5 of them. Five covers the cases this ADR is for (a budget, a checkpoint, a few marks) with room to spare,
   and keeps the thresholds of a response within a fixed size, as ADR-0008 asks of stored state.
 - The cap applies to arguments, not to tally files: a file with more thresholds, which only abakus 0.4 and earlier
   could write, still loads and shows all of them, and `tally_set` can replace them with at most 5. This is a
@@ -202,15 +217,16 @@ stands against them.
 ### Consequences
 
 - A tally tool's MCP result has a fixed size: at most 5 threshold statuses (more only for a tally file from abakus
-  0.4 or earlier, until `tally_set` replaces them), at most 10 marks per crossing, at most one decimal note,
-  whatever was passed to `tally_create`. With an `at` threshold of 200 marks given as strings,
-  `tally_create` and `tally_add` stay within 700 characters (`dev/check.zsh` checks it); the same call gave about
-  7,400 before.
-- The marks of an `at` threshold show in no response, on the command line neither. The agent has them in its
-  request, and the tally's file keeps them (ADR-0003: state can be inspected with `cat`).
+  0.4 or earlier, until `tally_set` replaces them), at most 5 marks ahead per `at` threshold, at most 10 marks per
+  crossing, at most one decimal note, whatever was passed to `tally_create`. With an `at` threshold of 200 marks
+  given as strings, `tally_create` and `tally_add` stay within 700 characters (`dev/check.zsh` checks it; 555 and
+  627 there); the same call gave about 7,400 before.
+- Of an `at` threshold's marks, a response shows the next 5 at most, on the command line too. All of them are in
+  the agent's request and in the tally's file (ADR-0003: state can be inspected with `cat`).
 - A tally file with more than 5 thresholds keeps working: every tool reads it, its responses show all its
   thresholds, and `tally_set` with `thresholds` brings it under the cap without touching its value or count. Every
   other rule of ADR-0003 still holds for files. Such files are rare: only abakus 0.4 and earlier could write one,
   and a tally expires after about three days unchanged.
-- abakus 0.5.0 is the first version with this. An agent that read the marks of an `at` threshold, or `read`, from
-  a tally response over MCP no longer gets them; a crossing of an `at` threshold now starts with `marks`.
+- abakus 0.5.0 is the first version with this. An agent that read all the marks of an `at` threshold, its `next`,
+  or `read`, from a tally response over MCP no longer gets them; a crossing of an `at` threshold now starts with
+  `marks_total`.
