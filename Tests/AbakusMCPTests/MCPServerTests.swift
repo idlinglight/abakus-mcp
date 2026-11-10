@@ -323,6 +323,15 @@ import Testing
         #expect(try error(&server, modernRequest(2, "tools/call", ["name": "nope"]))["code"] == -32602)
     }
 
+    /// An agent with the old habit learns the new name from the error.
+    @Test func aRenamedToolsOldNameGetsTheNewName() throws {
+        var server = makeServer()
+        let failure = try error(&server, request(1, "tools/call", ["name": "tally_list"]))
+        #expect(failure["code"] == -32602)
+        #expect(failure["message"] == "Unknown tool: tally_list. It was renamed to tallies_info in abakus 0.5.1. tools/list shows the available tools.")
+        #expect(try error(&server, request(2, "tools/call", ["name": "nope"]))["message"] == "Unknown tool: nope. tools/list shows the available tools.")
+    }
+
     @Test func malformedCallsAreInvalidParams() throws {
         var server = makeServer()
         #expect(try error(&server, request(1, "tools/call"))["code"] == -32602)

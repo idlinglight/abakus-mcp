@@ -27,7 +27,8 @@ enum ToolRunner {
 
     static func tool(named name: String) throws -> any Tool {
         guard let tool = Catalog.tool(named: name) else {
-            throw Failure("abakus has no tool named \(name). `abakus tools` lists the tools.")
+            let renamed = Catalog.renameNote(for: name).map { $0 + " " } ?? ""
+            throw Failure("abakus has no tool named \(name). \(renamed)`abakus tools` lists the tools.")
         }
         return tool
     }

@@ -14,7 +14,7 @@ Some small tasks are done better by a small program than by a language model, ye
 ad-hoc tooling for. abakus is the pocket calculator for those. Its arithmetic is exact decimal arithmetic:
 `0.1 + 0.2` is `0.3`, and a result that had to be rounded says so.
 
-macOS only. Status: early, version 0.5.0.
+macOS only. Status: early, version 0.5.2.
 
 ## Install
 
@@ -36,10 +36,10 @@ Other MCP clients: the command is `abakus mcp` (stdio).
 
 | Tool | What it does |
 |---|---|
-| `tally_create` | Create a tally under a name with a random suffix (or exactly, with `shared`), optionally with thresholds |
+| `tally_create` | Create a tally under a name with a random suffix (or exactly, with `shared`), optionally with up to 5 thresholds |
 | `tally_add` | Add an amount (default 1); says when a threshold is crossed |
 | `tally_set` | Correct a tally's value, count or thresholds |
-| `tally_list` | List tallies with their state |
+| `tallies_info` | Count tallies (optionally by name prefix) and give their folder; the command line lists them with their state |
 | `tally_drop` | Delete a tally |
 | `sum` | Add a list of numbers exactly |
 | `calc` | Work out one expression exactly, also over tallies by name |
@@ -53,21 +53,36 @@ A tally is a named, exact `value` plus a `count` of additions, kept in a file so
 context compaction. `tally_create` appends a random suffix to the name (`review` becomes `review-k3f9`), so
 each session counts its own; the response has the name to use from then on. With `shared: true` the name is
 used exactly, for a tally several sessions are meant to add to; that is refused if the name exists. All
-sessions of the user see the same tallies (`tally_list` shows them all), so the tool descriptions tell agents
-to leave other sessions' tallies alone unless they coordinate with them
-([ADR-0004](docs/adr/0004-tallies.md)).
+sessions of the user share the same tallies (`tallies_info` counts them, `abakus tallies info` shows them
+all), so the tool descriptions tell agents to leave other sessions' tallies alone unless they coordinate with
+them ([ADR-0004](docs/adr/0004-tallies.md)).
 
 Names: lowercase letters, digits, `.`, `_`, `-`, starting with a letter or digit, at most 64 characters
 including the suffix (so 59 as given, 64 with `shared: true`); a longer name is refused with a suggestion cut
 to 59. Tallies untouched for about three days expire ([ADR-0003](docs/adr/0003-state-in-user-temp-folder.md)).
 
-Every response is the tally's full state; numbers that came as strings are listed under `read`.
+Every response is the tally's state, each threshold with its status. Its size does not depend on how many marks
+the thresholds have, so it stays small over MCP ([ADR-0008](docs/adr/0008-small-mcp-results.md)).
 
-**Thresholds** are a list; each item has exactly one of `limit` (a ceiling), `at` (a list of marks) or
-`every` (a period), and optionally `of: "value"` (default) or `"count"`. An addition crosses a mark when it
-takes the tally from below the mark to the mark or past it; a tally that goes back down and up again reports
-the mark again. Thresholds never block. Each threshold's status is in every response: a limit says
-`reached` and `remaining` or `over`; `at` and `every` say the `next` mark.
+**Thresholds** are a list of at most 5; each item has exactly one of `limit` (a ceiling), `at` (a list of
+marks, any number of them) or `every` (a period), and optionally `of: "value"` (default) or `"count"`. An
+addition crosses a mark when it takes the tally from below the mark to the mark or past it; a tally that goes
+back down and up again reports the mark again. Thresholds never block. Each threshold's status is in every
+response: a limit says `reached` and `remaining` or `over`; `at` says how many marks it has (`marks_total`), how
+many are `passed` (reached) and the marks `ahead`, at most 5 (`[]` once all are passed), so an agent that lost its
+request to a context compaction still sees what comes next:
+`{"marks_total": 200, "of": "value", "passed": 18, "ahead": [19, 20, 21, 22, 23]}`; `every` says the `next` mark.
+A sixth threshold is an error that says to pass fewer, to watch some with a second tally, or, when two `at`
+thresholds watch the same measure, to merge them (one takes any number of marks). The tally's file keeps every
+mark.
+
+**Number strings**: over MCP, a string that reads differently with the other decimal mark (`"1,234"` is 1234 with
+`.`, 1.234 with `,`), when no other string in the call rules that mark out, gets one note under `notes` that names
+the argument, gives both readings and says how to correct it. The call has changed the tally by then, so the
+advice depends on the tool: `tally_set` says to call again with the other mark; `tally_create` to replace the
+thresholds with `tally_set` (creating again would make a second tally); `tally_add` gives the `tally_set` call
+that corrects the value and keeps the count (adding again would count twice). The command line also prints
+`read`, how each string was read (`{"input", "value"}`).
 
 `tally_create` `{name, shared?, thresholds?, decimal?}`
 
@@ -90,34 +105,58 @@ with `tally_add` and drop the new one with `tally_drop`.
    "note": "A tally named \"review-k3f9\" already exists, and tally_create always makes a new tally: …"}
 ```
 
-`tally_add` `{name, amount? (default 1), decimal?}` adds `added`, `crossed` (`[]` if nothing) and `read`:
+`tally_add` `{name, amount? (default 1), decimal?}` adds `added` and `crossed` (`[]` if nothing):
 
 ```json
-{"name": "review-k3f9", "amount": "6"}
-→ {"name": "review-k3f9", "value": 21, "count": 6, "added": 6, "read": [{"input": "6", "value": 6}],
+{"name": "review-k3f9", "amount": 6}
+→ {"name": "review-k3f9", "value": 21, "count": 6, "added": 6,
    "crossed": [{"limit": 20, "of": "value"}],
    "thresholds": [{"limit": 20, "of": "value", "reached": true, "over": 1},
                   {"every": 5, "of": "count", "next": 10}],
    "created": "2026-11-08T09:30:00Z", "updated": "2026-11-08T09:36:00Z"}
+
+{"name": "bytes-p2x7", "amount": "1,234"}
+→ {"name": "bytes-p2x7", "value": 1259, "count": 2, "added": 1234,
+   "crossed": [{"marks_total": 200, "of": "value", "times": 12, "first": 100, "last": 1200}],
+   "thresholds": [{"marks_total": 200, "of": "value", "passed": 12, "ahead": [1300, 1400, 1500, 1600, 1700]}],
+   "created": "2026-11-08T09:40:00Z", "updated": "2026-11-08T09:41:00Z",
+   "notes": ["\"1,234\" (amount) was read as 1234; with decimal: \",\" it would be 1.234. If you meant 1.234,
+              correct the value with tally_set {\"name\": \"bytes-p2x7\", \"value\": 26.234}, which keeps the
+              count and reports no crossings (crossed above follows 1234); adding again would count a second
+              time."]}
 ```
 
-Crossings look like `{"limit": 20, "of": "value"}`, `{"at": [1000000], "of": "value"}` (the marks crossed)
-or `{"every": 5, "of": "count", "at": [5]}`; past 10 multiples,
-`{"every": 1, "of": "value", "times": 250, "first": 1, "last": 250}`. A tally that ever had to round says
-`"exact": false`.
+Crossings start like the threshold's status: `{"limit": 20, "of": "value"}`,
+`{"marks_total": 50, "of": "value", "at": [1000000]}` (the marks crossed) or
+`{"every": 5, "of": "count", "at": [5]}`. Past 10 marks of one threshold, how many with the first and the last:
+`{"every": 1, "of": "value", "times": 250, "first": 1, "last": 250}`, and the same after `"marks_total"` for
+`at`. A tally that ever had to round says `"exact": false`.
 
 `tally_set` `{name, value?, count?, thresholds?, decimal?}` corrects a tally, reports no crossings;
-`thresholds: []` removes them all.
+`thresholds` replaces them all (at most 5), `thresholds: []` removes them.
 
-`tally_list` `{prefix?}` lists tallies sorted by name, and the folder they are kept in:
+`tallies_info` `{prefix?}` gives the folder the tallies are kept in and `tallies_found`, how many there are,
+plus `unreadable_found`, how many tallies' files cannot be read, when there are any; with `prefix`, both count
+only names that start with it. Over MCP that is all: names and states would grow with every session's tallies
+([ADR-0008](docs/adr/0008-small-mcp-results.md)). To look up a lost name over MCP, `calc` with `{items}` never
+writes, and its error for an unknown name (below) shows the tallies named `items` plus a suffix; `tally_add` or
+`tally_drop` with a guessed name would change or delete a shared tally of exactly that name. The command line
+(`abakus tallies info`) also prints `tallies`, every tally with its full state, sorted by name, and
+`unreadable`, each unreadable one with what is wrong:
 
 ```json
 {"prefix": "bytes"}
-→ {"folder": "/var/folders/…/T/abakus/tallies",
+→ {"folder": "/var/folders/…/T/abakus/tallies", "tallies_found": 1}
+
+abakus tallies info bytes
+→ {"folder": "/var/folders/…/T/abakus/tallies", "tallies_found": 1,
    "tallies": [{"name": "bytes", "value": 2490123.5, "count": 1,
-                "thresholds": [{"at": [1000000, 5000000], "of": "value", "next": 5000000}],
+                "thresholds": [{"marks_total": 2, "of": "value", "passed": 1, "ahead": [5000000]}],
                 "created": "2026-11-08T09:36:00Z", "updated": "2026-11-08T09:36:00Z"}]}
 ```
+
+Before 0.5.1 the tool was `tally_list`. That name, over MCP or with `abakus call`, is now an unknown tool whose
+error gives the new name; `abakus tally list` still works.
 
 `tally_drop` `{name}` deletes the tally and returns its final state with `"dropped": true`.
 
@@ -139,7 +178,7 @@ Details: {"name": "review",
           "existing": ["review-k3f9", "bytes"]}
 ```
 
-Creating a shared tally under an existing name shows that tally and says to add to it only in coordination
+Creating a shared tally under an existing name shows that tally's state and says to add to it only in coordination
 with whoever created it, or to leave `shared` out to count one's own work. An invalid name comes with a
 suggestion (`"Review Items"` → `"review-items"`).
 
@@ -288,16 +327,17 @@ every number is negative.
 ## Command line
 
 Each command runs one tool and prints the JSON an agent would get, plus what an MCP result leaves out: the
-details, such as the `read` of `sum` and `calc`, and the whole of a list that an MCP result shortens, such as
-`calc`'s `tallies` ([ADR-0008](docs/adr/0008-small-mcp-results.md)). `abakus call --without-details` gives the
-result as the server does, so a successful result is exactly the text an MCP client gets. A tool's error goes to
-stderr with exit status 1 (the same text an agent reads); a usage mistake shows the usage with exit status 64.
+details, such as the `read` of `sum`, `calc` and the tally tools, and the whole of a list that an MCP result
+shortens, such as `calc`'s `tallies` ([ADR-0008](docs/adr/0008-small-mcp-results.md)). `abakus call
+--without-details` gives the result as the server does, so a successful result is exactly the text an MCP client
+gets. A tool's error goes to stderr with exit status 1 (the same text an agent reads); a usage mistake shows the
+usage with exit status 64.
 
 ```sh
 abakus tally create review --limit 20 --every-count 5
 abakus tally add review-k3f9 6                   # the name it printed, suffix included
 abakus tally create build-errors --shared        # exactly this name, for several sessions
-abakus tally list
+abakus tallies info                              # every tally with its state (was: abakus tally list)
 abakus sum 410k 1,234.5 -3
 grep -oE '[0-9][0-9.]*k' build.log | abakus sum  # numbers from stdin
 abakus sum                                       # in a terminal: type or paste numbers, then ctrl-D
@@ -331,7 +371,9 @@ message. Numbers keep their exact text from request to response. Details and edg
 
 Tallies live in `abakus/tallies/` in the per-user temporary folder (`/var/folders/…/T/`), one JSON file per
 tally, shared by every session of the same user and guarded by a lock on the folder. macOS deletes files there
-that have not been touched for three days. `ABAKUS_STATE_DIR` points abakus at a different folder.
+that have not been touched for three days. `ABAKUS_STATE_DIR` points abakus at a different folder. The files are
+internal and not an interface for agents: tallies change only through the tally tools and the command line,
+which hold the lock ([ADR-0003](docs/adr/0003-state-in-user-temp-folder.md)).
 
 ## Build and test
 
@@ -349,12 +391,12 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/):
 
 - [ADR-0001](docs/adr/0001-one-package-one-binary.md): One Swift package, one binary, MCP first
 - [ADR-0002](docs/adr/0002-own-mcp-server.md): Own MCP server instead of the Swift SDK (amended: supported revisions, error mapping)
-- [ADR-0003](docs/adr/0003-state-in-user-temp-folder.md): State: one file per tally in the per-user temporary folder (amended: locking)
-- [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names; `tally_drop`'s advice for unknown names)
+- [ADR-0003](docs/adr/0003-state-in-user-temp-folder.md): State: one file per tally in the per-user temporary folder (amended: locking; the files are not an interface for agents)
+- [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names; `tally_drop`'s advice for unknown names; an `at` threshold by how many marks it has, at most 5 thresholds, `read` as a detail with a decimal note; `tally_list` renamed `tallies_info`, over MCP the folder and counts)
 - [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only; by ADR-0008: how readings show over MCP)
 - [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC (amended: whole seconds in `text`)
 - [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name (amended: underflow and the readable policy in full, when `fraction` is left out, rounded tallies in the response, unknown names, flat chains of + and * in `read`, errors while evaluating, parser details; `read` a detail, notes where conventions differ, at most 5 tallies over MCP)
-- [ADR-0008](docs/adr/0008-small-mcp-results.md): MCP results stay small; the command line shows everything (amended: calc within the rule; a tool may shorten a list over MCP)
+- [ADR-0008](docs/adr/0008-small-mcp-results.md): MCP results stay small; the command line shows everything (amended: `call --without-details`; the tools that work on one tally within the rule; `tallies_info` within the rule; calc within the rule; a tool may shorten a list over MCP)
 
 ## License
 

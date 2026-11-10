@@ -9,7 +9,7 @@ struct TallyCommand: ParsableCommand {
             Tallies live in the per-user temporary folder (or ABAKUS_STATE_DIR), one folder for all sessions of the \
             user, and disappear after about three days untouched. `tally create` appends a random suffix to the \
             name unless --shared is given. Names: lowercase letters, digits, '.', '_' and '-', at most 64 \
-            characters including the suffix.
+            characters including the suffix. `abakus tallies info` shows them all.
             """,
         subcommands: [Create.self, Add.self, Set.self, List.self, Drop.self]
     )
@@ -17,7 +17,10 @@ struct TallyCommand: ParsableCommand {
     struct Create: ParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Create a tally (tally_create).",
-            discussion: "Prints the new tally; its name has a random suffix (items → items-k3f9) unless --shared is given."
+            discussion: """
+                Prints the new tally; its name has a random suffix (items → items-k3f9) unless --shared is given. \
+                \(ThresholdOptions.cap)
+                """
         )
 
         @Argument(help: "The name, at most 59 characters (64 with --shared).") var name: String
@@ -69,7 +72,7 @@ struct TallyCommand: ParsableCommand {
     struct Set: ParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Change a tally's value, count or thresholds (tally_set).",
-            discussion: "Threshold options replace all thresholds; --clear-thresholds removes them."
+            discussion: "Threshold options replace all thresholds; --clear-thresholds removes them. \(ThresholdOptions.cap)"
         )
 
         @Argument(help: "The name of an existing tally.") var name: String
@@ -103,17 +106,17 @@ struct TallyCommand: ParsableCommand {
         }
     }
 
+    /// The command's name before 0.5.1, when the tool was tally_list (now tallies_info). Kept so that scripts keep
+    /// working, and left out of the help, which shows `abakus tallies info`.
     struct List: ParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Show tallies with their state (tally_list).")
+        static let configuration = CommandConfiguration(
+            abstract: "The old name of `abakus tallies info`.", shouldDisplay: false
+        )
 
-        @Argument(help: "Show only tallies whose name starts with this.") var prefix: String?
+        @OptionGroup var prefix: TallyPrefix
 
         func run() throws {
-            var arguments = JSONObject()
-            if let prefix {
-                arguments["prefix"] = .string(prefix)
-            }
-            try ToolRunner.run("tally_list", arguments)
+            try ToolRunner.run("tallies_info", prefix.arguments)
         }
     }
 
@@ -128,9 +131,50 @@ struct TallyCommand: ParsableCommand {
     }
 }
 
+/// `abakus tallies info`, the tool about all tallies at once (tallies_info). A group of its own, so that the command
+/// keeps the tool's name: tally_create is `abakus tally create`, tallies_info is `abakus tallies info`.
+struct TalliesCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "tallies",
+        abstract: "All tallies at once: where they are kept, how many there are, and each one's state.",
+        subcommands: [Info.self]
+    )
+
+    struct Info: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Print the folder, the counts and every tally with its state (tallies_info)."
+        )
+
+        @OptionGroup var prefix: TallyPrefix
+
+        func run() throws {
+            try ToolRunner.run("tallies_info", prefix.arguments)
+        }
+    }
+}
+
+/// The optional name prefix of `abakus tallies info` and of its old name, `abakus tally list`.
+struct TallyPrefix: ParsableArguments {
+    @Argument(help: "Only tallies whose name starts with this.") var prefix: String?
+
+    var arguments: JSONObject {
+        var arguments = JSONObject()
+        if let prefix {
+            arguments["prefix"] = .string(prefix)
+        }
+        return arguments
+    }
+}
+
 /// Threshold options, turned into tally_create's and tally_set's `thresholds` list. Each watches the value,
 /// or the count with the `-count` variant.
 struct ThresholdOptions: ParsableArguments {
+    /// The core takes fewer thresholds than there are options, so the help says so.
+    static let cap = """
+        At most \(TallyTools.maximumThresholds) thresholds in all, so not all six threshold options at once; repeated \
+        --at (or --at-count) make one threshold.
+        """
+
     // `.unconditional`: the next word is the value even when it starts with "-" (a negative mark).
     @Option(parsing: .unconditional, help: ArgumentHelp("A ceiling on the value.", valueName: "n"))
     var limit: String?

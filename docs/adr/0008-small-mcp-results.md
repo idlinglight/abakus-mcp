@@ -1,7 +1,8 @@
 # ADR-0008: MCP results stay small; the command line shows everything
 
-Status: accepted, 2026-11-09; amended 2026-11-10 (calc within the rule; a tool may shorten a list over MCP; see
-the end)
+Status: accepted, 2026-11-09; amended 2026-11-10 (`abakus call --without-details`; the tools that work on one
+tally within the rule; `tallies_info`, formerly `tally_list`, within the rule; calc within the rule, and a tool may
+shorten a list over MCP; see Scope and the end)
 
 ## Context
 
@@ -133,15 +134,19 @@ the practical check; the growth rule says what does not belong in a result at al
 - Now: `sum`, and the errors of every tool that quote an input (number strings, JSON number literals, calc's
   numbers, dates, tally names, unknown argument names).
 - `date_diff` is within the rule: its input is two instants, and every key it returns is bounded.
-- `calc` is within the rule since the amendment of 2026-11-10 (see the end, and ADR-0007's amendment of that day).
-- Known exceptions, each to be brought within the rule when it is next changed:
-  - The tools that work on one tally (`tally_create`, `tally_add`, `tally_set`, `tally_drop`) repeat every
-    threshold the tally keeps, an `at` threshold with all its marks, and `crossed` repeats the marks of each `at`
-    threshold crossed. An error for an unknown name lists in `details.matching` up to 20 whole tallies, thresholds
-    included. A direction: show each threshold by what comes next, with a count of its marks.
-  - `tally_list` grows with the number of tallies, other sessions' included, which the caller does not control.
-    A direction: the folder and what is in it, plus a count. The files would become an interface that agents read,
-    and the description would have to say that tallies change only through the tally tools, which hold the lock.
+- Amended 2026-11-10: the tools that work on one tally (`tally_create`, `tally_add`, `tally_set`, `tally_drop`)
+  are within the rule, no longer a known exception ([ADR-0004](0004-tallies.md), amendment of 2026-11-10). An `at`
+  threshold shows how many marks it has, how many are reached and at most 5 marks ahead; `crossed` lists at most 10
+  marks per threshold, then a count; `tally_create` and `tally_set` take at most 5 thresholds; `read` is a detail,
+  with the decimal note of `sum` in its place. The exception also said that an error for an unknown name lists whole
+  tallies in `details.matching`: it lists only each one's name, value, count and created time, and always did.
+- `tallies_info` is within the rule since abakus 0.5.1 (amended 2026-11-10). Until then it was `tally_list`, a
+  known exception that grew with the number of tallies, other sessions' included. Over MCP it now returns the
+  folder and how many tallies there are; `tallies` and `unreadable`, which grow with the number of tallies, are its
+  details. The files did not become an interface for agents ([ADR-0004](0004-tallies.md) and
+  [ADR-0003](0003-state-in-user-temp-folder.md), amendments of 2026-11-10).
+- `calc` is within the rule since abakus 0.5.2 (amended 2026-11-10; see the end, and ADR-0007's amendment of that
+  day). With it, no known exception is left.
 - A skill for the command line, user-level and installed on request, with its source in this repository: open.
 
 ## Consequences
@@ -197,4 +202,4 @@ be wrong; an expression rarely names more than five tallies; and the command lin
   measured 1,658 characters, and a `fraction` could add about 200 where the values allow one.
 - A tool that shortens a list says so in its description, with the name of the count, and that the command line
   prints the whole list.
-- abakus 0.5.0 is the first version with this.
+- abakus 0.5.2 is the first version with this.

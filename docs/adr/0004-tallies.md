@@ -3,7 +3,9 @@
 Status: accepted, 2026-11-08; amended 2026-11-08 (threshold argument shape, crossing rule and "once", unique
 suffix, `tally_set` and exactness, unknown names and arguments, thresholds that cannot be computed); amended
 2026-11-08 (a random suffix by default, `shared: true` for an exact name; see the end); amended 2026-11-08
-(the advice for unknown names in `tally_drop`)
+(the advice for unknown names in `tally_drop`); amended 2026-11-10 (an `at` threshold by how many marks it has
+and the next ones, `at` crossings capped, at most 5 thresholds, `read` as a detail with a decimal note; see the
+end); amended 2026-11-10 (`tally_list` becomes `tallies_info`; over MCP the folder and how many tallies there are)
 
 ## Context
 
@@ -58,10 +60,13 @@ does not reliably know an identifier that is unique to its session.
   value is then the one given.
 - A tally that ever had to round says `exact: false` in every response, until its value is set.
 - Unknown arguments are errors: a typo such as `amout` would otherwise be ignored and add 1.
-- Every response carries the tally's full state, each threshold with its status.
+- Every response carries the tally's full state, each threshold with its status. (Amended 2026-11-10, see the
+  end: an `at` threshold shows how many marks it has and at most 5 of those ahead, not all of them; `at`
+  crossings list at most 10 marks; at most 5 thresholds; how strings were read is a detail, with a note when a
+  reading was a choice.)
 - Tools: `tally_create`, `tally_add`, `tally_set` (value, count or thresholds of an existing tally),
-  `tally_list` (all tallies or those with a name prefix, and the folder they are in), `tally_drop` (returns
-  the final state).
+  `tally_list` (all tallies or those with a name prefix, and the folder they are in; now `tallies_info`, over MCP
+  only the folder and how many there are, by the amendment of 2026-11-10), `tally_drop` (returns the final state).
 
 ## Consequences
 
@@ -122,9 +127,9 @@ consumers relying on `unique`.
 - Tally names in responses and in `tally_list` carry suffixes; an agent that loses the name finds it with
   `tally_list` and a prefix, or in the unknown-name error, and tells its own from others' by when it was
   created. An agent that cannot tell starts a new tally and loses its earlier count, which is better than
-  adding to another session's.
+  adding to another session's. (Since the amendment of 2026-11-10, over MCP only in the unknown-name error.)
 - Agents still see every tally of the user in `tally_list`; leaving other sessions' tallies alone is guidance
-  in the descriptions, not enforced.
+  in the descriptions, not enforced. (Since the amendment of 2026-11-10, only on the command line.)
 
 ## Amendment 2026-11-08: the advice for unknown names in `tally_drop`
 
@@ -135,3 +140,159 @@ to expire; without such tallies, that nothing was dropped. `tally_add` and `tall
 new tally. `tally_add`'s description no longer points to `tally_list` for finding a name, which steered agents
 towards other sessions' tallies; it and `tally_set`'s description say that the error shows the tallies whose
 names start with the name given, with when each was created.
+
+## Amendment 2026-11-10: an `at` threshold by its marks ahead, at most 5 thresholds, `read` as a detail
+
+### Context
+
+[ADR-0008](0008-small-mcp-results.md) lets a successful MCP result grow at most logarithmically with the input and
+with the stored state it reports on. The tools that work on one tally did not: "every response carries the tally's
+full state, each threshold with its status" meant each threshold with its spec, an `at` threshold with all its
+marks; `crossed` repeated every `at` mark crossed; and `read` listed every number string with its value. Neither
+the number of thresholds nor the number of marks was limited. A `tally_create` with one `at` threshold of 200 marks
+given as strings got a response of about 7,400 characters, and every `tally_add` after it repeated the 200 marks.
+ADR-0008 listed this as a known exception.
+
+The marks are the agent's own input, but its request can be gone: a context compaction drops it, and with it the
+marks. What the agent needs from a response is where the tally stands against them and which come next.
+
+### Decision
+
+- An `at` threshold's status is
+  `{"marks_total": 200, "of": "value", "passed": 18, "ahead": [19, 20, 21, 22, 23]}`: how many marks it has, how
+  many are reached (at or below the current value or count), and the marks ahead, ascending, at most 5
+  (`Threshold.marksAhead`). The kind key and `of` come first, as in the statuses of `limit` and `every`, which are
+  unchanged. Responses still carry the tally's whole state; an `at` threshold is shown by what an agent acts on,
+  not by all its marks. The tally file keeps every mark: it is state, not a response.
+  - Why the marks ahead, not only a count and the next one: after a compaction, no MCP result showed which marks
+    were still ahead, and the agent could not get them back. With the count alone, none of the three agents of the
+    usability probe (Haiku, Sonnet, Opus) could say which marks were ahead. Five marks ahead answer it for the near
+    future, and a
+    list of a fixed length stays within ADR-0008. All of them are in the tally's file.
+  - `marks_total`, not `marks`: next to a list, a key named `marks` that holds a number reads like a list; two of
+    the three probe agents read it so. `_total` as in the unknown-name error's `existing_total`.
+  - No `next`: it would be `ahead[0]` under a second name, in every status. `every` keeps `next`: it has no list.
+  - `ahead` is `[]` once all marks are passed, not left out: as `crossed` is `[]` when nothing was crossed, the key
+    is always there, so an agent never has to wonder whether a missing key means "none" or "not shown".
+  - Size: at most 5 numbers per threshold, each bounded by the number rules (ADR-0005). Five marks of 38
+    significant digits give a status of about 250 characters.
+- `crossed` for an `at` threshold starts the same way and lists the marks crossed, at most 10
+  (`Threshold.listedMarks`, as for `every`); beyond that, how many with the first and the last:
+  `{"marks_total": 400, "of": "value", "times": 250, "first": 150, "last": 399}`. Crossings of `limit` and `every`
+  are unchanged.
+- `tally_create` and `tally_set` take at most 5 thresholds. A sixth is an error that says to pass fewer or to watch
+  some with a second tally. When two or more `at` thresholds watch the same measure, it first suggests merging
+  them, since one `at` threshold takes any number of marks; otherwise merging would not help, and the error does
+  not suggest it. The schema says `maxItems: 5`, and the command line's help says that its six threshold options
+  cannot all be given at once. The number of marks is not limited: the status shows at most 5 of them. Five covers
+  the cases this ADR is for (a budget, a checkpoint, a few marks) with room to spare, and keeps the thresholds of a
+  response within a fixed size, as ADR-0008 asks of stored state.
+- The cap applies to arguments, not to tally files: a file with more thresholds, which only abakus 0.4 and earlier
+  could write, still loads and shows all of them, and `tally_set` can replace them with at most 5. This is a
+  deliberate exception to [ADR-0003](0003-state-in-user-temp-folder.md)'s one validation for arguments and files.
+  The cap is about the size of responses, not about what makes a threshold valid; and a file refused for it could
+  only be deleted with `tally_drop`, which loses its value and count, a shared tally's included.
+- `read` is a detail of `tally_create`, `tally_add` and `tally_set` (ADR-0008): the command line prints it, an MCP
+  result leaves it out. In its place, `sum`'s decimal note (ADR-0008, section "sum"), from the same code: when a
+  number string in the call reads differently with the other decimal mark, and no other string in the call rules
+  that mark out, `notes` holds one note of fixed size that names the argument (`amount`, `thresholds[0].at[2]`),
+  gives both readings and says what to do. What to do depends on the tool, since by the time the agent reads the
+  note the call has changed the tally:
+  - `tally_set` is idempotent: call again with the other mark, as for `sum`.
+  - `tally_create`: replace the thresholds with `tally_set` on the new tally, passing them again with the other
+    mark. Calling `tally_create` again would make a second tally.
+  - `tally_add`: the addition has counted with the reading it got, and adding again would count it a second time.
+    The note gives the `tally_set` call with the value the other reading gives (`{"name": "bytes-k3f9", "value":
+    26.234}`), which keeps the count: it was one addition either way. It also says that `tally_set` reports no
+    crossings and that `crossed` follows the reading used, so a mark listed there may not have been reached. When
+    that value has more than 38 significant digits, the note says how to get it instead. A negative amount was
+    considered and not chosen: it corrects the value but counts a second addition, which throws off a checkpoint
+    every N items.
+  - Where only whole numbers go (a count, a threshold on the count), a string whose other reading has a fraction
+    (`"1,234"` as a count) has no second reading, and it rules the other mark out like a string the other mark
+    cannot read: calling again with it would fail.
+- `tally_create`'s `note` about an existing name stays as it is, beside `notes`.
+- The shared-name error shows the existing tally's state, as compact as every response. The unknown-name error's
+  `details.matching` held only each tally's name, value, count and created time all along; ADR-0008 described it
+  as whole tallies by mistake.
+
+### Consequences
+
+- A tally tool's MCP result has a fixed size: at most 5 threshold statuses (more only for a tally file from abakus
+  0.4 or earlier, until `tally_set` replaces them), at most 5 marks ahead per `at` threshold, at most 10 marks per
+  crossing, at most one decimal note, whatever was passed to `tally_create`. With an `at` threshold of 200 marks
+  given as strings, `tally_create` and `tally_add` stay within 700 characters (`dev/check.zsh` checks it; 555 and
+  627 there); the same call gave about 7,400 before.
+- Of an `at` threshold's marks, a response shows the next 5 at most, on the command line too. All of them are in
+  the agent's request and in the tally's file (ADR-0003: state can be inspected with `cat`).
+- A tally file with more than 5 thresholds keeps working: every tool reads it, its responses show all its
+  thresholds, and `tally_set` with `thresholds` brings it under the cap without touching its value or count. Every
+  other rule of ADR-0003 still holds for files. Such files are rare: only abakus 0.4 and earlier could write one,
+  and a tally expires after about three days unchanged.
+- abakus 0.5.0 is the first version with this. An agent that read all the marks of an `at` threshold, its `next`,
+  or `read`, from a tally response over MCP no longer gets them; a crossing of an `at` threshold now starts with
+  `marks_total`.
+
+## Amendment 2026-11-10: `tally_list` becomes `tallies_info`: over MCP the folder and how many tallies there are
+
+### Context
+
+`tally_list` returned every tally of the user, other sessions' included, each with its full state and every
+threshold. Its size depended on what other sessions did, which the caller does not control, and
+[ADR-0008](0008-small-mcp-results.md) listed it as a known exception to the rule that MCP results stay small (issue
+#15). Since the amendments above, an agent that lost a name finds it in the error for an unknown name, which shows
+the tallies with that name plus a suffix and when each was created; `tally_add`'s description stopped pointing to
+`tally_list` for that, because the list steered agents towards other sessions' tallies.
+
+The issue proposed returning the folder, a count and what to expect in it, so that agents would read the files
+with `ls`, `jq` or `grep`. That would make the file format an interface: the descriptions would have to document
+it and say that only the tally tools write, and every later format version would have to consider agents reading
+files. Not chosen.
+
+Also considered: a list of at most a fixed number of tallies plus a count, which ADR-0008 allows. Its entries would
+be whichever tallies sort first, as often other sessions' as one's own. The unknown-name error picks tallies by the
+name given, which serves an agent looking for its own tally better.
+
+### Decision
+
+- Over MCP, the tool returns `folder`, `tallies_found` (the number of readable tallies) and `unreadable_found`
+  (the number of tallies whose file cannot be read, only when there are any); with `prefix`, both count only
+  tallies whose names start with it: `{"folder": "/var/folders/…/T/abakus/tallies", "tallies_found": 3}`. Its
+  title is "Count tallies".
+- `tallies` (each tally's full state, sorted by name) and `unreadable` (each such name with what is wrong) are its
+  detail keys (ADR-0008): the command line prints them, `abakus tallies info [prefix]` and `abakus call
+  tallies_info` alike.
+- Not `count`: a tally's `count` is its number of additions, and on the command line both appear in one result.
+  With a full name as `prefix`, `"count": 1` would read as that tally's count. `tallies_found` and
+  `unreadable_found` each count the list of the same name.
+- The tool is renamed `tallies_info`, since `tally_list` promises a list that the MCP result no longer holds. In
+  two rounds of probes with fresh agents given only the names, all three of the first round read `tally_list` as
+  a list. In the second, five of six chose `tallies_info` over `tally_count`, `tally_status`, `tally_summary` and
+  `tally_stats`: the plural marks it as about all tallies, nobody read it as a tool for one tally, and "info"
+  covers both the small MCP result and the full listing on the command line. `tally_count` lost because an
+  `abakus tally count` that prints every tally surprised everyone; `tally_status` read as one tally's state.
+- The command follows the tool's name, as `tally_create` is `abakus tally create`: `abakus tallies info [prefix]`,
+  in a group `tallies` of its own. `abakus tally list` still works and is left out of the help. Over MCP and with
+  `abakus call`, `tally_list` is an unknown tool whose error says it was renamed to `tallies_info` in abakus 0.5.1
+  (`Catalog.renamed`).
+- What `tallies_info` is for over MCP: how many tallies there are, with a prefix or all, and where they are kept. To
+  look up a lost name, the description points to `calc` with the name without its suffix (`{items}`): calc never
+  writes, and its error for an unknown name shows the tallies named with it plus a suffix (up to 20, with when
+  each was created), as the other tally tools' error does. Those tools are not offered for a lookup: `tally_add`
+  or `tally_drop` with a guessed name would change or delete a shared tally of exactly that name. A partial name
+  (`item` for `items-k3f9`) finds nothing over MCP; the command line lists every tally. `calc` also reads one
+  tally's value or count (`{name}`, `{name:count}`).
+- The description says what an MCP result holds, that the command line lists every tally with its state, and that
+  tallies change only through the tally tools, which hold the lock on the folder, never by changing files in it.
+  It does not describe the files ([ADR-0003](0003-state-in-user-temp-folder.md), amendment of 2026-11-10). It
+  informs about the command line and does not tell the agent to run it (ADR-0008).
+- `calc`'s errors for a malformed tally reference say to write the full name "as tally_create returned it", no
+  longer "or tally_list".
+
+### Consequences
+
+- `tallies_info` is within ADR-0008's rule: its MCP result grows only by the digits of its counts.
+- An agent that read names or states from `tally_list` over MCP finds, from abakus 0.5.1 on, a tool with another
+  name that returns counts. The command line prints what `tally_list` returned before, plus the counts.
+- Over MCP, only the unknown-name error still names other sessions' tallies: `details.existing` up to 20 names,
+  `details.matching` those that start with the name given and `-`, with when each was created.
