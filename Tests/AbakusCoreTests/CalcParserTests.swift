@@ -106,6 +106,37 @@ import Testing
         #expect(try CalcParser.parse("\u{2212}2 \u{00D7} 3").position == 4)
     }
 
+    /// Where each node is written, without and with the parentheses around it, for calc's notes.
+    @Test func spansCoverWhatWasWrittenAndTheParenthesesAroundIt() throws {
+        let text = "-( (2) ^ {a} ) + max(1, 2)"
+        let source = Array(text)
+        func written(_ range: Range<Int>) -> String { String(source[range]) }
+        let sum = try CalcParser.parse(text)
+        #expect(written(sum.span) == text)
+        #expect(!sum.isParenthesized)
+        guard case .binary(.add, let negation, let call) = sum.node, case .negation(let power) = negation.node,
+            case .binary(.power, let base, let exponent) = power.node
+        else {
+            Issue.record("\(sum)")
+            return
+        }
+        #expect(written(negation.span) == "-( (2) ^ {a} )")
+        #expect(written(power.span) == "(2) ^ {a}")
+        #expect(written(power.outerSpan) == "( (2) ^ {a} )")
+        #expect(power.isParenthesized)
+        #expect(written(base.span) == "2")
+        #expect(written(base.outerSpan) == "(2)")
+        #expect(written(exponent.span) == "{a}")
+        #expect(!exponent.isParenthesized)
+        #expect(written(call.span) == "max(1, 2)")
+        #expect(!call.isParenthesized)
+
+        // Every pair of parentheses counts: the span stays the number.
+        let five = try CalcParser.parse(" ((5)) ")
+        #expect(five.span == 3..<4)
+        #expect(five.outerSpan == 1..<6)
+    }
+
     @Test func numbersKeepTheirLiteral() throws {
         for literal in ["410k", ".5", "2.5e3", "007", "1e\u{2212}3"] {
             let tree = try CalcParser.parse(" \(literal) ")
@@ -219,6 +250,53 @@ import Testing
         let late = message(String(repeating: "1 + ", count: 30) + "(")
         #expect(late.contains("ends after \"(\" at character 121 of \"…"), "\(late)")
         #expect(late.contains("+ 1 + (\": "), "\(late)")
+    }
+
+    /// One character can carry any number of combining marks. Errors stay bounded anyway (ADR-0008): a space that
+    /// carries them is not whitespace, the excerpt is a window of scalars that keeps the position, and the rewrite
+    /// for a missing * is written out only for a short expression, counted in scalars.
+    @Test func errorsStayBoundedWithCombiningMarks() {
+        let marks = String(repeating: "\u{301}", count: 20_000)
+        // A space with marks is refused where it stands, as one unexpected character, quoted and cut.
+        let space = message("1 + " + marks + " 2")
+        #expect(space.hasPrefix("Unexpected \""), "\(space.prefix(80))")
+        #expect(space.contains("at character 4 of"), "\(space.prefix(300))")
+        #expect(space.unicodeScalars.count < 400, "\(space.unicodeScalars.count)")
+        // Plain whitespace, also a line break written as \r\n (one character of two scalars), is still whitespace.
+        #expect(message("1\r\n+\u{00A0}2") == "(no error: 1 + 2)")
+        #expect(message(" \r\n ").hasPrefix("The expression is only whitespace."))
+        // Marks after the error: the excerpt is a window of 50 scalars around the position, not of 50 characters.
+        let after = message("1 + 2 % e" + marks)
+        // Compared by scalars: "e" and its marks are one character, which String compares whole.
+        let start = "Unexpected \"%\" at character 7 of \"1 + 2 % e\u{301}"
+        #expect(after.unicodeScalars.starts(with: start.unicodeScalars), "\(after.prefix(80))")
+        #expect(after.unicodeScalars.count < 400, "\(after.unicodeScalars.count)")
+        // A missing * in a short expression of many scalars: the rewrite would repeat the rest of the text.
+        let star = message("2(3) e" + marks)
+        #expect(star.contains("Write * before character 2 where a multiplication is meant."), "\(star.prefix(200))")
+        #expect(star.unicodeScalars.count < 400, "\(star.unicodeScalars.count)")
+    }
+
+    /// A tally reference's errors repeat what the braces hold cut in the middle, to 40 scalars, whatever its length
+    /// and however many combining marks it carries (ADR-0008).
+    @Test func tallyReferenceErrorsCutWhatTheBracesHold() {
+        let marks = String(repeating: "\u{301}", count: 20_000)
+        let field = message("{a:x" + marks + "}")
+        // Compared by scalars (.literal): "x" and its marks are one character, which String compares whole.
+        let fieldStart = "The tally reference {a:x" + String(repeating: "\u{301}", count: 17) + "…"
+        #expect(field.unicodeScalars.starts(with: fieldStart.unicodeScalars), "\(field.prefix(80))")
+        #expect(field.range(of: "ends in an unknown \":x\u{301}", options: .literal) != nil, "\(field.prefix(300))")
+        #expect(field.unicodeScalars.count < 400, "\(field.unicodeScalars.count)")
+        let letters = String(repeating: "x", count: 900)
+        let empty = message("{ :" + letters + "}")
+        #expect(empty.hasPrefix("The tally reference { :" + String(repeating: "x", count: 18) + "…"), "\(empty.prefix(80))")
+        #expect(empty.contains("has no name"), "\(empty.prefix(300))")
+        #expect(empty.count < 400, "\(empty.count)")
+        let unknown = message("{a:" + letters + "}")
+        #expect(unknown.contains("ends in an unknown \":" + String(repeating: "x", count: 20) + "…"), "\(unknown.prefix(300))")
+        #expect(unknown.count < 400, "\(unknown.count)")
+        // Short contents are repeated whole, as before.
+        #expect(message("{ : count}").hasPrefix("The tally reference { : count} at character 1 of \"{ : count}\" has no name"))
     }
 
     /// A long number literal is cut in the middle wherever an error names it (ADR-0008).

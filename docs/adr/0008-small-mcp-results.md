@@ -1,8 +1,8 @@
 # ADR-0008: MCP results stay small; the command line shows everything
 
 Status: accepted, 2026-11-09; amended 2026-11-10 (`abakus call --without-details`; the tools that work on one
-tally within the rule; `tallies_info`, formerly `tally_list`, within the rule; the skill for the command line;
-see Scope)
+tally within the rule; `tallies_info`, formerly `tally_list`, within the rule; calc within the rule, and a tool may
+shorten a list over MCP; the skill for the command line; see Scope and the end)
 
 ## Context
 
@@ -101,7 +101,9 @@ the practical check; the growth rule says what does not belong in a result at al
 - A tool's result in the core holds everything abakus knows about the call. Keys that grow with the input are the
   tool's details (`Tool.detailKeys`): the MCP server leaves them out, the command line prints them. The behaviour
   stays in the core; each side chooses what it shows. One exception, amended 2026-11-10: `abakus call
-  --without-details` prints a result as the server sends it (see Consequences).
+  --without-details` prints a result as the server sends it (see Consequences). Also amended 2026-11-10: a tool
+  may shorten a list over MCP to a fixed number of entries plus a count, while the command line prints every
+  entry of a successful result (`Tool.withoutDetails`; see the end). Errors are bounded on both sides.
 - The command line takes numbers as arguments or from stdin, so a check can be a command that runs again over the
   source data (`grep -oE '…' build.log | abakus sum`), and its output can go through `jq` or `head` or into a file.
 - The tool descriptions say that the command line exists and what it adds. They do not tell an agent to run it: a
@@ -143,10 +145,8 @@ the practical check; the growth rule says what does not belong in a result at al
   folder and how many tallies there are; `tallies` and `unreadable`, which grow with the number of tallies, are its
   details. The files did not become an interface for agents ([ADR-0004](0004-tallies.md) and
   [ADR-0003](0003-state-in-user-temp-folder.md), amendments of 2026-11-10).
-- Known exceptions, each to be brought within the rule when it is next changed:
-  - `calc`: `read` grows with the expression and `tallies` with the tallies it names. ADR-0007's reasoning about
-    `-2^2` relies on `read` being visible; the replacement would be notes for the known traps, and `tallies` could
-    become a list of a fixed length plus a count.
+- `calc` is within the rule since abakus 0.5.2 (amended 2026-11-10; see the end, and ADR-0007's amendment of that
+  day). With it, no known exception is left.
 - A skill for the command line, user-level and installed on request, with its source in this repository: done
   (amended 2026-11-10). `skills/abakus-cli/SKILL.md`, installed by `./install.zsh --skill` into Claude Code's
   user-level skills, carries what the tool descriptions leave out on purpose: when the command line is the better
@@ -166,3 +166,46 @@ the practical check; the growth rule says what does not belong in a result at al
 - Claude Code's session transcripts record every abakus call, so calls per session can be compared before and
   after this change.
 - abakus 0.4.0 is the first version with this rule. An agent that read `sum`'s `read` over MCP no longer gets it.
+
+## Amendment 2026-11-10: calc within the rule; lists shortened over MCP
+
+### Context
+
+calc was a known exception (Scope): `read` grows with the expression, `tallies` with the tallies it names.
+ADR-0007's reasoning about `-2^2` relied on `read` being visible. `tallies` keeps an answer over changing tallies
+from misleading, so leaving it out whole was no option, and the rule above allows a list of a fixed length plus a
+count. But "The command line shows everything" only provided for leaving out whole keys (`Tool.detailKeys`): a
+list that the command line prints in full and an MCP result shortens had no place.
+
+Cutting a list after a number of entries was not chosen for `sum`'s `read` above, since the entry that matters may
+be the one cut. For calc's `tallies` the risk is smaller: the list shows the values used, not a reading that may
+be wrong; an expression rarely names more than five tallies; and the command line prints them all.
+
+### Decision
+
+- A tool may also shorten a list over MCP: at most a fixed number of entries, in a stated order, then a count of
+  all, named after the list (`tallies_total`, as `existing_total` in the tally errors). A successful result in
+  the core keeps every entry, and the command line prints them; the count appears only in the shortened list,
+  where it says something.
+- The mechanism is `Tool.withoutDetails(_:)`, now a requirement of the protocol rather than only an extension
+  method, so that the server and `abakus call --without-details`, which hold `any Tool`, call the tool's own
+  version. The default leaves out the detail keys, as before, and `abakus call --without-details` still prints
+  exactly the text an MCP client gets.
+- Errors do not go through `withoutDetails`: an error that carries such a list shortens it itself, the same way
+  (calc's `details.tallies`), and since an error is the same text on both sides, the command line shows the
+  shortened list too.
+- calc is within the rule (ADR-0007, amendment 2026-11-10): `read` is a detail, notes show the two readings where
+  conventions differ (a leading minus before a power, a chain of powers), and `tallies` lists at most 5 over MCP,
+  then `tallies_total`. Its bullet under Known exceptions is removed.
+
+### Consequences
+
+- The practical check holds for calc: over MCP, a 500-term chain gives `{"result":500}` instead of about 2000
+  characters of `read`, and an expression with 7 tallies about 260 characters. `dev/check.zsh` measures both
+  against a budget of 400 characters, and a third, the error for a space carrying 20,000 combining marks: the
+  limits count Unicode scalars, and errors are measured too. The worst case is fixed but larger: an adversarial
+  expression with five 64-character tally names, 38-digit rounded values and both notes at their longest
+  measured 1,658 characters, and a `fraction` could add about 200 where the values allow one.
+- A tool that shortens a list says so in its description, with the name of the count, and that the command line
+  prints the whole list.
+- abakus 0.5.2 is the first version with this.

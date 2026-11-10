@@ -23,6 +23,10 @@ import Foundation
 struct CalcParser {
     static let maximumLength = 1000
     static let maximumDepth = 64
+    /// How many Unicode scalars of a part of an expression a message repeats before it cuts the part in the middle or
+    /// describes it instead (ADR-0008): round's first argument and what a tally reference's braces hold here, an
+    /// operand or a value in calc's evaluation errors, an occurrence in calc's notes.
+    static let quotedPartLimit = 40
 
     /// Parses `expression`. `maximumLength` exists for tests, which lift it to reach the depth guard with
     /// inputs far beyond the length limit.
@@ -37,7 +41,7 @@ struct CalcParser {
             )
         }
         var parser = CalcParser(expression, source: source)
-        if source.allSatisfy(\.isWhitespace) {
+        if source.allSatisfy(\.isCalcWhitespace) {
             throw ToolError(
                 "The expression is \(expression.isEmpty ? "empty" : "only whitespace"). Write a calculation such as "
                     + "{errors-k3f9} / {requests-p2x7} * 100 or 1250 * 1.19."
@@ -179,7 +183,9 @@ struct CalcParser {
                 case .plus:
                     try advance()
                 case .leaf(let node):
-                    levels[levels.count - 1].operands.append(CalcExpression(position: position, node: node))
+                    levels[levels.count - 1].operands.append(
+                        CalcExpression(position: position, node: node, written: token.start..<token.end)
+                    )
                     try advance()
                     expectingOperand = false
                 case .open:
@@ -220,9 +226,11 @@ struct CalcParser {
             switch (level.kind, token.kind) {
             case (.whole, .end):
                 return value
-            case (.group, .close):
+            case (.group(let open), .close):
                 depth -= 1
-                levels[levels.count - 1].operands.append(value)
+                var grouped = value
+                grouped.outerSpan = (open - 1)..<token.end
+                levels[levels.count - 1].operands.append(grouped)
                 try advance()
             case (.call, .comma):
                 level.firstArgument = level.firstArgument ?? level.argumentStart..<(previous?.end ?? level.argumentStart)
@@ -240,7 +248,7 @@ struct CalcParser {
                 }
                 depth -= 1
                 levels[levels.count - 1].operands.append(
-                    CalcExpression(position: name, node: .call(function, level.arguments))
+                    CalcExpression(position: name, node: .call(function, level.arguments), written: (name - 1)..<token.end)
                 )
                 try advance()
             case (.group(let open), .end):
@@ -267,10 +275,15 @@ struct CalcParser {
             let right = level.operands.removeLast()
             switch top.kind {
             case .negation:
-                level.operands.append(CalcExpression(position: top.position, node: .negation(right)))
+                level.operands.append(CalcExpression(
+                    position: top.position, node: .negation(right), written: (top.position - 1)..<right.outerSpan.upperBound
+                ))
             case .binary(let op):
                 let left = level.operands.removeLast()
-                level.operands.append(CalcExpression(position: top.position, node: .binary(op, left, right)))
+                level.operands.append(CalcExpression(
+                    position: top.position, node: .binary(op, left, right),
+                    written: left.outerSpan.lowerBound..<right.outerSpan.upperBound
+                ))
             }
             if top.nests { depth -= 1 }
         }
@@ -318,7 +331,8 @@ struct CalcParser {
             return ToolError("abs takes 1 argument, but \(given) \(at(position)). Write abs(x).")
         case .round:
             // The first argument as written, when it is short enough to repeat.
-            let x = firstArgument.flatMap { $0.count <= 40 ? text($0.lowerBound, $0.upperBound) : nil } ?? "x"
+            let x = firstArgument.map { text($0.lowerBound, $0.upperBound) }.flatMap { $0.unicodeScalars.count <= Self.quotedPartLimit ? $0 : nil }
+                ?? "x"
             return ToolError(
                 "round takes 2 arguments, the value and the decimal places, but \(given) \(at(position)). Write "
                     + "round(\(x), 0) to round to a whole number, or round(\(x), 2) for two decimal places."
@@ -335,7 +349,9 @@ struct CalcParser {
     private func refuseAdjacentOperand() throws(ToolError) {
         guard token.startsOperand, let previous else { return }
         var message = "Missing operator \(at(token.position)): calc does not multiply implicitly."
-        if source.count <= 60 {
+        // Scalars, not characters: the rest of the text is not read yet, and one character can carry any number of
+        // combining marks.
+        if expression.unicodeScalars.count <= 60 {
             let corrected = (text(0, previous.end) + " * " + text(token.start, source.count))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             message += " Write * where the multiplication goes: \(corrected)."
@@ -406,7 +422,7 @@ struct CalcParser {
         + "like {errors-k3f9}, and the functions abs, round, min and max."
 
     private mutating func scanToken() throws(ToolError) -> Token {
-        while let c = char(at: index), c.isWhitespace { index += 1 }
+        while let c = char(at: index), c.isCalcWhitespace { index += 1 }
         guard let c = char(at: index) else { return Token(kind: .end, start: source.count, end: source.count) }
         if c.calcDigit != nil || (c == "." && digit(at: index + 1) != nil) { return try scanNumber() }
         switch c {
@@ -610,7 +626,7 @@ struct CalcParser {
         if CalcFunction(rawValue: word) != nil || Self.roots.contains(word) || Self.constants.contains(word) {
             return true
         }
-        while let c = char(at: end), c.isWhitespace { end += 1 }
+        while let c = char(at: end), c.isCalcWhitespace { end += 1 }
         return char(at: end) == "("
     }
 
@@ -748,9 +764,12 @@ struct CalcParser {
         let parts = content.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
         let name = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
         let fieldText = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        // What the braces hold is repeated cut in the middle: it can be any length, and one character can carry any
+        // number of combining marks (ADR-0008).
+        let shownContent = content.cutForMessage(limit: Self.quotedPartLimit)
         if name.isEmpty {
             throw ToolError(
-                "The tally reference {\(content)} \(at(position)) has no name: write the tally's full name in braces, "
+                "The tally reference {\(shownContent)} \(at(position)) has no name: write the tally's full name in braces, "
                     + "as tally_create returned it, like {errors-k3f9}."
             )
         }
@@ -763,7 +782,8 @@ struct CalcParser {
         case "count": field = .count
         default:
             throw ToolError(
-                "The tally reference {\(content)} \(at(position)) ends in an unknown \":\(fieldText ?? "")\": write "
+                "The tally reference {\(shownContent)} \(at(position)) ends in an unknown "
+                    + "\":\((fieldText ?? "").cutForMessage(limit: Self.quotedPartLimit))\": write "
                     + "{\(shownName):count} for the tally's count, or {\(shownName)} (or {\(shownName):value}) for its value."
             )
         }
@@ -823,7 +843,7 @@ struct CalcParser {
             return ToolError("Unexpected \(found): for a multiplication, write * (or ×).")
         }
         var afterWord = start + word.count
-        while let c = char(at: afterWord), c.isWhitespace { afterWord += 1 }
+        while let c = char(at: afterWord), c.isCalcWhitespace { afterWord += 1 }
         if char(at: afterWord) == "(" {
             return ToolError("Unknown function \(found): calc has the functions abs, round, min and max." + star)
         }
@@ -889,14 +909,22 @@ struct CalcParser {
         "at character \(position) of \(excerpt(around: position, of: expression, source: source))"
     }
 
+    /// The expression, or a window of 50 Unicode scalars around `position` when it has more than 60 (ADR-0008).
+    /// Scalars, not characters: one character can carry any number of combining marks, and a window of characters
+    /// would then grow with the input, or lose the position to the middle cut of `quotedForMessage`.
     private static func excerpt(around position: Int, of expression: String, source: [Character]) -> String {
-        guard source.count > 60 else { return expression.quotedForMessage }
+        let scalars = Array(expression.unicodeScalars)
+        guard scalars.count > 60 else { return expression.quotedForMessage }
         let width = 50
-        let index = min(max(position - 1, 0), source.count)
-        let end = min(source.count, max(index - width / 2, 0) + width)
+        // Where the character at `position` starts, counted in scalars.
+        let index = source[..<min(max(position - 1, 0), source.count)].reduce(0) { $0 + $1.unicodeScalars.count }
+        let end = min(scalars.count, max(index - width / 2, 0) + width)
         let start = max(0, end - width)
-        let excerpt = (start > 0 ? "…" : "") + String(source[start..<end]) + (end < source.count ? "…" : "")
-        return excerpt.quotedForMessage
+        var excerpt = String.UnicodeScalarView()
+        if start > 0 { excerpt.append("…") }
+        excerpt.append(contentsOf: scalars[start..<end])
+        if end < scalars.count { excerpt.append("…") }
+        return String(excerpt).quotedForMessage
     }
 }
 
@@ -916,6 +944,11 @@ private extension Character {
 
     /// `+`, `-` or `−`.
     var isSign: Bool { onlyScalar.map(NumberReader.isSign) ?? false }
+
+    /// Whitespace, decided per scalar: a space that carries combining marks is one character, but not whitespace.
+    /// Taken for whitespace, it would let one character of an expression hold any amount of text, which messages
+    /// then repeat.
+    var isCalcWhitespace: Bool { unicodeScalars.allSatisfy(\.properties.isWhitespace) }
 
     var isASCIILetter: Bool {
         guard let ascii = asciiValue else { return false }

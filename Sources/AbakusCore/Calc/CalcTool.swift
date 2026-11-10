@@ -11,6 +11,13 @@ public struct CalcTool: Tool {
 
     public let name = "calc"
 
+    /// `read` repeats the whole expression, so it grows with it: the command line prints it, an MCP result leaves it
+    /// out and has notes for the readings where conventions differ instead (ADR-0008, ADR-0007 amendment 2026-11-10).
+    public let detailKeys = ["read"]
+
+    /// Over MCP and in errors, `tallies` lists at most this many references, then `tallies_total` (ADR-0008).
+    static let shownTallies = 5
+
     public let description = """
         Work out one arithmetic expression exactly, such as a rate from two tallies or what is left of a budget. \
         Stateless: it reads tallies and never changes them.
@@ -23,7 +30,8 @@ public struct CalcTool: Tool {
 
         Operators: + and -; * or × to multiply; / or ÷ to divide; ^ or ** for powers with a whole-number exponent \
         from -9999 to 9999 and any base (2^10, 1.045^10, 2^-1). Powers bind tighter than a leading minus and group \
-        from the right: -2^2 is -(2^2) = -4, (-2)^2 is 4, 2^3^2 is 2^9. Parentheses group. No implicit \
+        from the right: -2^2 is -(2^2) = -4, (-2)^2 is 4, 2^3^2 is 2^9. * and / come before + and -, each pair \
+        from the left: a / b * c is (a / b) * c, so 1 / 2*{n} is (1 / 2) * {n}. Parentheses group. No implicit \
         multiplication: write 2*(3+4), not 2(3+4).
 
         Functions: abs(x), round(x, places) (half away from zero; round(x, 0) for a whole number), min(a, b, ...), \
@@ -46,12 +54,17 @@ public struct CalcTool: Tool {
         digits. Trailing zeros are dropped: round(12.5, 2) gives 12.5. A tally whose value was rounded before \
         (exact: false in its state) makes the result exact: false too.
 
-        Response: {"result", "read", "tallies"}. read is the expression as it was understood, numbers written out \
-        (410k as 410000) and parentheses around every operation but the outermost, except along a chain of + or of \
-        * (1 + 2 + 3); check it when the expression could be read two ways. tallies (left out when there are none) lists each tally used with the number taken \
-        from it, as {"name", "of": "value" or "count", "value"}, plus "exact": false for a rounded one. exact: false \
-        appears only when the result was rounded or uses a rounded tally, fraction only when the result itself was \
-        rounded.
+        Response: {"result", "notes", "tallies"}. notes appears only for a reading on which conventions differ, a \
+        leading minus before a power (-2^2) or a chain of powers (2^3^2), unless you wrote the parentheses \
+        yourself; it says how it was read and how to write the other reading. tallies (left out when there are \
+        none) lists each reference with the number taken from it ({t} and {t:count} are two), as {"name", "of": \
+        "value" or "count", "value"}, plus "exact": false for a rounded one: at most 5, in the order they first \
+        appear, then tallies_total, the number of all, when there are more than 5. exact: false appears only when \
+        the result was rounded or uses a rounded tally, fraction only when the result itself was rounded.
+
+        The abakus command line (abakus calc, or abakus call calc; the same program as this server) prints a \
+        successful result with every tally, plus read: the expression as calc understood it, with parentheses that \
+        show the grouping. An error is the same text on both sides and lists at most 5 tallies.
         """
 
     public let inputSchema: JSONValue = [
@@ -84,12 +97,20 @@ public struct CalcTool: Tool {
             values[item.reference] = try item.number()
         }
 
-        let value = try Self.evaluate(expression, text: text, values: values, details: details)
+        // Worked out before evaluating: when a reading on which conventions differ is what makes the expression
+        // fail (1/(-2^2+4) meant as Excel reads it), the error carries the note too.
+        let notes = CalcNotes.notes(for: expression, in: text)
+        let value: Fraction
+        do throws(ToolError) {
+            value = try Self.evaluate(expression, text: text, values: values, used: used)
+        } catch {
+            throw Self.adding(notes, to: error)
+        }
         let rounded: Fraction.DecimalResult
         do throws(FractionError) {
             rounded = try value.decimalResult()
         } catch {
-            throw Self.resultError(error, value: value, details: details)
+            throw Self.adding(notes, to: Self.resultError(error, value: value, details: details))
         }
 
         var result: JSONObject = ["result": .decimal(rounded.value)]
@@ -97,9 +118,32 @@ public struct CalcTool: Tool {
         // fraction is only for a rounding done here, which it undoes.
         if !rounded.exact || used.contains(where: \.isInexact) { result["exact"] = false }
         if let fraction = rounded.fraction { result["fraction"] = .string(fraction) }
+        if !notes.isEmpty { result["notes"] = .array(notes.map(JSONValue.string)) }
         result["read"] = .string(expression.rendered)
+        // Every reference: the command line prints them all, and `withoutDetails` shortens the list for MCP.
         if !used.isEmpty { result["tallies"] = .array(used.map { .object($0.entry) }) }
         return result
+    }
+
+    /// The result as an MCP client gets it: without `read`, and with at most `shownTallies` tallies, then
+    /// `tallies_total` (ADR-0008).
+    public func withoutDetails(_ result: JSONObject) -> JSONObject {
+        var answer = JSONObject()
+        for (key, value) in result.entries where !detailKeys.contains(key) {
+            if key == "tallies", let entries = value.arrayValue {
+                Self.addTallies(entries, to: &answer)
+            } else {
+                answer[key] = value
+            }
+        }
+        return answer
+    }
+
+    /// `tallies` with at most `shownTallies` entries, in the order of first appearance, and `tallies_total`, the
+    /// number of all, when there are more.
+    private static func addTallies(_ entries: [JSONValue], to object: inout JSONObject) {
+        object["tallies"] = .array(Array(entries.prefix(shownTallies)))
+        if entries.count > shownTallies { object["tallies_total"] = .number(String(entries.count)) }
     }
 
     // MARK: Arguments
@@ -236,21 +280,21 @@ public struct CalcTool: Tool {
     /// The exact value of the expression, from the leaves up, with each reference's number from `values`. A failure
     /// names the operation and where it is.
     private static func evaluate(
-        _ expression: CalcExpression, text: String, values: [Reference: Fraction], details: JSONObject?
+        _ expression: CalcExpression, text: String, values: [Reference: Fraction], used: [UsedTally]
     ) throws(ToolError) -> Fraction {
         try expression.fold { (node: CalcExpression, operands: [Fraction]) throws(ToolError) -> Fraction in
             let result: Fraction?
             do throws(FractionError) {
                 result = try combine(node, operands, values: values)
             } catch {
-                throw evaluationError(error, at: node, operands: operands, text: text, details: details)
+                throw evaluationError(error, at: node, operands: operands, text: text, used: used)
             }
             guard let result else {
                 // Not reached: every reference is read before evaluating, and the parser checks the arguments.
                 throw ToolError(
-                    "calc has no value for \(node.rendered) \(CalcParser.at(node.position, of: text)), which is a bug "
+                    "calc has no value for \(written(node)) \(CalcParser.at(node.position, of: text)), which is a bug "
                         + "in abakus. Nothing was computed.",
-                    details: details
+                    details: Self.details(used)
                 )
             }
             return result
@@ -295,10 +339,26 @@ public struct CalcTool: Tool {
 
     // MARK: Errors
 
+    /// An error found while evaluating or rounding, with the expression's notes under `details.notes`, the same strings
+    /// as in a successful result, and a sentence that points to them. Each note has a fixed size, so the error stays
+    /// bounded.
+    private static func adding(_ notes: [String], to error: ToolError) -> ToolError {
+        guard !notes.isEmpty else { return error }
+        var details = error.details ?? JSONObject()
+        details["notes"] = .array(notes.map(JSONValue.string))
+        let pointer = notes.count == 1
+            ? " details.notes says how calc read a part of the expression that other conventions read differently."
+            : " details.notes says how calc read parts of the expression that other conventions read differently."
+        return ToolError(error.message + pointer, details: details)
+    }
+
     /// An error while working out `node`: what happened, where (as the parser says it), and what to do instead.
+    /// `details.tallies` lists the tallies used; for a division by zero, those of the divisor first, so that the
+    /// tallies the message names come with their values.
     private static func evaluationError(
-        _ error: FractionError, at node: CalcExpression, operands: [Fraction], text: String, details: JSONObject?
+        _ error: FractionError, at node: CalcExpression, operands: [Fraction], text: String, used: [UsedTally]
     ) -> ToolError {
+        var details = Self.details(used)
         let at = CalcParser.at(node.position, of: text)
         let exponents = "\(Fraction.exponentRange.lowerBound) to \(Fraction.exponentRange.upperBound)"
         let places = "\(Fraction.placesRange.lowerBound) to \(Fraction.placesRange.upperBound)"
@@ -306,10 +366,13 @@ public struct CalcTool: Tool {
         let message: String
         switch (error, node.node) {
         case (.divisionByZero, .binary(.power, let base, _)):
+            details = Self.details(used, first: base)
             message = "0 raised to a negative power \(at): the base\(named(base)) is 0, and 0 ^ -n is 1 / 0^n, a "
                 + "division by zero. " + whileZero(base, "base")
         case (.divisionByZero, .binary(_, _, let divisor)):
-            message = "Division by zero \(at): the divisor\(named(divisor)) is 0. " + whileZero(divisor, "divisor")
+            details = Self.details(used, first: divisor)
+            message = "Division by zero \(at): the divisor\(named(divisor)) is 0. "
+                + whileZero(divisor, "divisor")
         case (.tooManyDigits, _):
             message = "\(operation(node)) \(at) gives a value with more than \(Fraction.digitLimit) digits in its "
                 + "numerator or denominator: calc keeps every value as an exact fraction and stops at "
@@ -334,7 +397,9 @@ public struct CalcTool: Tool {
         return ToolError(message, details: details)
     }
 
-    /// What to do about a divisor (or the base of a negative power) that is 0, by the tallies it uses.
+    /// What to do about a divisor (or the base of a negative power) that is 0, by the tallies it uses. The error lists
+    /// the operand's references first in `details.tallies` (`details(_:first:)`), so they are all there when there
+    /// are at most `shownTallies` of them.
     private static func whileZero(_ operand: CalcExpression, _ role: String) -> String {
         let names = tallyNames(in: operand).map(\.quotedForMessage)
         let start = "While the \(role) is 0, the result has no value: report that, or "
@@ -342,8 +407,13 @@ public struct CalcTool: Tool {
         case 0: return start + "change the \(role)."
         case 1: return start + "calculate again once something has been added to the tally \(names[0])."
         default:
-            return start + "calculate again once the tallies \(names.listedInProse) have changed (details.tallies "
-                + "has their values)."
+            // At most as many names as details.tallies lists, so that the message stays bounded too (ADR-0008).
+            let listed = names.count > shownTallies
+                ? names.prefix(shownTallies).joined(separator: ", ") + " and \(names.count - shownTallies) more"
+                : names.listedInProse
+            let again = start + "calculate again once the tallies \(listed) have changed"
+            let allShown = references(in: operand).references.count <= shownTallies
+            return again + (allShown ? " (details.tallies has their values)." : ".")
         }
     }
 
@@ -401,9 +471,19 @@ public struct CalcTool: Tool {
     }
 
     /// The tallies an expression used, for errors that come after reading them: a division by zero is often a
-    /// tally at 0.
-    private static func details(_ used: [UsedTally]) -> JSONObject? {
-        used.isEmpty ? nil : ["tallies": .array(used.map { .object($0.entry) })]
+    /// tally at 0. At most `shownTallies`, then `tallies_total`, as over MCP: errors are bounded too (ADR-0008). In
+    /// the order of first appearance, except that the references in `operand` (a divisor that is 0) come first.
+    private static func details(_ used: [UsedTally], first operand: CalcExpression? = nil) -> JSONObject? {
+        guard !used.isEmpty else { return nil }
+        var ordered = used
+        if let operand {
+            let first = references(in: operand).references
+            ordered = first.compactMap { reference in used.first { $0.reference == reference } }
+                + used.filter { !first.contains($0.reference) }
+        }
+        var details = JSONObject()
+        addTallies(ordered.map { .object($0.entry) }, to: &details)
+        return details
     }
 
     /// What `node` does, to start a message.
@@ -431,15 +511,15 @@ public struct CalcTool: Tool {
     }
 
     /// An operand as the agent can find it in what it wrote: a number as written (`1e-50`), anything else as `read`
-    /// writes it, in parentheses when it is an operation; a long one is cut in the middle.
+    /// writes it, in parentheses when it is an operation; a long one is cut in the middle, to
+    /// `CalcParser.quotedPartLimit` scalars.
     private static func written(_ operand: CalcExpression) -> String {
         let text = switch operand.node {
         case .number(_, let literal): literal
         case .binary: "(" + operand.rendered + ")"
         default: operand.rendered
         }
-        guard text.count > 40 else { return text }
-        return String(text.prefix(20)) + "…" + String(text.suffix(19))
+        return text.cutForMessage(limit: CalcParser.quotedPartLimit)
     }
 
     /// An operand that came to 0, after a space: nothing for a plain number, which is 0 as written.
@@ -455,7 +535,7 @@ public struct CalcTool: Tool {
         if case .number = operand.node { return written }
         let exact = value.description
         if written == exact { return written }
-        return written + " = " + (exact.count <= 40 ? exact : size(of: value))
+        return written + " = " + (exact.unicodeScalars.count <= CalcParser.quotedPartLimit ? exact : size(of: value))
     }
 
     /// A value too long to write out, by its size: `a whole number of 2000 digits`, `a fraction of 1 digit over

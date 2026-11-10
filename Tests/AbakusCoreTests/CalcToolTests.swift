@@ -26,6 +26,14 @@ import Testing
         #expect(schema["properties"]?.objectValue?["expression"]?.objectValue?["type"] == "string")
     }
 
+    @Test func readIsADetail() throws {
+        #expect(tool.detailKeys == ["read"])
+        let result = try calc("1/3")
+        #expect(result.keys == ["result", "exact", "fraction", "read"])
+        #expect(tool.withoutDetails(result) == ["result": .number("0.333333333333333"), "exact": false, "fraction": "1/3"])
+        #expect(tool.withoutDetails(result).keys == ["result", "exact", "fraction"])
+    }
+
     // MARK: The probe's tasks
 
     /// The tallies of the probe in ADR-0007: four of a session's own, with suffixes, and two shared ones.
@@ -156,6 +164,8 @@ import Testing
         let sum = Array(repeating: "1", count: 500).joined(separator: "+")
         #expect(sum.count == 999)
         #expect(try calc(sum)["result"] == 500)
+        // read grows with the chain (about 2000 characters); an MCP result leaves it out (ADR-0008).
+        #expect(JSONWriter.write(tool.withoutDetails(try calc(sum))) == #"{"result":500}"#)
         let difference = "1000" + String(repeating: "-2", count: 498)
         #expect(difference.count == 1000)
         #expect(try calc(difference)["result"] == 4)
@@ -294,6 +304,291 @@ import Testing
         #expect(try Data(contentsOf: state.file("effort-a1b2")) == before)
     }
 
+    /// Eight references to seven tallies: the command line gets them all, an MCP result the first five and how many
+    /// there are (ADR-0008).
+    @Test func anMCPResultListsFiveTalliesAndHowManyThereAre() throws {
+        let state = TallyTestState()
+        for (index, name) in ["a", "b", "c", "d", "e", "f", "g"].enumerated() {
+            try state.call("tally_create", ["name": .string(name), "shared": true])
+            try state.call("tally_add", ["name": .string(name), "amount": .number(String(index + 1))])
+        }
+        let result = try calc("{a} + {b} + {c:count} + {d} + {e} + {f} + {g} / 3 + {a:count}", in: state)
+        let all: [JSONValue] = [
+            ["name": "a", "of": "value", "value": 1], ["name": "b", "of": "value", "value": 2],
+            ["name": "c", "of": "count", "value": 1], ["name": "d", "of": "value", "value": 4],
+            ["name": "e", "of": "value", "value": 5], ["name": "f", "of": "value", "value": 6],
+            ["name": "g", "of": "value", "value": 7], ["name": "a", "of": "count", "value": 1],
+        ]
+        // 1 + 2 + 1 + 4 + 5 + 6 + 7/3 + 1 = 67/3
+        #expect(result == [
+            "result": .number("22.3333333333333"), "exact": false, "fraction": "67/3",
+            "read": "{a} + {b} + {c:count} + {d} + {e} + {f} + ({g} / 3) + {a:count}", "tallies": .array(all),
+        ])
+        let mcp = tool.withoutDetails(result)
+        #expect(mcp == [
+            "result": .number("22.3333333333333"), "exact": false, "fraction": "67/3",
+            "tallies": .array(Array(all.prefix(5))), "tallies_total": 8,
+        ])
+        #expect(mcp.keys == ["result", "exact", "fraction", "tallies", "tallies_total"])
+        // Through `any Tool`, as the server and `abakus call --without-details` hold it, calc's own version runs.
+        let anyTool: any Tool = tool
+        #expect(anyTool.withoutDetails(result) == mcp)
+
+        // Five references: all of them, and no count.
+        let five = tool.withoutDetails(try calc("{a} + {b} + {c} + {d} + {e:count}", in: state))
+        #expect(five.keys == ["result", "tallies"])
+        #expect(five["tallies"]?.arrayValue?.count == 5)
+    }
+
+    // MARK: Notes
+
+    static let noteCases: [(String, [String])] = [
+        ("-2^2", [
+            """
+            "-2^2" at character 1 was read as -(2^2): the power comes first, then the minus, as in mathematics. Excel \
+            and bc apply the minus first; for that reading, write (-2)^2.
+            """,
+        ]),
+        ("2^3^2", [
+            """
+            "2^3^2" at character 1 was read as 2^(3^2): powers group from the right, as in mathematics. Excel groups \
+            them from the left; for that reading, write (2^3)^2.
+            """,
+        ]),
+        // The agent's own spelling and spacing stay; the parentheses go around what it wrote.
+        ("10 - \u{2212}2 ** 2", [
+            """
+            "\u{2212}2 ** 2" at character 6 was read as \u{2212}(2 ** 2): the power comes first, then the minus, as \
+            in mathematics. Excel and bc apply the minus first; for that reading, write (\u{2212}2) ** 2.
+            """,
+        ]),
+        // A parenthesised base, and a minus in a group or before an exponent.
+        ("-(1 + 1)^2", [
+            """
+            "-(1 + 1)^2" at character 1 was read as -((1 + 1)^2): the power comes first, then the minus, as in \
+            mathematics. Excel and bc apply the minus first; for that reading, write (-(1 + 1))^2.
+            """,
+        ]),
+        ("3 * (-2^2)", [
+            """
+            "-2^2" at character 6 was read as -(2^2): the power comes first, then the minus, as in mathematics. Excel \
+            and bc apply the minus first; for that reading, write (-2)^2.
+            """,
+        ]),
+        // A minus in a chain: the minus note names bc, whose reading its rewrite gives; the chain note names Excel,
+        // and its rewrite gives Excel's reading, the minus first and powers from the left.
+        ("2^-3^2", [
+            """
+            "-3^2" at character 3 was read as -(3^2): the power comes first, then the minus, as in mathematics. bc \
+            applies the minus first; for that reading, write (-3)^2.
+            """,
+            """
+            "2^-3^2" at character 1 was read as 2^-(3^2): powers group from the right, and a minus comes after the \
+            power, as in mathematics. Excel applies the minus first and groups powers from the left; for that reading, \
+            write (2^-3)^2.
+            """,
+        ]),
+        // A longer chain is one chain, with every parenthesis written out.
+        ("2 ** 3 ** 2 ^ 1", [
+            """
+            "2 ** 3 ** 2 ^ 1" at character 1 was read as 2 ** (3 ** (2 ^ 1)): powers group from the right, as in \
+            mathematics. Excel groups them from the left; for that reading, write ((2 ** 3) ** 2) ^ 1.
+            """,
+        ]),
+        // Beyond four operands, the readings are described.
+        ("2^1^1^1^1", [
+            """
+            In "2^1^1^1^1" at character 1, powers group from the right, as in mathematics. Excel groups them from the \
+            left; for that reading, write the parentheses yourself, as in (2^3)^2.
+            """,
+        ]),
+        // Both kinds: one note each, the minus first. The chain starts at the minus.
+        ("-2^3^2", [
+            """
+            "-2^3^2" at character 1 was read as -(2^3^2): the power comes first, then the minus, as in mathematics. \
+            bc applies the minus first; for that reading, write (-2)^3^2.
+            """,
+            """
+            "-2^3^2" at character 1 was read as -(2^(3^2)): powers group from the right, and a minus comes after the \
+            power, as in mathematics. Excel applies the minus first and groups powers from the left; for that reading, \
+            write ((-2)^3)^2.
+            """,
+        ]),
+        ("-2^-3^2", [
+            """
+            The expression has 2 powers with a leading minus. The first, "-2^-3^2" at character 1, was read as \
+            -(2^-3^2): the power comes first, then the minus, as in mathematics. bc applies the minus first; for that \
+            reading, put the minus and the base in parentheses, as in (-2)^-3^2.
+            """,
+            """
+            "-2^-3^2" at character 1 was read as -(2^-(3^2)): powers group from the right, and a minus comes after the \
+            power, as in mathematics. Excel applies the minus first and groups powers from the left; for that reading, \
+            write ((-2)^-3)^2.
+            """,
+        ]),
+        // A minus before a parenthesised chain is outside it.
+        ("-(2^3^2)", [
+            """
+            "2^3^2" at character 3 was read as 2^(3^2): powers group from the right, as in mathematics. Excel groups \
+            them from the left; for that reading, write (2^3)^2.
+            """,
+        ]),
+        // Several: how many, the first one, and advice for all of them.
+        ("1 + 2^2^2 + 3^3^3", [
+            """
+            The expression has 2 chains of powers. The first, "2^2^2" at character 5, was read as 2^(2^2): powers \
+            group from the right, as in mathematics. Excel groups them from the left; for that reading, write the \
+            parentheses yourself, as in (2^2)^2.
+            """,
+        ]),
+        // Parentheses around an exponent end a chain: two chains, the outer one first.
+        ("2^2^(1^1^1)", [
+            """
+            The expression has 2 chains of powers. The first, "2^2^(1^1^1)" at character 1, was read as \
+            2^(2^(1^1^1)): powers group from the right, as in mathematics. Excel groups them from the left; for that \
+            reading, write the parentheses yourself, as in (2^2)^(1^1^1).
+            """,
+        ]),
+        ("5 - -2^2 * 3 + -1^2", [
+            """
+            The expression has 2 powers with a leading minus. The first, "-2^2" at character 5, was read as -(2^2): \
+            the power comes first, then the minus, as in mathematics. Excel and bc apply the minus first; for that \
+            reading, put the minus and the base in parentheses, as in (-2)^2.
+            """,
+        ]),
+    ]
+
+    @Test(arguments: CalcToolTests.noteCases)
+    func notesWhereConventionsDiffer(expression: String, notes: [String]) throws {
+        let result = try calc(expression)
+        #expect(result["notes"] == .array(notes.map(JSONValue.string)), "\(expression)")
+        // Over MCP too: notes take the place of read.
+        #expect(tool.withoutDetails(result).keys == ["result", "notes"], "\(expression)")
+    }
+
+    /// Parentheses the agent wrote settle the reading; mixed chains of * and / or + and - read the same everywhere.
+    @Test(arguments: [
+        "-(2^2)", "(-2)^2", "2^(3^2)", "(2^3)^2", "-(2^(3^2))", "((-2))^2", "-((2^2))", "(2^(-3))^2", "2^-1", "-2 * 3",
+        "2 * -3", "10 / 4 * 2", "37 / 1250 * 100", "1 - 2 + 3", "8 / 4 / 2", "1 - 2 - 3", "-abs(2)", "--2", "2^2",
+        "(1+1)^(2^2)",
+    ])
+    func noNoteWhereTheReadingIsSettled(expression: String) throws {
+        #expect(try calc(expression)["notes"] == nil, "\(expression)")
+    }
+
+    @Test func notesHoldForTallies() throws {
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "errors-k3f9", "shared": true])
+        try state.call("tally_add", ["name": "errors-k3f9", "amount": 3])
+        let result = try calc("-{errors-k3f9}^2", in: state)
+        #expect(result["result"] == -9)
+        #expect(result["notes"] == [
+            """
+            "-{errors-k3f9}^2" at character 1 was read as -({errors-k3f9}^2): the power comes first, then the minus, \
+            as in mathematics. Excel and bc apply the minus first; for that reading, write (-{errors-k3f9})^2.
+            """,
+        ])
+        #expect(result.keys == ["result", "notes", "read", "tallies"])
+        #expect(tool.withoutDetails(result).keys == ["result", "notes", "tallies"])
+        #expect(try calc("(-{errors-k3f9})^2", in: state)["notes"] == nil)
+    }
+
+    /// A long occurrence is cut in the middle, and the readings are described instead of written out.
+    @Test func aLongOccurrenceIsCut() throws {
+        let base = "(" + (1...11).map(String.init).joined(separator: " + ") + ")"
+        #expect(try calc("-\(base)^2")["notes"] == [
+            """
+            In "-(1 + 2 + 3 + 4 + 5 … 8 + 9 + 10 + 11)^2" at character 1, the power comes first, then the minus, as in \
+            mathematics. Excel and bc apply the minus first; for that reading, put the minus and the base in \
+            parentheses, as in (-2)^2.
+            """,
+        ])
+        #expect(try calc("1 + \(base)^2^1")["notes"] == [
+            """
+            In "(1 + 2 + 3 + 4 + 5 +… + 9 + 10 + 11)^2^1" at character 5, powers group from the right, as in \
+            mathematics. Excel groups them from the left; for that reading, write the parentheses yourself, as in \
+            (2^3)^2.
+            """,
+        ])
+    }
+
+    /// One note per kind, of the same size however many occurrences there are (ADR-0008).
+    @Test func notesDoNotGrowWithTheExpression() throws {
+        func notes(_ terms: Int) throws -> [String] {
+            let expression = Array(repeating: "-2^2^1", count: terms).joined(separator: " + ")
+            return try #require(calc(expression)["notes"]?.arrayValue).compactMap(\.stringValue)
+        }
+        let two = try notes(2)
+        #expect(two.count == 2)
+        // 111 terms make 996 characters: the same notes, but for the count.
+        #expect(try notes(111) == two.map { $0.replacingOccurrences(of: "has 2 ", with: "has 111 ") })
+    }
+
+    /// The one middle cut that errors, operands and notes share: `limit` scalars in all, half before the `…`.
+    @Test func theMiddleCutCountsScalars() {
+        let long = String(repeating: "a", count: 60) + String(repeating: "b", count: 60)
+        #expect(long.cutForMessage == String(repeating: "a", count: 50) + "…" + String(repeating: "b", count: 49))
+        #expect(long.cutForMessage(limit: 40) == String(repeating: "a", count: 20) + "…" + String(repeating: "b", count: 19))
+        #expect("short".cutForMessage(limit: 40) == "short")
+        let marks = "x" + String(repeating: "\u{301}", count: 1000)
+        #expect(marks.count == 1)
+        #expect(marks.cutForMessage(limit: 40).unicodeScalars.count == 40)
+        #expect(long.quotedForMessage(limit: 40).unicodeScalars.count == 42)
+    }
+
+    /// The limits count Unicode scalars, not characters. A space carrying combining marks is refused by the parser
+    /// (`CalcParserTests.errorsStayBoundedWithCombiningMarks`), but a line break written as \r\n is still one
+    /// character of two scalars: 19 of them make -2^…2 23 characters and 42 scalars, past the limit of 40, so the
+    /// occurrence is cut (its first 20 scalars, "…", its last 19) and the readings are described.
+    @Test func notesCountScalarsNotCharacters() throws {
+        let expression = "-2^" + String(repeating: "\r\n", count: 19) + "2"
+        #expect(expression.count == 23)
+        #expect(expression.unicodeScalars.count == 42)
+        let result = try calc(expression)
+        let note = try #require(result["notes"]?.arrayValue?.first?.stringValue)
+        let scalars = Array(expression.unicodeScalars)
+        let cut = String(String.UnicodeScalarView(scalars.prefix(20))) + "…"
+            + String(String.UnicodeScalarView(scalars.suffix(19)))
+        let start = "In \"" + cut + "\" at character 1, the power comes first"
+        #expect(note.unicodeScalars.starts(with: start.unicodeScalars), "\(note)")
+        #expect(note.hasSuffix("put the minus and the base in parentheses, as in (-2)^2."), "\(note)")
+        #expect(note.unicodeScalars.count < 300, "\(note.unicodeScalars.count)")
+    }
+
+    /// Each rewrite a note suggests, put in place of the occurrence, gives the reading the note names: Excel's for
+    /// the chain note and for a minus note that names Excel, bc's for a minus note that names only bc. The expected
+    /// values were worked out by hand: Excel applies a minus first and groups powers from the left, bc applies a minus
+    /// first and groups powers from the right.
+    @Test(arguments: [
+        // expression, Excel's value, bc's value
+        ("-2^2", "4", "4"), ("2^3^2", "64", "512"), ("-2^3^2", "64", "-512"), ("2^-3^2", "0.015625", "512"),
+        ("10 - 2^-1^2 * 4", "9", "2"), ("-{a}^2^1", "9", "9"),
+    ])
+    func rewritesGiveTheReadingsTheyName(expression: String, excel: String, bc: String) throws {
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "a", "shared": true])
+        try state.call("tally_add", ["name": "a", "amount": 3])
+        let notes = try #require(try calc(expression, in: state)["notes"]?.arrayValue).compactMap(\.stringValue)
+        var checked: [String] = []
+        for note in notes {
+            // The occurrence in quotes, and the rewrite after the last "write ".
+            let quoted = note.split(separator: "\"", omittingEmptySubsequences: false)
+            let occurrence = try #require(quoted.dropFirst().first.map(String.init), "\(note)")
+            let rewrite = try #require(note.components(separatedBy: "write ").last.map { String($0.dropLast()) })
+            let rewritten = expression.replacingOccurrences(of: occurrence, with: rewrite)
+            let value = try #require(try calc(rewritten, in: state)["result"]?.numberLiteral, "\(rewritten)")
+            if note.contains("Excel") {
+                #expect(value == excel, "\(expression): \(rewritten) for \(note)")
+                checked.append("Excel")
+            } else {
+                #expect(note.contains("bc applies the minus first"), "\(note)")
+                #expect(value == bc, "\(expression): \(rewritten) for \(note)")
+                checked.append("bc")
+            }
+        }
+        #expect(!checked.isEmpty)
+    }
+
     // MARK: Errors
 
     static let evaluationErrorCases: [(String, String)] = [
@@ -406,10 +701,55 @@ import Testing
             divisor is 0, the result has no value: report that, or calculate again once something has been added to \
             the tally "requests".
             """)
+        // The divisor's tallies first, then the rest in the order of first appearance.
         #expect(error.details == ["tallies": [
-            ["name": "errors", "of": "value", "value": 2],
             ["name": "requests", "of": "value", "value": 0],
+            ["name": "errors", "of": "value", "value": 2],
         ]])
+        #expect(error.details?["tallies"]?.arrayValue?.first?.objectValue?["name"] == "requests")
+    }
+
+    /// An error found while evaluating or rounding carries the expression's notes under details.notes, the same
+    /// strings as in a successful result, and says so: the reading the note names may be what made it fail.
+    @Test func errorsAfterParsingCarryTheNotes() throws {
+        let minus = """
+            "-2^2" at character 4 was read as -(2^2): the power comes first, then the minus, as in mathematics. Excel \
+            and bc apply the minus first; for that reading, write (-2)^2.
+            """
+        // 1/(-2^2+4), meant as Excel reads it, would be 1/8.
+        let division = try #require(failure("1/(-2^2+4)"))
+        #expect(division.message == """
+            Division by zero at character 2 of "1/(-2^2+4)": the divisor (-(2 ^ 2) + 4) is 0. While the divisor is 0, \
+            the result has no value: report that, or change the divisor. details.notes says how calc read a part of the \
+            expression that other conventions read differently.
+            """)
+        #expect(division.details == ["notes": [.string(minus)]])
+        #expect(try calc("1/((-2)^2+4)")["result"] == .number("0.125"))
+
+        // While evaluating: a power whose exponent is not whole, with both notes.
+        let power = try #require(failure("2^3^-2^2"))
+        #expect(power.message.hasPrefix("The power at character 2 of \"2^3^-2^2\" has the exponent"), "\(power.message)")
+        #expect(power.message.hasSuffix("details.notes says how calc read parts of the expression that other conventions read differently."))
+        let notes = (power.details?["notes"]?.arrayValue ?? []).compactMap(\.stringValue)
+        #expect(notes.count == 2)
+        #expect(notes.first?.hasPrefix("\"-2^2\" at character 5 was read as -(2^2)") == true, "\(notes)")
+        #expect(notes.last?.hasSuffix("for that reading, write ((2^3)^-2)^2.") == true, "\(notes)")
+
+        // While rounding the result: too large, read from the right.
+        let large = try #require(failure("10^2^3^2"))
+        #expect(large.message.hasPrefix("The result is too large"), "\(large.message)")
+        #expect(large.details?["notes"]?.arrayValue?.first?.stringValue?.hasPrefix("\"10^2^3^2\" at character 1 was read as 10^(2^(3^2))") == true)
+
+        // With tallies: the tallies first, then the notes.
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "a", "shared": true])
+        let tallies = try #require(failure("{a} / (-2^2 + 4)", in: state))
+        #expect(tallies.details?.keys == ["tallies", "notes"])
+
+        // No note, no notes and no pointer.
+        let plain = try #require(failure("1/(4-4)"))
+        #expect(plain.details == nil)
+        #expect(!plain.message.contains("details.notes"))
     }
 
     @Test func aDivisorOfSeveralTalliesNamesThemAll() throws {
@@ -422,6 +762,41 @@ import Testing
             the divisor ({queued:count} - {done}) is 0. While the divisor is 0, the result has no value: report that, \
             or calculate again once the tallies "queued" and "done" have changed (details.tallies has their values).
             """), "\(error.message)")
+    }
+
+    /// Errors are bounded too (ADR-0008): details.tallies lists five, the divisor's first, then tallies_total, and
+    /// the message names at most five tallies, pointing to details.tallies only when it has them all.
+    @Test func errorsListFiveTalliesAndHowManyThereAre() throws {
+        let state = TallyTestState()
+        for name in ["a", "b", "c", "d", "e", "f", "g"] {
+            try state.call("tally_create", ["name": .string(name), "shared": true])
+        }
+        try state.call("tally_add", ["name": "a", "amount": 2])
+        func entry(_ name: String, of: String = "value") -> JSONValue {
+            ["name": .string(name), "of": .string(of), "value": name == "a" && of == "value" ? 2 : 0]
+        }
+
+        // The divisor has six references: the five named are the five listed, with their values.
+        let all = try #require(failure("{a} / ({b} + {c} + {d} + {e} + {f} + {g:count})", in: state))
+        #expect(all.message.hasSuffix("""
+            calculate again once the tallies "b", "c", "d", "e", "f" and 1 more have changed.
+            """), "\(all.message)")
+        #expect(all.details == ["tallies": [entry("b"), entry("c"), entry("d"), entry("e"), entry("f")], "tallies_total": 7])
+        #expect(all.details?.keys == ["tallies", "tallies_total"])
+
+        // The divisor's tallies come first, even where they appear late in the expression.
+        let late = try #require(failure("{a} + {b} + {c} + {d} + {e} + {f} / ({b} - {g})", in: state))
+        #expect(late.message.hasSuffix("""
+            calculate again once the tallies "b" and "g" have changed (details.tallies has their values).
+            """), "\(late.message)")
+        #expect(late.details == ["tallies": [entry("b"), entry("g"), entry("a"), entry("c"), entry("d")], "tallies_total": 7])
+
+        // A base of 0 under a negative power the same way.
+        let base = try #require(failure("{a} + {b} + {c} + {d} + {e} + ({f} - {g:count}) ^ -1", in: state))
+        #expect(base.message.hasSuffix("""
+            calculate again once the tallies "f" and "g" have changed (details.tallies has their values).
+            """), "\(base.message)")
+        #expect(base.details?["tallies"]?.arrayValue?.prefix(2) == [entry("f"), entry("g", of: "count")])
     }
 
     @Test func errorsInLongExpressionsQuoteAnExcerpt() throws {

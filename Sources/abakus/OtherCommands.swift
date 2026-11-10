@@ -110,15 +110,15 @@ struct Call: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Call a tool with JSON arguments, as an MCP client sends them; prints the full result as JSON.",
         discussion: #"""
-            The result includes the detail keys an MCP result leaves out, such as sum's read; with \#
-            --without-details, a successful result is exactly the text an MCP client gets. Example: abakus call sum \#
-            '{"numbers": ["410k", 0.5]}'
+            The result includes what an MCP result leaves out, such as the read of sum and calc, and every tally \#
+            calc used; with --without-details, a successful result is exactly the text an MCP client gets. \#
+            Example: abakus call sum '{"numbers": ["410k", 0.5]}'
             """#
     )
 
     @Argument(help: "The tool's name, e.g. tally_add (see `abakus tools`).") var tool: String
     @Argument(help: "The arguments as a JSON object, or - to read them from stdin (default: {}).") var arguments: String?
-    @Flag(help: "Leave out the result's detail keys, as the MCP server does, so a successful result is exactly the text an MCP client gets. Errors do not change: a tool's error is the text an agent reads, on stderr.")
+    @Flag(help: "Leave out the result's detail keys and shorten its long lists, as the MCP server does, so a successful result is exactly the text an MCP client gets. Errors do not change: a tool's error is the text an agent reads, on stderr.")
     var withoutDetails = false
 
     func run() throws {
