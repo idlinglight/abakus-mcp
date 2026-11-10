@@ -14,7 +14,7 @@ Some small tasks are done better by a small program than by a language model, ye
 ad-hoc tooling for. abakus is the pocket calculator for those. Its arithmetic is exact decimal arithmetic:
 `0.1 + 0.2` is `0.3`, and a result that had to be rounded says so.
 
-macOS only. Status: early, version 0.4.2.
+macOS only. Status: early, version 0.5.0.
 
 ## Install
 
@@ -207,28 +207,41 @@ abakus call sum '{"numbers": ["1.234,5", "410k", 8], "decimal": ","}'
 - At most 1000 characters, nesting at most 64 deep, and at most 2000 digits in the numerator and the
   denominator of any value on the way.
 
-The response has `result` (a JSON number), `read` (the expression as it was understood: numbers written out,
-parentheses around every operation but the outermost, except along a chain of `+` or of `*`: `1 + 2 + 3`) and
-`tallies`, each tally reference once with the number used (`{"name", "of", "value"}`; left out when there are
-none). A result that is a terminating decimal of at most 38 significant digits, with no digits below 10^-128, is
-exact. Otherwise it is rounded half away from zero to 15 significant digits (to
-whole units when the integer part is longer), and `exact: false` and `fraction`, the exact value as
-`"numerator/denominator"`, are added; `fraction` is left out when its numerator or denominator has more than
-100 digits. A tally whose value had to be rounded (`exact: false` in its state) makes the result
+The response has `result` (a JSON number), `notes` and `tallies`. `notes` appears only for a reading on which
+conventions differ: a leading minus before a power (`-2^2` is -(2^2) here and in mathematics, (-2)^2 in Excel and
+`bc`) and a chain of powers (`2^3^2` is 2^(3^2), (2^3)^2 in Excel). One note per kind, however many there are: how
+many, the first one with its position, how it was read and how to write the other reading. Parentheses written
+in the expression settle the reading and get no note (`-(2^2)`, `(-2)^2`, `2^(3^2)`, `(2^3)^2`), and neither do
+mixed chains such as `a / b * c`, which every convention reads from the left. `tallies` lists each tally reference
+once with the number used (`{"name", "of", "value"}`; left out when there are none): over MCP at most 5, in the
+order of first appearance, then `tallies_total`, how many there are. A result that is a terminating decimal of at
+most 38 significant digits, with no digits below 10^-128, is exact. Otherwise it is rounded half away from zero to
+15 significant digits (to whole units when the integer part is longer), and `exact: false` and `fraction`, the
+exact value as `"numerator/denominator"`, are added; `fraction` is left out when its numerator or denominator has
+more than 100 digits. A tally whose value had to be rounded (`exact: false` in its state) makes the result
 `exact: false` too, and its entry in `tallies` says `"exact": false`.
+
+The command line also prints `read`, the expression as it was understood (numbers written out, parentheses around
+every operation but the outermost, except along a chain of `+` or of `*`: `1 + 2 + 3`), and every tally. Over MCP
+`read` is left out: it grows with the expression, and an MCP result stays small
+([ADR-0008](docs/adr/0008-small-mcp-results.md)).
 
 ```json
 {"expression": "{errors-k3f9} / {requests-p2x7} * 100"}
-→ {"result": 2.96, "read": "({errors-k3f9} / {requests-p2x7}) * 100",
+→ {"result": 2.96,
    "tallies": [{"name": "errors-k3f9", "of": "value", "value": 37},
                {"name": "requests-p2x7", "of": "value", "value": 1250}]}
 
 {"expression": "{effort-a1b2} / {effort-a1b2:count}"}
-→ {"result": 3.95833333333333, "exact": false, "fraction": "95/24", "read": "{effort-a1b2} / {effort-a1b2:count}",
+→ {"result": 3.95833333333333, "exact": false, "fraction": "95/24",
    "tallies": [{"name": "effort-a1b2", "of": "value", "value": 47.5},
                {"name": "effort-a1b2", "of": "count", "value": 12}]}
 
-{"expression": "round(1000 * 1.045^10, 2)"}
+{"expression": "-1.5^2"}
+→ {"result": -2.25,
+   "notes": ["\"-1.5^2\" at character 1 was read as -(1.5^2): the power comes first, then the minus, as in mathematics. Excel and bc apply the minus first; for that reading, write (-1.5)^2."]}
+
+abakus call calc '{"expression": "round(1000 * 1.045^10, 2)"}'
 → {"result": 1552.97, "read": "round(1000 * (1.045 ^ 10), 2)"}
 ```
 
@@ -270,10 +283,11 @@ every number is negative.
 
 ## Command line
 
-Each command runs one tool and prints the JSON an agent would get, plus the details an MCP result leaves out,
-such as `sum`'s `read` ([ADR-0008](docs/adr/0008-small-mcp-results.md)); `abakus call --without-details` leaves them
-out, so a successful result is exactly the text an MCP client gets. A tool's error goes to stderr with exit
-status 1 (the same text an agent reads); a usage mistake shows the usage with exit status 64.
+Each command runs one tool and prints the JSON an agent would get, plus what an MCP result leaves out: the
+details, such as the `read` of `sum` and `calc`, and the whole of a list that an MCP result shortens, such as
+`calc`'s `tallies` ([ADR-0008](docs/adr/0008-small-mcp-results.md)). `abakus call --without-details` gives the
+result as the server does, so a successful result is exactly the text an MCP client gets. A tool's error goes to
+stderr with exit status 1 (the same text an agent reads); a usage mistake shows the usage with exit status 64.
 
 ```sh
 abakus tally create review --limit 20 --every-count 5
@@ -335,8 +349,8 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/):
 - [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names; `tally_drop`'s advice for unknown names)
 - [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only; by ADR-0008: how readings show over MCP)
 - [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC (amended: whole seconds in `text`)
-- [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name (amended: underflow and the readable policy in full, when `fraction` is left out, rounded tallies in the response, unknown names, flat chains of + and * in `read`, errors while evaluating, parser details)
-- [ADR-0008](docs/adr/0008-small-mcp-results.md): MCP results stay small; the command line shows everything
+- [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name (amended: underflow and the readable policy in full, when `fraction` is left out, rounded tallies in the response, unknown names, flat chains of + and * in `read`, errors while evaluating, parser details; `read` a detail, notes where conventions differ, at most 5 tallies over MCP)
+- [ADR-0008](docs/adr/0008-small-mcp-results.md): MCP results stay small; the command line shows everything (amended: calc within the rule; a tool may shorten a list over MCP)
 
 ## License
 
