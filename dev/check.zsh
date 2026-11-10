@@ -183,13 +183,12 @@ expect "size: calc's MCP result for a chain of 500 terms (999 characters) stays 
   '.size <= 400 and .text == "{\"result\":500}"' \
   "$(jq -n --arg text "$($abakus call calc --without-details "$chain_json")" \
      --argjson size "$($abakus call calc --without-details "$chain_json" | jq -Rs length)" '{text: $text, size: $size}')"
-# One character can carry any number of combining marks: -2^2 with a space carrying 20,000 of them is 5 characters,
-# and its note is cut by Unicode scalars like any long occurrence.
-marks_json=$(jq -nc '{expression: ("-2^ " + ([range(20000)] | map("́") | join("")) + "2")}')
-expect "size: calc's MCP result for -2^2 with 20,000 combining marks in a space stays within 400 characters" \
-  '.size <= 400 and .result.result == -4 and (.result.notes | length) == 1' \
-  "$(jq -n --argjson result "$($abakus call calc --without-details "$marks_json")" \
-     --argjson size "$($abakus call calc --without-details "$marks_json" | jq -Rs length)" '{result: $result, size: $size}')"
+# One character can carry any number of combining marks: a space carrying 20,000 of them is not whitespace, so
+# -2^2 written with one is refused, and the error, the text an agent reads, stays within the budget too.
+marks_json=$(jq -nc '{expression: ("-2^ " + ([range(20000)] | map("\u0301") | join("")) + "2")}')
+expect "size: calc refuses -2^2 with 20,000 combining marks in a space, in an error within 400 characters" \
+  '.status == 1 and .stdout == "" and (.stderr | test("^Error: Unexpected ") and length <= 400)' \
+  "$(outcome $abakus call calc --without-details "$marks_json")"
 
 # CLI: sum from arguments (number strings, a negative number) and from stdin
 expect "cli: sum reads 410k and 1,234.5, and prints read" \

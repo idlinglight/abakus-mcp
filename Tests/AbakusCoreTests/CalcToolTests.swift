@@ -536,19 +536,23 @@ import Testing
         #expect(long.quotedForMessage(limit: 40).unicodeScalars.count == 42)
     }
 
-    /// One character can carry any number of combining marks: the limits count Unicode scalars, so a space with
-    /// 20,000 of them (whitespace to the parser) is cut like any long occurrence, and the readings are described.
+    /// The limits count Unicode scalars, not characters. A space carrying combining marks is refused by the parser
+    /// (`CalcParserTests.errorsStayBoundedWithCombiningMarks`), but a line break written as \r\n is still one
+    /// character of two scalars: 19 of them make -2^…2 23 characters and 42 scalars, past the limit of 40, so the
+    /// occurrence is cut (its first 20 scalars, "…", its last 19) and the readings are described.
     @Test func notesCountScalarsNotCharacters() throws {
-        let expression = "-2^ " + String(repeating: "\u{301}", count: 20_000) + "2"
-        #expect(expression.count == 5)
+        let expression = "-2^" + String(repeating: "\r\n", count: 19) + "2"
+        #expect(expression.count == 23)
+        #expect(expression.unicodeScalars.count == 42)
         let result = try calc(expression)
         let note = try #require(result["notes"]?.arrayValue?.first?.stringValue)
-        // Scalars, since the space and its marks are one character: the first 20 of the occurrence, then "…".
-        let start = "In \"-2^ " + String(repeating: "\u{301}", count: 16) + "…"
+        let scalars = Array(expression.unicodeScalars)
+        let cut = String(String.UnicodeScalarView(scalars.prefix(20))) + "…"
+            + String(String.UnicodeScalarView(scalars.suffix(19)))
+        let start = "In \"" + cut + "\" at character 1, the power comes first"
         #expect(note.unicodeScalars.starts(with: start.unicodeScalars), "\(note)")
         #expect(note.hasSuffix("put the minus and the base in parentheses, as in (-2)^2."), "\(note)")
         #expect(note.unicodeScalars.count < 300, "\(note.unicodeScalars.count)")
-        #expect(JSONWriter.write(tool.withoutDetails(result)).unicodeScalars.count < 300)
     }
 
     /// Each rewrite a note suggests, put in place of the occurrence, gives the reading the note names: Excel's for

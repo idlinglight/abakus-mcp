@@ -252,6 +252,31 @@ import Testing
         #expect(late.contains("+ 1 + (\": "), "\(late)")
     }
 
+    /// One character can carry any number of combining marks. Errors stay bounded anyway (ADR-0008): a space that
+    /// carries them is not whitespace, the excerpt is a window of scalars that keeps the position, and the rewrite
+    /// for a missing * is written out only for a short expression, counted in scalars.
+    @Test func errorsStayBoundedWithCombiningMarks() {
+        let marks = String(repeating: "\u{301}", count: 20_000)
+        // A space with marks is refused where it stands, as one unexpected character, quoted and cut.
+        let space = message("1 + " + marks + " 2")
+        #expect(space.hasPrefix("Unexpected \""), "\(space.prefix(80))")
+        #expect(space.contains("at character 4 of"), "\(space.prefix(300))")
+        #expect(space.unicodeScalars.count < 400, "\(space.unicodeScalars.count)")
+        // Plain whitespace, also a line break written as \r\n (one character of two scalars), is still whitespace.
+        #expect(message("1\r\n+\u{00A0}2") == "(no error: 1 + 2)")
+        #expect(message(" \r\n ").hasPrefix("The expression is only whitespace."))
+        // Marks after the error: the excerpt is a window of 50 scalars around the position, not of 50 characters.
+        let after = message("1 + 2 % e" + marks)
+        // Compared by scalars: "e" and its marks are one character, which String compares whole.
+        let start = "Unexpected \"%\" at character 7 of \"1 + 2 % e\u{301}"
+        #expect(after.unicodeScalars.starts(with: start.unicodeScalars), "\(after.prefix(80))")
+        #expect(after.unicodeScalars.count < 400, "\(after.unicodeScalars.count)")
+        // A missing * in a short expression of many scalars: the rewrite would repeat the rest of the text.
+        let star = message("2(3) e" + marks)
+        #expect(star.contains("Write * before character 2 where a multiplication is meant."), "\(star.prefix(200))")
+        #expect(star.unicodeScalars.count < 400, "\(star.unicodeScalars.count)")
+    }
+
     /// A long number literal is cut in the middle wherever an error names it (ADR-0008).
     @Test func errorsCutLongNumbers() {
         let digits = String(repeating: "1234567890", count: 50)  // 500 digits
