@@ -181,9 +181,11 @@ stands against them.
     mark. Calling `tally_create` again would make a second tally.
   - `tally_add`: the addition has counted with the reading it got, and adding again would count it a second time.
     The note gives the `tally_set` call with the value the other reading gives (`{"name": "bytes-k3f9", "value":
-    26.234}`), which keeps the count: it was one addition either way. When that value has more than 38
-    significant digits, the note says how to get it instead. A negative amount was considered and not chosen: it
-    corrects the value but counts a second addition, which throws off a checkpoint every N items.
+    26.234}`), which keeps the count: it was one addition either way. It also says that `tally_set` reports no
+    crossings and that `crossed` follows the reading used, so a mark listed there may not have been reached. When
+    that value has more than 38 significant digits, the note says how to get it instead. A negative amount was
+    considered and not chosen: it corrects the value but counts a second addition, which throws off a checkpoint
+    every N items.
   - Where only whole numbers go (a count, a threshold on the count), a string whose other reading has a fraction
     (`"1,234"` as a count) has no second reading, and it rules the other mark out like a string the other mark
     cannot read: calling again with it would fail.

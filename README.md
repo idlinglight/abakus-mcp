@@ -118,9 +118,10 @@ with `tally_add` and drop the new one with `tally_drop`.
    "crossed": [{"marks": 200, "of": "value", "times": 12, "first": 100, "last": 1200}],
    "thresholds": [{"marks": 200, "of": "value", "passed": 12, "next": 1300}],
    "created": "2026-11-08T09:40:00Z", "updated": "2026-11-08T09:41:00Z",
-   "notes": ["\"1,234\" (amount) was read as 1234; with decimal: \",\" it would be 1.234. The addition counted
-              as 1234. If you meant 1.234, correct the value with tally_set {\"name\": \"bytes-p2x7\",
-              \"value\": 26.234}, which keeps the count; adding again would count a second time."]}
+   "notes": ["\"1,234\" (amount) was read as 1234; with decimal: \",\" it would be 1.234. If you meant 1.234,
+              correct the value with tally_set {\"name\": \"bytes-p2x7\", \"value\": 26.234}, which keeps the
+              count and reports no crossings (crossed above follows 1234); adding again would count a second
+              time."]}
 ```
 
 Crossings start like the threshold's status: `{"limit": 20, "of": "value"}`,

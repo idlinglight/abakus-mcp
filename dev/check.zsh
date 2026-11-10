@@ -143,7 +143,7 @@ mcp_text=$($abakus call --without-details tally_add "{\"name\": \"$marks_name\",
 expect "mcp text: tally_add crossing 150 of the marks stays within 700 characters: a count with the first and the last" \
   '.length <= 700 and (.json | .crossed == [{"marks": 200, "of": "value", "times": 150, "first": 1000, "last": 150000}]
      and .thresholds == [{"marks": 200, "of": "value", "passed": 150, "next": 151000}] and (has("read") | not)
-     and (.notes[0] | contains("The addition counted as 150500") and contains("\"value\": 150.5")))' \
+     and (.notes[0] | contains("crossed above follows 150500") and contains("\"value\": 150.5")))' \
   "$(jq -n --arg text "$mcp_text" '{length: ($text | length), json: ($text | fromjson)}')"
 expect "cli: tally create prints read, one entry per string" '.read | length == 200 and .[0] == {"input": "1,000", "value": 1000}' \
   "$($abakus call tally_create "$marks_args")"

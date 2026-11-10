@@ -498,18 +498,19 @@ import Testing
     }
 
     /// Adding again would count twice: the note gives the tally_set call that corrects the value and keeps the
-    /// count, since it was one addition either way.
+    /// count, since it was one addition either way. crossed was worked out with the reading used.
     @Test func addSaysToCorrectTheValueWithTallySetNotToAddAgain() throws {
         let state = TallyTestState()
-        try state.call("tally_create", ["name": "bytes", "shared": true])
+        try state.call("tally_create", ["name": "bytes", "shared": true, "thresholds": [["at": [100]]]])
         try state.call("tally_add", ["name": "bytes", "amount": 25])
         let response = try state.call("tally_add", ["name": "bytes", "amount": "1,234"])
         #expect(response["value"] == 1259)  // the addition counted as read
         #expect(response["count"] == 2)
+        #expect(response["crossed"] == [["marks": 1, "of": "value", "at": [100]]])  // as read, not as perhaps meant
         #expect(response["notes"] == [.string("""
-            "1,234" (amount) was read as 1234; with decimal: "," it would be 1.234. The addition counted as 1234. If \
-            you meant 1.234, correct the value with tally_set {"name": "bytes", "value": 26.234}, which keeps the \
-            count; adding again would count a second time.
+            "1,234" (amount) was read as 1234; with decimal: "," it would be 1.234. If you meant 1.234, correct the \
+            value with tally_set {"name": "bytes", "value": 26.234}, which keeps the count and reports no crossings \
+            (crossed above follows 1234); adding again would count a second time.
             """)])
         #expect(TallyTest.tool("tally_add").withoutDetails(response).keys == ["name", "value", "count", "added", "crossed", "thresholds", "created", "updated", "notes"])
         // The correction the note gives does what it says.
@@ -519,9 +520,9 @@ import Testing
 
         let comma = try state.call("tally_add", ["name": "bytes", "amount": "1.234", "decimal": ","])
         #expect(comma["notes"] == [.string("""
-            "1.234" (amount) was read as 1234; with decimal: "." (the default) it would be 1.234. The addition counted \
-            as 1234. If you meant 1.234, correct the value with tally_set {"name": "bytes", "value": 27.468}, which \
-            keeps the count; adding again would count a second time.
+            "1.234" (amount) was read as 1234; with decimal: "." (the default) it would be 1.234. If you meant 1.234, \
+            correct the value with tally_set {"name": "bytes", "value": 27.468}, which keeps the count and reports no \
+            crossings (crossed above follows 1234); adding again would count a second time.
             """)])
     }
 
@@ -530,7 +531,7 @@ import Testing
         let state = TallyTestState()
         try state.plantTally(TallyTest.tally("long", value: "1234567890123456789012345678901234567"))
         let note = try state.call("tally_add", ["name": "long", "amount": "1,234"])["notes"]?.arrayValue?.first?.stringValue
-        #expect(note?.hasSuffix("If you meant 1.234, set the value with tally_set to the value before this addition plus 1.234, which keeps the count; adding again would count a second time.") == true)
+        #expect(note?.hasSuffix("If you meant 1.234, set the value with tally_set to the value before this addition plus 1.234, which keeps the count and reports no crossings (crossed above follows 1234); adding again would count a second time.") == true)
     }
 
     /// tally_set is idempotent: calling again with the other mark is the correction, as in sum.

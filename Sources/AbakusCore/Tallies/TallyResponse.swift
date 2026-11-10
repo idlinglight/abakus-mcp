@@ -88,28 +88,27 @@ enum TallyResponse {
     /// tally_create: the tally exists, its thresholds read one way. Creating again would make a second tally, so
     /// the correction is tally_set with the thresholds and the other mark.
     static func decimalNote(_ readings: OtherDecimalReadings, created name: String) -> String? {
-        let (numbers, mark) = readings.decimal == .point
-            ? ("a decimal comma", #"with decimal: ",""#)
-            : ("a decimal point", "without decimal")
-        return readings.note(
-            advice: "If the numbers use \(numbers), replace the thresholds with tally_set on \"\(name)\", passing them again \(mark); calling tally_create again would make a second tally."
+        readings.note(
+            advice: readings.ifTheOtherMark("replace the thresholds with tally_set on \"\(name)\", passing them again")
+                + "; calling tally_create again would make a second tally."
         )
     }
 
-    /// tally_add: the addition has counted with the reading it got, and adding again would count it twice. The
-    /// correction is tally_set with the value the other reading gives, which keeps the count: it was one addition
-    /// either way. A negative amount would correct the value but count a second addition, which throws off a
-    /// checkpoint every N items.
+    /// tally_add: the addition has counted with the reading it got (the note's first sentence says which), and
+    /// adding again would count it twice. The correction is tally_set with the value the other reading gives, which
+    /// keeps the count: it was one addition either way. A negative amount would correct the value but count a
+    /// second addition, which throws off a checkpoint every N items. `crossed` was worked out with the reading
+    /// used, and tally_set reports no crossings: the note says both.
     static func decimalNote(_ readings: OtherDecimalReadings, addedTo before: Tally) -> String? {
         guard let first = readings.noted else { return nil }
         let correction: String
         if let corrected = try? DecimalMath.add(before.value, first.other), corrected.exact {
-            correction = "correct the value with tally_set {\"name\": \"\(before.name)\", \"value\": \(corrected.value)}, which keeps the count"
+            correction = "correct the value with tally_set {\"name\": \"\(before.name)\", \"value\": \(corrected.value)}"
         } else {
-            correction = "set the value with tally_set to the value before this addition plus \(first.other), which keeps the count"
+            correction = "set the value with tally_set to the value before this addition plus \(first.other)"
         }
         return readings.note(
-            advice: "The addition counted as \(first.value). If you meant \(first.other), \(correction); adding again would count a second time."
+            advice: "If you meant \(first.other), \(correction), which keeps the count and reports no crossings (crossed above follows \(first.value)); adding again would count a second time."
         )
     }
 

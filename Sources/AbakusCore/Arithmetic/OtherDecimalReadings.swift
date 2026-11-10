@@ -50,14 +50,26 @@ struct OtherDecimalReadings: Sendable {
 
     /// The advice of a read-only or idempotent tool (sum, tally_set): calling again with the other mark corrects it.
     var callAgain: String {
-        decimal == .point
-            ? #"If the numbers use a decimal comma, call again with decimal: ","."#
-            : "If the numbers use a decimal point, call again without decimal."
+        ifTheOtherMark("call again") + "."
+    }
+
+    /// Advice for when the numbers use the other mark: `If the numbers use a decimal comma, <action> with decimal:
+    /// ","` (or `… a decimal point, <action> without decimal`). Tools put their own action in.
+    func ifTheOtherMark(_ action: String) -> String {
+        "If the numbers use \(otherMarkWords.name), \(action) \(otherMarkWords.passing)"
     }
 
     /// The other setting as an argument: `decimal: ","` or `decimal: "." (the default)`.
     var otherSetting: String {
-        decimal == .point ? #"decimal: ",""# : #"decimal: "." (the default)"#
+        otherMarkWords.setting
+    }
+
+    /// The one place that words the other mark, for every tool's note.
+    private var otherMarkWords: (name: String, passing: String, setting: String) {
+        switch decimal {
+        case .point: ("a decimal comma", #"with decimal: ",""#, #"decimal: ",""#)
+        case .comma: ("a decimal point", "without decimal", #"decimal: "." (the default)"#)
+        }
     }
 
     /// A note of fixed size, however many such strings there are: how many, the first one with both readings, and
