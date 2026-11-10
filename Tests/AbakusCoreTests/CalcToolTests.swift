@@ -709,6 +709,49 @@ import Testing
         #expect(error.details?["tallies"]?.arrayValue?.first?.objectValue?["name"] == "requests")
     }
 
+    /// An error found while evaluating or rounding carries the expression's notes under details.notes, the same
+    /// strings as in a successful result, and says so: the reading the note names may be what made it fail.
+    @Test func errorsAfterParsingCarryTheNotes() throws {
+        let minus = """
+            "-2^2" at character 4 was read as -(2^2): the power comes first, then the minus, as in mathematics. Excel \
+            and bc apply the minus first; for that reading, write (-2)^2.
+            """
+        // 1/(-2^2+4), meant as Excel reads it, would be 1/8.
+        let division = try #require(failure("1/(-2^2+4)"))
+        #expect(division.message == """
+            Division by zero at character 2 of "1/(-2^2+4)": the divisor (-(2 ^ 2) + 4) is 0. While the divisor is 0, \
+            the result has no value: report that, or change the divisor. details.notes says how calc read a part of the \
+            expression that other conventions read differently.
+            """)
+        #expect(division.details == ["notes": [.string(minus)]])
+        #expect(try calc("1/((-2)^2+4)")["result"] == .number("0.125"))
+
+        // While evaluating: a power whose exponent is not whole, with both notes.
+        let power = try #require(failure("2^3^-2^2"))
+        #expect(power.message.hasPrefix("The power at character 2 of \"2^3^-2^2\" has the exponent"), "\(power.message)")
+        #expect(power.message.hasSuffix("details.notes says how calc read parts of the expression that other conventions read differently."))
+        let notes = (power.details?["notes"]?.arrayValue ?? []).compactMap(\.stringValue)
+        #expect(notes.count == 2)
+        #expect(notes.first?.hasPrefix("\"-2^2\" at character 5 was read as -(2^2)") == true, "\(notes)")
+        #expect(notes.last?.hasSuffix("for that reading, write ((2^3)^-2)^2.") == true, "\(notes)")
+
+        // While rounding the result: too large, read from the right.
+        let large = try #require(failure("10^2^3^2"))
+        #expect(large.message.hasPrefix("The result is too large"), "\(large.message)")
+        #expect(large.details?["notes"]?.arrayValue?.first?.stringValue?.hasPrefix("\"10^2^3^2\" at character 1 was read as 10^(2^(3^2))") == true)
+
+        // With tallies: the tallies first, then the notes.
+        let state = TallyTestState()
+        try state.call("tally_create", ["name": "a", "shared": true])
+        let tallies = try #require(failure("{a} / (-2^2 + 4)", in: state))
+        #expect(tallies.details?.keys == ["tallies", "notes"])
+
+        // No note, no notes and no pointer.
+        let plain = try #require(failure("1/(4-4)"))
+        #expect(plain.details == nil)
+        #expect(!plain.message.contains("details.notes"))
+    }
+
     @Test func aDivisorOfSeveralTalliesNamesThemAll() throws {
         let state = TallyTestState()
         for name in ["queued", "done", "errors"] {

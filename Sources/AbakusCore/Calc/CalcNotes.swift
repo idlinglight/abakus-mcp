@@ -17,12 +17,11 @@ import Foundation
 /// the base is all Excel does differently; where the minus is part of a chain, Excel also groups from the left, and
 /// the chain note, whose rewrite does both, names Excel instead.
 enum CalcNotes {
-    /// An occurrence up to this many Unicode scalars is quoted whole and its readings are written out; a longer one
-    /// is cut in the middle, as calc's errors cut an operand, and its readings are described instead.
-    static let writtenOutLimit = CalcTool.operandLimit
+    /// An occurrence up to `CalcParser.quotedPartLimit` Unicode scalars is quoted whole and its readings are written
+    /// out; a longer one is cut in the middle, as calc's errors cut an operand, and its readings are described instead.
     /// A reading puts at most 6 parentheses into the occurrence (a chain of four operands with a leading minus), so it
     /// stays within this many scalars; the limit is checked anyway, so that no note can grow with its input.
-    static let readingLimit = writtenOutLimit + 6
+    static let readingLimit = CalcParser.quotedPartLimit + 6
     /// A longer chain is described: its parentheses written out would be longer than the chain and hard to read.
     static let chainOperandLimit = 4
 
@@ -165,7 +164,7 @@ enum CalcNotes {
     private static func writtenOut(
         _ occurrence: String, _ readings: () -> (String, String)
     ) -> (asRead: String, other: String)? {
-        guard occurrence.unicodeScalars.count <= writtenOutLimit else { return nil }
+        guard occurrence.unicodeScalars.count <= CalcParser.quotedPartLimit else { return nil }
         let (asRead, other) = readings()
         guard asRead.unicodeScalars.count <= readingLimit, other.unicodeScalars.count <= readingLimit else { return nil }
         return (asRead, other)
@@ -178,7 +177,7 @@ enum CalcNotes {
         count: Int, several: String, occurrence: String, position: Int, readings: (asRead: String, other: String)?,
         rule: String, otherConvention: String, advice: String, example: String
     ) -> String {
-        let quoted = occurrence.quotedForMessage(limit: writtenOutLimit)
+        let quoted = occurrence.quotedForMessage(limit: CalcParser.quotedPartLimit)
         let intro = count == 1 ? "" : "The expression has \(several). "
         let read = switch (readings?.asRead, count) {
         case (let asRead?, 1): "\(quoted) at character \(position) was read as \(asRead): \(rule)."

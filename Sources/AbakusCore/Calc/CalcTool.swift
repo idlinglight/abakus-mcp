@@ -97,12 +97,20 @@ public struct CalcTool: Tool {
             values[item.reference] = try item.number()
         }
 
-        let value = try Self.evaluate(expression, text: text, values: values, used: used)
+        // Worked out before evaluating: when a reading on which conventions differ is what makes the expression
+        // fail (1/(-2^2+4) meant as Excel reads it), the error carries the note too.
+        let notes = CalcNotes.notes(for: expression, in: text)
+        let value: Fraction
+        do throws(ToolError) {
+            value = try Self.evaluate(expression, text: text, values: values, used: used)
+        } catch {
+            throw Self.adding(notes, to: error)
+        }
         let rounded: Fraction.DecimalResult
         do throws(FractionError) {
             rounded = try value.decimalResult()
         } catch {
-            throw Self.resultError(error, value: value, details: details)
+            throw Self.adding(notes, to: Self.resultError(error, value: value, details: details))
         }
 
         var result: JSONObject = ["result": .decimal(rounded.value)]
@@ -110,7 +118,6 @@ public struct CalcTool: Tool {
         // fraction is only for a rounding done here, which it undoes.
         if !rounded.exact || used.contains(where: \.isInexact) { result["exact"] = false }
         if let fraction = rounded.fraction { result["fraction"] = .string(fraction) }
-        let notes = CalcNotes.notes(for: expression, in: text)
         if !notes.isEmpty { result["notes"] = .array(notes.map(JSONValue.string)) }
         result["read"] = .string(expression.rendered)
         // Every reference: the command line prints them all, and `withoutDetails` shortens the list for MCP.
@@ -285,7 +292,7 @@ public struct CalcTool: Tool {
             guard let result else {
                 // Not reached: every reference is read before evaluating, and the parser checks the arguments.
                 throw ToolError(
-                    "calc has no value for \(node.rendered) \(CalcParser.at(node.position, of: text)), which is a bug "
+                    "calc has no value for \(written(node)) \(CalcParser.at(node.position, of: text)), which is a bug "
                         + "in abakus. Nothing was computed.",
                     details: Self.details(used)
                 )
@@ -332,6 +339,19 @@ public struct CalcTool: Tool {
 
     // MARK: Errors
 
+    /// An error found while evaluating or rounding, with the expression's notes under `details.notes`, the same strings
+    /// as in a successful result, and a sentence that points to them. Each note has a fixed size, so the error stays
+    /// bounded.
+    private static func adding(_ notes: [String], to error: ToolError) -> ToolError {
+        guard !notes.isEmpty else { return error }
+        var details = error.details ?? JSONObject()
+        details["notes"] = .array(notes.map(JSONValue.string))
+        let pointer = notes.count == 1
+            ? " details.notes says how calc read a part of the expression that other conventions read differently."
+            : " details.notes says how calc read parts of the expression that other conventions read differently."
+        return ToolError(error.message + pointer, details: details)
+    }
+
     /// An error while working out `node`: what happened, where (as the parser says it), and what to do instead.
     /// `details.tallies` lists the tallies used; for a division by zero, those of the divisor first, so that the
     /// tallies the message names come with their values.
@@ -348,11 +368,11 @@ public struct CalcTool: Tool {
         case (.divisionByZero, .binary(.power, let base, _)):
             details = Self.details(used, first: base)
             message = "0 raised to a negative power \(at): the base\(named(base)) is 0, and 0 ^ -n is 1 / 0^n, a "
-                + "division by zero. " + whileZero(base, "base", details: details)
+                + "division by zero. " + whileZero(base, "base")
         case (.divisionByZero, .binary(_, _, let divisor)):
             details = Self.details(used, first: divisor)
             message = "Division by zero \(at): the divisor\(named(divisor)) is 0. "
-                + whileZero(divisor, "divisor", details: details)
+                + whileZero(divisor, "divisor")
         case (.tooManyDigits, _):
             message = "\(operation(node)) \(at) gives a value with more than \(Fraction.digitLimit) digits in its "
                 + "numerator or denominator: calc keeps every value as an exact fraction and stops at "
@@ -377,8 +397,10 @@ public struct CalcTool: Tool {
         return ToolError(message, details: details)
     }
 
-    /// What to do about a divisor (or the base of a negative power) that is 0, by the tallies it uses.
-    private static func whileZero(_ operand: CalcExpression, _ role: String, details: JSONObject?) -> String {
+    /// What to do about a divisor (or the base of a negative power) that is 0, by the tallies it uses. The error lists
+    /// the operand's references first in `details.tallies` (`details(_:first:)`), so they are all there when there
+    /// are at most `shownTallies` of them.
+    private static func whileZero(_ operand: CalcExpression, _ role: String) -> String {
         let names = tallyNames(in: operand).map(\.quotedForMessage)
         let start = "While the \(role) is 0, the result has no value: report that, or "
         switch names.count {
@@ -390,20 +412,9 @@ public struct CalcTool: Tool {
                 ? names.prefix(shownTallies).joined(separator: ", ") + " and \(names.count - shownTallies) more"
                 : names.listedInProse
             let again = start + "calculate again once the tallies \(listed) have changed"
-            return again + (shows(operand, in: details) ? " (details.tallies has their values)." : ".")
+            let allShown = references(in: operand).references.count <= shownTallies
+            return again + (allShown ? " (details.tallies has their values)." : ".")
         }
-    }
-
-    /// Whether `details.tallies` lists every reference in `operand`: with more than `shownTallies` references in the
-    /// expression, it may not.
-    private static func shows(_ operand: CalcExpression, in details: JSONObject?) -> Bool {
-        let shown = Set((details?["tallies"]?.arrayValue ?? []).compactMap { entry -> Reference? in
-            guard let object = entry.objectValue, let name = object["name"]?.stringValue,
-                let of = object["of"]?.stringValue.flatMap(CalcTallyField.init(rawValue:))
-            else { return nil }
-            return Reference(name: name, of: of)
-        })
-        return references(in: operand).references.allSatisfy(shown.contains)
     }
 
     /// How to stay within the digit limit, by the operation that went past it.
@@ -500,18 +511,16 @@ public struct CalcTool: Tool {
     }
 
     /// An operand as the agent can find it in what it wrote: a number as written (`1e-50`), anything else as `read`
-    /// writes it, in parentheses when it is an operation; a long one is cut in the middle, to `operandLimit` scalars.
+    /// writes it, in parentheses when it is an operation; a long one is cut in the middle, to
+    /// `CalcParser.quotedPartLimit` scalars.
     private static func written(_ operand: CalcExpression) -> String {
         let text = switch operand.node {
         case .number(_, let literal): literal
         case .binary: "(" + operand.rendered + ")"
         default: operand.rendered
         }
-        return text.cutForMessage(limit: operandLimit)
+        return text.cutForMessage(limit: CalcParser.quotedPartLimit)
     }
-
-    /// How long an operand or a note's occurrence may be in a message before it is cut in the middle (ADR-0008).
-    static let operandLimit = 40
 
     /// An operand that came to 0, after a space: nothing for a plain number, which is 0 as written.
     private static func named(_ operand: CalcExpression) -> String {
@@ -526,7 +535,7 @@ public struct CalcTool: Tool {
         if case .number = operand.node { return written }
         let exact = value.description
         if written == exact { return written }
-        return written + " = " + (exact.count <= 40 ? exact : size(of: value))
+        return written + " = " + (exact.unicodeScalars.count <= CalcParser.quotedPartLimit ? exact : size(of: value))
     }
 
     /// A value too long to write out, by its size: `a whole number of 2000 digits`, `a fraction of 1 digit over

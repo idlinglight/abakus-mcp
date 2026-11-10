@@ -200,6 +200,10 @@ expect "cli: calc takes a leading minus as part of the expression, prints read a
   "$($abakus calc -2^2)"
 expect "cli: calc writes no note where the parentheses settle the reading" \
   '.result == 4 and (has("notes") | not)' "$($abakus calc '(-2)^2')"
+expect "cli: a calc error that the disputed reading causes carries the note under details.notes" \
+  '.status == 1 and .stdout == "" and (.stderr | test("^Error: Division by zero at character 2 of") and test("details\\.notes says")
+     and contains("Details: {\"notes\":[\"\\\"-2^2\\\" at character 4 was read as -(2^2):"))' \
+  "$(outcome $abakus calc '1/(-2^2+4)')"
 expect "cli: calc drops a leading -- terminator" '.result == 3 and .read == "1 + 2"' "$($abakus calc -- 1 + 2)"
 expect "cli: calc with an unknown tally fails with exit 1 and computes nothing" \
   '.status == 1 and .stdout == "" and (.stderr | test("no tally named \"nope\"") and test("Nothing was computed"))' \

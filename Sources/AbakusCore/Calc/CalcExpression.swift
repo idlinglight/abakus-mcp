@@ -21,18 +21,6 @@ struct CalcExpression: Sendable, Equatable {
     /// `2^3^2`), but not where the agent's own parentheses already settle them.
     var isParenthesized: Bool { outerSpan != span }
 
-    /// A node as the parser builds it, written at `written`, without parentheses yet.
-    init(position: Int, node: Node, written: Range<Int>) {
-        self.init(position: position, node: node, span: written, outerSpan: written)
-    }
-
-    init(position: Int, node: Node, span: Range<Int> = 0..<0, outerSpan: Range<Int> = 0..<0) {
-        self.position = position
-        self.node = node
-        self.span = span
-        self.outerSpan = outerSpan
-    }
-
     indirect enum Node: Sendable, Equatable {
         /// A literal: its value, never negative (a leading minus is a negation), and the literal as written
         /// (`410k`, `.5`, `2.5e3`).
@@ -44,6 +32,14 @@ struct CalcExpression: Sendable, Equatable {
         case binary(CalcOperator, CalcExpression, CalcExpression)
         /// A function call with its arguments; the parser has checked their number.
         case call(CalcFunction, [CalcExpression])
+    }
+}
+
+extension CalcExpression {
+    /// A node as the parser builds it, written at `written`, without parentheses yet. In an extension, so that the
+    /// memberwise initialiser stays, with the defaults of the properties above.
+    init(position: Int, node: Node, written: Range<Int>) {
+        self.init(position: position, node: node, span: written, outerSpan: written)
     }
 }
 

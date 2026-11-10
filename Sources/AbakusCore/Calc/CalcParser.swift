@@ -23,8 +23,10 @@ import Foundation
 struct CalcParser {
     static let maximumLength = 1000
     static let maximumDepth = 64
-    /// How much of a tally reference's braces an error repeats, in Unicode scalars, before it is cut in the middle.
-    static let contentLimit = 40
+    /// How many Unicode scalars of a part of an expression a message repeats before it cuts the part in the middle or
+    /// describes it instead (ADR-0008): round's first argument and what a tally reference's braces hold here, an
+    /// operand or a value in calc's evaluation errors, an occurrence in calc's notes.
+    static let quotedPartLimit = 40
 
     /// Parses `expression`. `maximumLength` exists for tests, which lift it to reach the depth guard with
     /// inputs far beyond the length limit.
@@ -329,7 +331,7 @@ struct CalcParser {
             return ToolError("abs takes 1 argument, but \(given) \(at(position)). Write abs(x).")
         case .round:
             // The first argument as written, when it is short enough to repeat.
-            let x = firstArgument.map { text($0.lowerBound, $0.upperBound) }.flatMap { $0.unicodeScalars.count <= 40 ? $0 : nil }
+            let x = firstArgument.map { text($0.lowerBound, $0.upperBound) }.flatMap { $0.unicodeScalars.count <= Self.quotedPartLimit ? $0 : nil }
                 ?? "x"
             return ToolError(
                 "round takes 2 arguments, the value and the decimal places, but \(given) \(at(position)). Write "
@@ -764,7 +766,7 @@ struct CalcParser {
         let fieldText = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : nil
         // What the braces hold is repeated cut in the middle: it can be any length, and one character can carry any
         // number of combining marks (ADR-0008).
-        let shownContent = content.cutForMessage(limit: Self.contentLimit)
+        let shownContent = content.cutForMessage(limit: Self.quotedPartLimit)
         if name.isEmpty {
             throw ToolError(
                 "The tally reference {\(shownContent)} \(at(position)) has no name: write the tally's full name in braces, "
@@ -781,7 +783,7 @@ struct CalcParser {
         default:
             throw ToolError(
                 "The tally reference {\(shownContent)} \(at(position)) ends in an unknown "
-                    + "\":\((fieldText ?? "").cutForMessage(limit: Self.contentLimit))\": write "
+                    + "\":\((fieldText ?? "").cutForMessage(limit: Self.quotedPartLimit))\": write "
                     + "{\(shownName):count} for the tally's count, or {\(shownName)} (or {\(shownName):value}) for its value."
             )
         }
