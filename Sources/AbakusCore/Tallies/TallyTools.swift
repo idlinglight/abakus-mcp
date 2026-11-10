@@ -221,7 +221,8 @@ struct TallySet: Tool {
             if let thresholds { tally.thresholds = thresholds }
             tally.updated = now
             try files.save(tally)
-            return TallyResponse.state(tally, reads: reads, decimalNote: TallyResponse.decimalNote(readings))
+            // Idempotent, so calling again with the other mark corrects it, as in sum.
+            return TallyResponse.state(tally, reads: reads, decimalNote: readings.note(advice: readings.callAgain))
         }
     }
 }

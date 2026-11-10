@@ -83,7 +83,8 @@ enum TallyResponse {
     // MARK: The decimal note
 
     // sum's note (ADR-0008, `OtherDecimalReadings`), with advice that fits each tool: by the time the agent reads
-    // it, the call has changed the tally, so only an idempotent tool can simply be called again.
+    // it, the call has changed the tally, so only an idempotent tool can simply be called again. tally_set is one:
+    // it uses `readings.callAgain` directly, as sum does.
 
     /// tally_create: the tally exists, its thresholds read one way. Creating again would make a second tally, so
     /// the correction is tally_set with the thresholds and the other mark.
@@ -110,11 +111,6 @@ enum TallyResponse {
         return readings.note(
             advice: "If you meant \(first.other), \(correction), which keeps the count and reports no crossings (crossed above follows \(first.value)); adding again would count a second time."
         )
-    }
-
-    /// tally_set: idempotent, so calling again with the other mark corrects it, as in sum.
-    static func decimalNote(_ readings: OtherDecimalReadings) -> String? {
-        readings.note(advice: readings.callAgain)
     }
 }
 
