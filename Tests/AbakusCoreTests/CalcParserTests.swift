@@ -106,6 +106,37 @@ import Testing
         #expect(try CalcParser.parse("\u{2212}2 \u{00D7} 3").position == 4)
     }
 
+    /// Where each node is written, without and with the parentheses around it, for calc's notes.
+    @Test func spansCoverWhatWasWrittenAndTheParenthesesAroundIt() throws {
+        let text = "-( (2) ^ {a} ) + max(1, 2)"
+        let source = Array(text)
+        func written(_ range: Range<Int>) -> String { String(source[range]) }
+        let sum = try CalcParser.parse(text)
+        #expect(written(sum.span) == text)
+        #expect(!sum.isParenthesized)
+        guard case .binary(.add, let negation, let call) = sum.node, case .negation(let power) = negation.node,
+            case .binary(.power, let base, let exponent) = power.node
+        else {
+            Issue.record("\(sum)")
+            return
+        }
+        #expect(written(negation.span) == "-( (2) ^ {a} )")
+        #expect(written(power.span) == "(2) ^ {a}")
+        #expect(written(power.outerSpan) == "( (2) ^ {a} )")
+        #expect(power.isParenthesized)
+        #expect(written(base.span) == "2")
+        #expect(written(base.outerSpan) == "(2)")
+        #expect(written(exponent.span) == "{a}")
+        #expect(!exponent.isParenthesized)
+        #expect(written(call.span) == "max(1, 2)")
+        #expect(!call.isParenthesized)
+
+        // Every pair of parentheses counts: the span stays the number.
+        let five = try CalcParser.parse(" ((5)) ")
+        #expect(five.span == 3..<4)
+        #expect(five.outerSpan == 1..<6)
+    }
+
     @Test func numbersKeepTheirLiteral() throws {
         for literal in ["410k", ".5", "2.5e3", "007", "1e\u{2212}3"] {
             let tree = try CalcParser.parse(" \(literal) ")

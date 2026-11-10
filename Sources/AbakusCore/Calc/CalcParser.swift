@@ -179,7 +179,9 @@ struct CalcParser {
                 case .plus:
                     try advance()
                 case .leaf(let node):
-                    levels[levels.count - 1].operands.append(CalcExpression(position: position, node: node))
+                    levels[levels.count - 1].operands.append(
+                        CalcExpression(position: position, node: node, written: token.start..<token.end)
+                    )
                     try advance()
                     expectingOperand = false
                 case .open:
@@ -220,9 +222,11 @@ struct CalcParser {
             switch (level.kind, token.kind) {
             case (.whole, .end):
                 return value
-            case (.group, .close):
+            case (.group(let open), .close):
                 depth -= 1
-                levels[levels.count - 1].operands.append(value)
+                var grouped = value
+                grouped.outerSpan = (open - 1)..<token.end
+                levels[levels.count - 1].operands.append(grouped)
                 try advance()
             case (.call, .comma):
                 level.firstArgument = level.firstArgument ?? level.argumentStart..<(previous?.end ?? level.argumentStart)
@@ -240,7 +244,7 @@ struct CalcParser {
                 }
                 depth -= 1
                 levels[levels.count - 1].operands.append(
-                    CalcExpression(position: name, node: .call(function, level.arguments))
+                    CalcExpression(position: name, node: .call(function, level.arguments), written: (name - 1)..<token.end)
                 )
                 try advance()
             case (.group(let open), .end):
@@ -267,10 +271,15 @@ struct CalcParser {
             let right = level.operands.removeLast()
             switch top.kind {
             case .negation:
-                level.operands.append(CalcExpression(position: top.position, node: .negation(right)))
+                level.operands.append(CalcExpression(
+                    position: top.position, node: .negation(right), written: (top.position - 1)..<right.outerSpan.upperBound
+                ))
             case .binary(let op):
                 let left = level.operands.removeLast()
-                level.operands.append(CalcExpression(position: top.position, node: .binary(op, left, right)))
+                level.operands.append(CalcExpression(
+                    position: top.position, node: .binary(op, left, right),
+                    written: left.outerSpan.lowerBound..<right.outerSpan.upperBound
+                ))
             }
             if top.nests { depth -= 1 }
         }

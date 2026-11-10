@@ -11,6 +11,13 @@ public struct CalcTool: Tool {
 
     public let name = "calc"
 
+    /// `read` repeats the whole expression, so it grows with it: the command line prints it, an MCP result leaves it
+    /// out and has notes for the readings where conventions differ instead (ADR-0008, ADR-0007 amendment 2026-11-10).
+    public let detailKeys = ["read"]
+
+    /// Over MCP and in errors, `tallies` lists at most this many references, then `tallies_total` (ADR-0008).
+    static let shownTallies = 5
+
     public let description = """
         Work out one arithmetic expression exactly, such as a rate from two tallies or what is left of a budget. \
         Stateless: it reads tallies and never changes them.
@@ -46,12 +53,17 @@ public struct CalcTool: Tool {
         digits. Trailing zeros are dropped: round(12.5, 2) gives 12.5. A tally whose value was rounded before \
         (exact: false in its state) makes the result exact: false too.
 
-        Response: {"result", "read", "tallies"}. read is the expression as it was understood, numbers written out \
-        (410k as 410000) and parentheses around every operation but the outermost, except along a chain of + or of \
-        * (1 + 2 + 3); check it when the expression could be read two ways. tallies (left out when there are none) lists each tally used with the number taken \
-        from it, as {"name", "of": "value" or "count", "value"}, plus "exact": false for a rounded one. exact: false \
-        appears only when the result was rounded or uses a rounded tally, fraction only when the result itself was \
-        rounded.
+        Response: {"result", "notes", "tallies"}. notes appears only for a reading on which conventions differ: a \
+        leading minus before a power (-2^2) or a chain of powers (2^3^2), unless you wrote the parentheses \
+        yourself. It says how the first one was read and how to write the other reading. tallies (left out when \
+        there are none) lists each tally used with the number taken from it, as {"name", "of": "value" or \
+        "count", "value"}, plus "exact": false for a rounded one: at most 5, in the order they first appear, then \
+        tallies_total with the number of all. exact: false appears only when the result was rounded or uses a \
+        rounded tally, fraction only when the result itself was rounded.
+
+        The abakus command line (abakus calc, or abakus call calc with the same JSON; the same program as this \
+        server) prints the same JSON with every tally, plus read: the expression as calc understood it, with \
+        parentheses that show the grouping.
         """
 
     public let inputSchema: JSONValue = [
@@ -97,9 +109,33 @@ public struct CalcTool: Tool {
         // fraction is only for a rounding done here, which it undoes.
         if !rounded.exact || used.contains(where: \.isInexact) { result["exact"] = false }
         if let fraction = rounded.fraction { result["fraction"] = .string(fraction) }
+        let notes = CalcNotes.notes(for: expression, in: text)
+        if !notes.isEmpty { result["notes"] = .array(notes.map(JSONValue.string)) }
         result["read"] = .string(expression.rendered)
+        // Every reference: the command line prints them all, and `withoutDetails` shortens the list for MCP.
         if !used.isEmpty { result["tallies"] = .array(used.map { .object($0.entry) }) }
         return result
+    }
+
+    /// The result as an MCP client gets it: without `read`, and with at most `shownTallies` tallies, then
+    /// `tallies_total` (ADR-0008).
+    public func withoutDetails(_ result: JSONObject) -> JSONObject {
+        var answer = JSONObject()
+        for (key, value) in result.entries where !detailKeys.contains(key) {
+            if key == "tallies", let entries = value.arrayValue {
+                Self.addTallies(entries, to: &answer)
+            } else {
+                answer[key] = value
+            }
+        }
+        return answer
+    }
+
+    /// `tallies` with at most `shownTallies` entries, in the order of first appearance, and `tallies_total`, the
+    /// number of all, when there are more.
+    private static func addTallies(_ entries: [JSONValue], to object: inout JSONObject) {
+        object["tallies"] = .array(Array(entries.prefix(shownTallies)))
+        if entries.count > shownTallies { object["tallies_total"] = .number(String(entries.count)) }
     }
 
     // MARK: Arguments
@@ -307,9 +343,10 @@ public struct CalcTool: Tool {
         switch (error, node.node) {
         case (.divisionByZero, .binary(.power, let base, _)):
             message = "0 raised to a negative power \(at): the base\(named(base)) is 0, and 0 ^ -n is 1 / 0^n, a "
-                + "division by zero. " + whileZero(base, "base")
+                + "division by zero. " + whileZero(base, "base", details: details)
         case (.divisionByZero, .binary(_, _, let divisor)):
-            message = "Division by zero \(at): the divisor\(named(divisor)) is 0. " + whileZero(divisor, "divisor")
+            message = "Division by zero \(at): the divisor\(named(divisor)) is 0. "
+                + whileZero(divisor, "divisor", details: details)
         case (.tooManyDigits, _):
             message = "\(operation(node)) \(at) gives a value with more than \(Fraction.digitLimit) digits in its "
                 + "numerator or denominator: calc keeps every value as an exact fraction and stops at "
@@ -335,16 +372,32 @@ public struct CalcTool: Tool {
     }
 
     /// What to do about a divisor (or the base of a negative power) that is 0, by the tallies it uses.
-    private static func whileZero(_ operand: CalcExpression, _ role: String) -> String {
+    private static func whileZero(_ operand: CalcExpression, _ role: String, details: JSONObject?) -> String {
         let names = tallyNames(in: operand).map(\.quotedForMessage)
         let start = "While the \(role) is 0, the result has no value: report that, or "
         switch names.count {
         case 0: return start + "change the \(role)."
         case 1: return start + "calculate again once something has been added to the tally \(names[0])."
         default:
-            return start + "calculate again once the tallies \(names.listedInProse) have changed (details.tallies "
-                + "has their values)."
+            // At most as many names as details.tallies lists, so that the message stays bounded too (ADR-0008).
+            let listed = names.count > shownTallies
+                ? names.prefix(shownTallies).joined(separator: ", ") + " and \(names.count - shownTallies) more"
+                : names.listedInProse
+            let again = start + "calculate again once the tallies \(listed) have changed"
+            return again + (shows(operand, in: details) ? " (details.tallies has their values)." : ".")
         }
+    }
+
+    /// Whether `details.tallies` lists every reference in `operand`: with more than `shownTallies` references in the
+    /// expression, it may not.
+    private static func shows(_ operand: CalcExpression, in details: JSONObject?) -> Bool {
+        let shown = Set((details?["tallies"]?.arrayValue ?? []).compactMap { entry -> Reference? in
+            guard let object = entry.objectValue, let name = object["name"]?.stringValue,
+                let of = object["of"]?.stringValue.flatMap(CalcTallyField.init(rawValue:))
+            else { return nil }
+            return Reference(name: name, of: of)
+        })
+        return references(in: operand).references.allSatisfy(shown.contains)
     }
 
     /// How to stay within the digit limit, by the operation that went past it.
@@ -401,9 +454,12 @@ public struct CalcTool: Tool {
     }
 
     /// The tallies an expression used, for errors that come after reading them: a division by zero is often a
-    /// tally at 0.
+    /// tally at 0. At most `shownTallies`, then `tallies_total`, as over MCP: errors are bounded too (ADR-0008).
     private static func details(_ used: [UsedTally]) -> JSONObject? {
-        used.isEmpty ? nil : ["tallies": .array(used.map { .object($0.entry) })]
+        guard !used.isEmpty else { return nil }
+        var details = JSONObject()
+        addTallies(used.map { .object($0.entry) }, to: &details)
+        return details
     }
 
     /// What `node` does, to start a message.

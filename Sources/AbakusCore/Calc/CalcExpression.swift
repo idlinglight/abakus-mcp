@@ -4,11 +4,34 @@ import Foundation
 ///
 /// Every node carries the position of the token it starts at, or of its operator for a binary operation, counted
 /// in characters from 1 into the expression, so that an evaluation error (division by zero, a fractional exponent,
-/// an unknown tally) can say where it happened. Parentheses leave no node of their own: `(1 + 2)` is the addition.
+/// an unknown tally) can say where it happened. Parentheses leave no node of their own: `(1 + 2)` is the addition,
+/// and `outerSpan` says that it was written in parentheses.
 struct CalcExpression: Sendable, Equatable {
     /// The character index, from 1, of the token this node starts at, or of the operator of a binary operation.
     var position: Int
     var node: Node
+    /// Where the node is written, as indexes into the characters of the expression (from 0, end excluded), without
+    /// parentheses around it: `2^2` in `-(2^2)`. Trees built by hand (tests) leave it empty.
+    var span: Range<Int> = 0..<0
+    /// The same with the parentheses written around the node, as many as there are: `(2^2)` in `-(2^2)`. Equal to
+    /// `span` when there are none.
+    var outerSpan: Range<Int> = 0..<0
+
+    /// The agent wrote parentheses around this node. calc notes the readings where conventions differ (`-2^2`,
+    /// `2^3^2`), but not where the agent's own parentheses already settle them.
+    var isParenthesized: Bool { outerSpan != span }
+
+    /// A node as the parser builds it, written at `written`, without parentheses yet.
+    init(position: Int, node: Node, written: Range<Int>) {
+        self.init(position: position, node: node, span: written, outerSpan: written)
+    }
+
+    init(position: Int, node: Node, span: Range<Int> = 0..<0, outerSpan: Range<Int> = 0..<0) {
+        self.position = position
+        self.node = node
+        self.span = span
+        self.outerSpan = outerSpan
+    }
 
     indirect enum Node: Sendable, Equatable {
         /// A literal: its value, never negative (a leading minus is a negation), and the literal as written
