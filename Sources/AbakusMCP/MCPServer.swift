@@ -365,8 +365,7 @@ public struct MCPServer {
             ))
         }
         guard let tool = tools.first(where: { $0.name == name }) else {
-            let renamed = Catalog.renameNote(for: name).map { $0 + " " } ?? ""
-            return .failure(.invalidParams("Unknown tool: \(name). \(renamed)tools/list shows the available tools."))
+            return .failure(.invalidParams("Unknown tool: \(name). tools/list shows the available tools."))
         }
         var fields: JSONObject
         do {

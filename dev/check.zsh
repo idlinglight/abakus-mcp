@@ -40,8 +40,8 @@ outcome() {
 
 # MCP, legacy era: initialize, then the tools, as a client that negotiated 2025-11-25 sees them; a shared tally
 # "requests" for calc to read, here, in the modern era and on the command line; a shared tally "amounts" with marks,
-# added to with a JSON number, the common case for MCP clients; tallies_info, which counts the two, and its old
-# name; calc's note for a leading minus before a power
+# added to with a JSON number, the common case for MCP clients; tallies_info, which counts the two; an unknown
+# tool; calc's note for a leading minus before a power
 responses=$(printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"check","version":"0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
@@ -54,7 +54,7 @@ responses=$(printf '%s\n' \
   '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"tally_create","arguments":{"name":"amounts","shared":true,"thresholds":[{"at":[10,20,30,40,50,60,70]}]}}}' \
   '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"tally_add","arguments":{"name":"amounts","amount":12.50}}}' \
   '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"tallies_info","arguments":{}}}' \
-  '{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"tally_list","arguments":{}}}' \
+  '{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"nosuch","arguments":{}}}' \
   '{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"calc","arguments":{"expression":"-2^2"}}}' \
   | $abakus mcp 2>>$stderr_log)
 expect "mcp legacy: twelve responses, none for the notification" '. == null' \
@@ -93,8 +93,8 @@ expect "mcp legacy: tallies_info gives the folder and the count, without the lis
   ".result.structuredContent == {\"folder\": \"$ABAKUS_STATE_DIR/tallies\", \"tallies_found\": 2}
      and (.result.content[0].text | contains(\"\\\"tallies\\\"\") | not)" \
   "$(print -r -- "$responses" | jq -c 'select(.id == 10)')"
-expect "mcp legacy: the old name tally_list is an unknown tool whose error gives the new name" \
-  '.error.code == -32602 and (.error.message | test("^Unknown tool: tally_list\\. It was renamed to tallies_info in abakus 0\\.5\\.1\\."))' \
+expect "mcp legacy: an unknown tool is invalid params, and the error points to tools/list" \
+  '.error.code == -32602 and .error.message == "Unknown tool: nosuch. tools/list shows the available tools."' \
   "$(print -r -- "$responses" | jq -c 'select(.id == 11)')"
 
 # MCP, modern era: stateless, version and capabilities in every request's _meta
@@ -309,8 +309,6 @@ expect "cli: tallies info prints every tally with its state, and the unreadable 
 expect "cli: tallies info with a prefix lists only those, sorted by name" \
   '.tallies_found == 30 and (.tallies | map(.name)) == (.tallies | map(.name) | sort) and (has("unreadable") | not)' \
   "$($abakus tallies info bulk)"
-expect "cli: tally list, the old name of tallies info, still prints the same" '.old == .new and (.new | length) > 0' \
-  "$(jq -n --arg old "$($abakus tally list bulk)" --arg new "$($abakus tallies info bulk)" '{old: $old, new: $new}')"
 expect "cli: tally drop removes the file that cannot be read" '.dropped == true and .name == "broken"' \
   "$($abakus tally drop broken)"
 export ABAKUS_STATE_DIR=$scratch_state
@@ -365,9 +363,6 @@ expect "cli: call with arguments that are not an object fails with exit 1" \
   '.status == 1 and .stdout == "" and (.stderr | test("must be a JSON object"))' "$(outcome $abakus call sum '[1, 2]')"
 expect "cli: call with an unknown tool fails with exit 1 and points to abakus tools" \
   '.status == 1 and .stdout == "" and (.stderr | test("no tool named nosuch") and test("abakus tools"))' "$(outcome $abakus call nosuch)"
-expect "cli: call with the old name tally_list fails with exit 1 and gives the new name" \
-  '.status == 1 and .stdout == "" and (.stderr | test("no tool named tally_list\\. It was renamed to tallies_info in abakus 0\\.5\\.1\\."))' \
-  "$(outcome $abakus call tally_list)"
 expect "cli: call prints the details an MCP result leaves out" '.read == [{"index": 0, "input": "0.1", "value": 0.1}]' \
   "$($abakus call sum '{"numbers": ["0.1", 0.2]}')"
 expect "cli: call --without-details prints the text of the MCP result above, character for character" '.cli == .mcp' \
@@ -392,7 +387,7 @@ expect "cli: a command's --help shows its usage" '.status == 0 and (.stdout | te
 # The abakus-cli skill (skills/abakus-cli/SKILL.md) against this binary, so that the two cannot drift apart.
 # help_for maps each command the help lists, one level of groups deep, to its --help text: "abakus", "abakus sum",
 # "abakus tally create". In ArgumentParser's help, a command is a line under SUBCOMMANDS: that starts with two
-# spaces and a name; a hidden command, such as the old name `abakus tally list`, is not listed, so not in the map.
+# spaces and a name; a hidden command is not listed, so not in the map.
 skill_file=${0:A:h:h}/skills/abakus-cli/SKILL.md
 typeset -A help_for
 subcommands() { print -r -- $1 | awk '/^SUBCOMMANDS:/ { s = 1; next } s && /^  [a-z]/ { print $1 }' }
