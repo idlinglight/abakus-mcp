@@ -53,17 +53,17 @@ public struct CalcTool: Tool {
         digits. Trailing zeros are dropped: round(12.5, 2) gives 12.5. A tally whose value was rounded before \
         (exact: false in its state) makes the result exact: false too.
 
-        Response: {"result", "notes", "tallies"}. notes appears only for a reading on which conventions differ: a \
+        Response: {"result", "notes", "tallies"}. notes appears only for a reading on which conventions differ, a \
         leading minus before a power (-2^2) or a chain of powers (2^3^2), unless you wrote the parentheses \
-        yourself. It says how the first one was read and how to write the other reading. tallies (left out when \
-        there are none) lists each tally used with the number taken from it, as {"name", "of": "value" or \
-        "count", "value"}, plus "exact": false for a rounded one: at most 5, in the order they first appear, then \
+        yourself; it says how it was read and how to write the other reading. tallies (left out when there are \
+        none) lists each tally used with the number taken from it, as {"name", "of": "value" or "count", \
+        "value"}, plus "exact": false for a rounded one: at most 5, in the order they first appear, then \
         tallies_total with the number of all. exact: false appears only when the result was rounded or uses a \
         rounded tally, fraction only when the result itself was rounded.
 
-        The abakus command line (abakus calc, or abakus call calc with the same JSON; the same program as this \
-        server) prints the same JSON with every tally, plus read: the expression as calc understood it, with \
-        parentheses that show the grouping.
+        The abakus command line (abakus calc, or abakus call calc; the same program as this server) prints the \
+        same JSON with every tally, plus read: the expression as calc understood it, with parentheses that show \
+        the grouping.
         """
 
     public let inputSchema: JSONValue = [
