@@ -3,8 +3,8 @@
 Status: accepted, 2026-11-08; amended 2026-11-08 (threshold argument shape, crossing rule and "once", unique
 suffix, `tally_set` and exactness, unknown names and arguments, thresholds that cannot be computed); amended
 2026-11-08 (a random suffix by default, `shared: true` for an exact name; see the end); amended 2026-11-08
-(the advice for unknown names in `tally_drop`); amended 2026-11-10 (`tally_list` over MCP: the folder and how many
-tallies there are)
+(the advice for unknown names in `tally_drop`); amended 2026-11-10 (`tally_list` becomes `tallies_info`; over MCP
+the folder and how many tallies there are)
 
 ## Context
 
@@ -61,8 +61,8 @@ does not reliably know an identifier that is unique to its session.
 - Unknown arguments are errors: a typo such as `amout` would otherwise be ignored and add 1.
 - Every response carries the tally's full state, each threshold with its status.
 - Tools: `tally_create`, `tally_add`, `tally_set` (value, count or thresholds of an existing tally),
-  `tally_list` (all tallies or those with a name prefix, and the folder they are in; over MCP only the folder and
-  how many there are, by the amendment of 2026-11-10), `tally_drop` (returns the final state).
+  `tally_list` (all tallies or those with a name prefix, and the folder they are in; now `tallies_info`, over MCP
+  only the folder and how many there are, by the amendment of 2026-11-10), `tally_drop` (returns the final state).
 
 ## Consequences
 
@@ -137,7 +137,7 @@ new tally. `tally_add`'s description no longer points to `tally_list` for findin
 towards other sessions' tallies; it and `tally_set`'s description say that the error shows the tallies whose
 names start with the name given, with when each was created.
 
-## Amendment 2026-11-10: `tally_list` over MCP: the folder and how many tallies there are
+## Amendment 2026-11-10: `tally_list` becomes `tallies_info`: over MCP the folder and how many tallies there are
 
 ### Context
 
@@ -159,17 +159,27 @@ name given, which serves an agent looking for its own tally better.
 
 ### Decision
 
-- Over MCP, `tally_list` returns `folder`, `tallies_found` (the number of readable tallies) and `unreadable_found`
+- Over MCP, the tool returns `folder`, `tallies_found` (the number of readable tallies) and `unreadable_found`
   (the number of tallies whose file cannot be read, only when there are any); with `prefix`, both count only
   tallies whose names start with it: `{"folder": "/var/folders/…/T/abakus/tallies", "tallies_found": 3}`. Its
-  title is "Count tallies"; the name stays `tally_list`.
+  title is "Count tallies".
 - `tallies` (each tally's full state, sorted by name) and `unreadable` (each such name with what is wrong) are its
-  detail keys (ADR-0008): the command line prints them, `abakus tally list [prefix]` and `abakus call tally_list`
-  alike.
+  detail keys (ADR-0008): the command line prints them, `abakus tallies info [prefix]` and `abakus call
+  tallies_info` alike.
 - Not `count`: a tally's `count` is its number of additions, and on the command line both appear in one result.
   With a full name as `prefix`, `"count": 1` would read as that tally's count. `tallies_found` and
   `unreadable_found` each count the list of the same name.
-- What `tally_list` is for over MCP: how many tallies there are, with a prefix or all, and where they are kept. To
+- The tool is renamed `tallies_info`, since `tally_list` promises a list that the MCP result no longer holds. In
+  two rounds of probes with fresh agents given only the names, all three of the first round read `tally_list` as
+  a list. In the second, five of six chose `tallies_info` over `tally_count`, `tally_status`, `tally_summary` and
+  `tally_stats`: the plural marks it as about all tallies, nobody read it as a tool for one tally, and "info"
+  covers both the small MCP result and the full listing on the command line. `tally_count` lost because an
+  `abakus tally count` that prints every tally surprised everyone; `tally_status` read as one tally's state.
+- The command follows the tool's name, as `tally_create` is `abakus tally create`: `abakus tallies info [prefix]`,
+  in a group `tallies` of its own. `abakus tally list` still works and is left out of the help. Over MCP and with
+  `abakus call`, `tally_list` is an unknown tool whose error says it was renamed to `tallies_info` in abakus 0.5.0
+  (`Catalog.renamed`).
+- What `tallies_info` is for over MCP: how many tallies there are, with a prefix or all, and where they are kept. To
   look up a lost name, the description points to `calc` with the name without its suffix (`{items}`): calc never
   writes, and its error for an unknown name shows the tallies named with it plus a suffix (up to 20, with when
   each was created), as the other tally tools' error does. Those tools are not offered for a lookup: `tally_add`
@@ -185,8 +195,9 @@ name given, which serves an agent looking for its own tally better.
 
 ### Consequences
 
-- `tally_list` is within ADR-0008's rule: its MCP result grows only by the digits of its counts.
-- An agent that read names or states from `tally_list` over MCP gets counts from abakus 0.5.0 on, a change of the
-  result's shape, hence a minor version. The command line prints what `tally_list` returned before, plus the counts.
+- `tallies_info` is within ADR-0008's rule: its MCP result grows only by the digits of its counts.
+- An agent that read names or states from `tally_list` over MCP finds, from abakus 0.5.0 on, a tool with another
+  name that returns counts, a change of the tool surface, hence a minor version. The command line prints what
+  `tally_list` returned before, plus the counts.
 - Over MCP, only the unknown-name error still names other sessions' tallies: `details.existing` up to 20 names,
   `details.matching` those that start with the name given and `-`, with when each was created.

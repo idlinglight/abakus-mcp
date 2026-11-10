@@ -39,7 +39,7 @@ Other MCP clients: the command is `abakus mcp` (stdio).
 | `tally_create` | Create a tally under a name with a random suffix (or exactly, with `shared`), optionally with thresholds |
 | `tally_add` | Add an amount (default 1); says when a threshold is crossed |
 | `tally_set` | Correct a tally's value, count or thresholds |
-| `tally_list` | Count tallies (optionally by name prefix) and give their folder; the command line lists them with their state |
+| `tallies_info` | Count tallies (optionally by name prefix) and give their folder; the command line lists them with their state |
 | `tally_drop` | Delete a tally |
 | `sum` | Add a list of numbers exactly |
 | `calc` | Work out one expression exactly, also over tallies by name |
@@ -53,9 +53,9 @@ A tally is a named, exact `value` plus a `count` of additions, kept in a file so
 context compaction. `tally_create` appends a random suffix to the name (`review` becomes `review-k3f9`), so
 each session counts its own; the response has the name to use from then on. With `shared: true` the name is
 used exactly, for a tally several sessions are meant to add to; that is refused if the name exists. All
-sessions of the user share the same tallies (`tally_list` counts them, `abakus tally list` shows them all), so
-the tool descriptions tell agents to leave other sessions' tallies alone unless they coordinate with them
-([ADR-0004](docs/adr/0004-tallies.md)).
+sessions of the user share the same tallies (`tallies_info` counts them, `abakus tallies info` shows them
+all), so the tool descriptions tell agents to leave other sessions' tallies alone unless they coordinate with
+them ([ADR-0004](docs/adr/0004-tallies.md)).
 
 Names: lowercase letters, digits, `.`, `_`, `-`, starting with a letter or digit, at most 64 characters
 including the suffix (so 59 as given, 64 with `shared: true`); a longer name is refused with a suggestion cut
@@ -109,25 +109,28 @@ or `{"every": 5, "of": "count", "at": [5]}`; past 10 multiples,
 `tally_set` `{name, value?, count?, thresholds?, decimal?}` corrects a tally, reports no crossings;
 `thresholds: []` removes them all.
 
-`tally_list` `{prefix?}` gives the folder the tallies are kept in and `tallies_found`, how many there are, plus
-`unreadable_found`, how many tallies' files cannot be read, when there are any; with `prefix`, both count only
-names that start with it. Over MCP that is all: names and states would grow with every session's tallies
+`tallies_info` `{prefix?}` gives the folder the tallies are kept in and `tallies_found`, how many there are,
+plus `unreadable_found`, how many tallies' files cannot be read, when there are any; with `prefix`, both count
+only names that start with it. Over MCP that is all: names and states would grow with every session's tallies
 ([ADR-0008](docs/adr/0008-small-mcp-results.md)). To look up a lost name over MCP, `calc` with `{items}` never
 writes, and its error for an unknown name (below) shows the tallies named `items` plus a suffix; `tally_add` or
 `tally_drop` with a guessed name would change or delete a shared tally of exactly that name. The command line
-also prints `tallies`, every tally with its full state, sorted by name, and `unreadable`, each unreadable one with
-what is wrong:
+(`abakus tallies info`) also prints `tallies`, every tally with its full state, sorted by name, and
+`unreadable`, each unreadable one with what is wrong:
 
 ```json
 {"prefix": "bytes"}
 → {"folder": "/var/folders/…/T/abakus/tallies", "tallies_found": 1}
 
-abakus tally list bytes
+abakus tallies info bytes
 → {"folder": "/var/folders/…/T/abakus/tallies", "tallies_found": 1,
    "tallies": [{"name": "bytes", "value": 2490123.5, "count": 1,
                 "thresholds": [{"at": [1000000, 5000000], "of": "value", "next": 5000000}],
                 "created": "2026-11-08T09:36:00Z", "updated": "2026-11-08T09:36:00Z"}]}
 ```
+
+Before 0.5.0 the tool was `tally_list`. That name, over MCP or with `abakus call`, is now an unknown tool whose
+error gives the new name; `abakus tally list` still works.
 
 `tally_drop` `{name}` deletes the tally and returns its final state with `"dropped": true`.
 
@@ -289,7 +292,7 @@ status 1 (the same text an agent reads); a usage mistake shows the usage with ex
 abakus tally create review --limit 20 --every-count 5
 abakus tally add review-k3f9 6                   # the name it printed, suffix included
 abakus tally create build-errors --shared        # exactly this name, for several sessions
-abakus tally list
+abakus tallies info                              # every tally with its state (was: abakus tally list)
 abakus sum 410k 1,234.5 -3
 grep -oE '[0-9][0-9.]*k' build.log | abakus sum  # numbers from stdin
 abakus sum                                       # in a terminal: type or paste numbers, then ctrl-D
@@ -344,11 +347,11 @@ Architecture decisions are recorded in [`docs/adr/`](docs/adr/):
 - [ADR-0001](docs/adr/0001-one-package-one-binary.md): One Swift package, one binary, MCP first
 - [ADR-0002](docs/adr/0002-own-mcp-server.md): Own MCP server instead of the Swift SDK (amended: supported revisions, error mapping)
 - [ADR-0003](docs/adr/0003-state-in-user-temp-folder.md): State: one file per tally in the per-user temporary folder (amended: locking; the files are not an interface for agents)
-- [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names; `tally_drop`'s advice for unknown names; `tally_list` over MCP: the folder and counts)
+- [ADR-0004](docs/adr/0004-tallies.md): Tallies: named values with a count, created explicitly, with thresholds that inform (amended: crossings; a random suffix by default, `shared` for exact names; `tally_drop`'s advice for unknown names; `tally_list` renamed `tallies_info`, over MCP the folder and counts)
 - [ADR-0005](docs/adr/0005-numbers.md): Numbers: exact decimals, read by stated rules (amended: own exact arithmetic, reading rules in detail, the rules in full in `sum`'s description only; by ADR-0008: how readings show over MCP)
 - [ADR-0006](docs/adr/0006-date-differences.md): Date differences: ISO 8601 in, calendar units and exact totals out, in UTC (amended: whole seconds in `text`)
 - [ADR-0007](docs/adr/0007-calc.md): calc: one expression, exact fractions, tallies by name (amended: underflow and the readable policy in full, when `fraction` is left out, rounded tallies in the response, unknown names, flat chains of + and * in `read`, errors while evaluating, parser details)
-- [ADR-0008](docs/adr/0008-small-mcp-results.md): MCP results stay small; the command line shows everything (amended: `abakus call --without-details`; `tally_list` within the rule)
+- [ADR-0008](docs/adr/0008-small-mcp-results.md): MCP results stay small; the command line shows everything (amended: `abakus call --without-details`; `tallies_info` within the rule)
 
 ## License
 

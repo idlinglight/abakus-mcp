@@ -1,6 +1,7 @@
 # ADR-0008: MCP results stay small; the command line shows everything
 
-Status: accepted, 2026-11-09; amended 2026-11-10 (`abakus call --without-details`; `tally_list` within the rule)
+Status: accepted, 2026-11-09; amended 2026-11-10 (`abakus call --without-details`; `tallies_info`, formerly
+`tally_list`, within the rule)
 
 ## Context
 
@@ -130,9 +131,10 @@ the practical check; the growth rule says what does not belong in a result at al
 - Now: `sum`, and the errors of every tool that quote an input (number strings, JSON number literals, calc's
   numbers, dates, tally names, unknown argument names).
 - `date_diff` is within the rule: its input is two instants, and every key it returns is bounded.
-- `tally_list` is within the rule since abakus 0.5.0 (amended 2026-11-10): over MCP it returns the folder and how
-  many tallies there are; `tallies` and `unreadable`, which grow with the number of tallies, are its details. The
-  files did not become an interface for agents ([ADR-0004](0004-tallies.md) and
+- `tallies_info` is within the rule since abakus 0.5.0 (amended 2026-11-10). Until then it was `tally_list`, a
+  known exception that grew with the number of tallies, other sessions' included. Over MCP it now returns the
+  folder and how many tallies there are; `tallies` and `unreadable`, which grow with the number of tallies, are its
+  details. The files did not become an interface for agents ([ADR-0004](0004-tallies.md) and
   [ADR-0003](0003-state-in-user-temp-folder.md), amendments of 2026-11-10).
 - Known exceptions, each to be brought within the rule when it is next changed:
   - `calc`: `read` grows with the expression and `tallies` with the tallies it names. ADR-0007's reasoning about
